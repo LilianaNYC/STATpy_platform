@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Wholesale Portfolio Model Monitoring Dashboard</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.2/html2pdf.bundle.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:'Inter','Segoe UI',sans-serif}
+:root{
+  --navy:#0f1d35;--navy-accent:#243860;--blue:#2563eb;--blue-light:#3b82f6;
+  --green:#16a34a;--red:#dc2626;--gray-light:#f3f4f6;--border:#e5e7eb;
+  --text:#111827;--text-muted:#6b7280;
+  --card-shadow:0 1px 3px rgba(0,0,0,.1),0 1px 2px rgba(0,0,0,.06);
+}
+body{display:flex;height:100vh;overflow:hidden;background:#f8fafc}
+.sidebar{width:220px;min-width:220px;background:var(--navy);display:flex;flex-direction:column;overflow-y:auto}
+.sidebar-logo{padding:20px 16px;border-bottom:1px solid var(--navy-accent)}
+.sidebar-logo .logo-icon{font-size:28px;margin-bottom:6px}
+.sidebar-logo h1{color:#fff;font-size:12px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;line-height:1.4}
+.sidebar-logo p{color:#94a3b8;font-size:10px;margin-top:2px}
+.nav-list{list-style:none;padding:8px 0;flex:1}
+.nav-item{display:flex;align-items:center;gap:10px;padding:10px 16px;cursor:pointer;color:#94a3b8;font-size:13px;font-weight:500;transition:all .15s;border-left:3px solid transparent}
+.nav-item:hover{background:var(--navy-accent);color:#e2e8f0}
+.nav-item.active{background:var(--navy-accent);color:#fff;border-left-color:var(--blue-light)}
+.nav-icon{font-size:16px;width:20px;text-align:center}
+.sidebar-footer{padding:12px 16px;border-top:1px solid var(--navy-accent);color:#475569;font-size:10px;line-height:1.6}
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.top-bar{background:#fff;border-bottom:1px solid var(--border);padding:12px 24px;display:flex;align-items:center;gap:16px;flex-shrink:0}
+.monitoring-controls{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;margin-top:8px}
+.monitoring-filter{display:flex;flex-direction:column;gap:4px;position:relative}
+.monitoring-filter>label{font-size:11px;color:var(--text-muted);font-weight:600}
+.monitoring-filter select,.checkbox-dropdown-toggle{font-size:12px;padding:5px 8px;border-radius:6px;border:1px solid var(--border);background:#fff;color:var(--text);min-width:118px;height:30px}
+.monitoring-filter select:disabled{background:#f8fafc;color:#94a3b8;cursor:not-allowed}
+.monitoring-mode-switch{display:flex;height:30px}
+.monitoring-mode-switch button{padding:5px 10px;border:1px solid var(--border);background:#fff;color:var(--text-muted);cursor:pointer;font-size:11px;font-weight:600}
+.monitoring-mode-switch button:first-child{border-radius:6px 0 0 6px}
+.monitoring-mode-switch button:last-child{border-radius:0 6px 6px 0;border-left:none}
+.monitoring-mode-switch button.active{background:var(--navy);border-color:var(--navy);color:#fff}
+.monitoring-filter-help{flex-basis:100%;font-size:10px;color:var(--text-muted);margin-top:-2px}
+.checkbox-dropdown{position:relative}
+.checkbox-dropdown-toggle{min-width:190px;max-width:220px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+.checkbox-dropdown-toggle:disabled{background:#f8fafc;color:#94a3b8;cursor:not-allowed}
+.checkbox-dropdown-menu{position:absolute;top:calc(100% + 4px);left:0;display:none;min-width:190px;padding:6px 0;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);z-index:60}
+.checkbox-dropdown-menu.open{display:block}
+.checkbox-dropdown-menu label{display:flex;align-items:center;gap:8px;padding:6px 10px;font-size:12px;color:var(--text);cursor:pointer;white-space:nowrap}
+.checkbox-dropdown-menu label:hover{background:#f8fafc}
+.checkbox-dropdown-menu input[type="checkbox"]{width:16px;height:16px;accent-color:var(--blue);cursor:pointer}
+.checkbox-dropdown-menu input[type="checkbox"]:disabled{cursor:not-allowed}
+.btn{font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;display:flex;align-items:center;gap:6px;font-weight:500;color:var(--text)}
+.btn-primary{background:var(--blue);color:#fff;border-color:var(--blue)}
+.btn-primary:hover{background:#1d4ed8}
+.content{flex:1;overflow-y:auto;padding:20px 24px}
+.tab-panel{display:none}
+.tab-panel.active{display:block}
+.dash-header{margin-bottom:16px}
+.dash-header h2{font-size:18px;font-weight:700;color:var(--text)}
+.dash-header p{font-size:12px;color:var(--text-muted);margin-top:3px}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.kpi-card{background:#fff;border:1px solid var(--border);border-radius:10px;padding:14px;box-shadow:var(--card-shadow)}
+.kpi-card-title{font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px}
+.kpi-card-value{font-size:22px;font-weight:800;color:var(--text);line-height:1}
+.kpi-card-subtext{font-size:11px;color:var(--text-muted);margin-top:6px}
+.section-card{background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px;box-shadow:var(--card-shadow);margin-bottom:16px}
+.section-title{font-size:12px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px}
+.chart-box{min-height:220px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{background:var(--gray-light);color:var(--text-muted);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;padding:7px 10px;text-align:left;border-bottom:1px solid var(--border)}
+td{padding:7px 10px;border-bottom:1px solid #f1f5f9;color:var(--text);vertical-align:middle}
+tr:last-child td{border-bottom:none}
+.badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;white-space:nowrap}
+.badge-critical{background:#fee2e2;color:var(--red)}
+.badge-green{background:#dcfce7;color:#15803d}
+.page-footer{flex-shrink:0;background:#fff;border-top:1px solid var(--border);padding:8px 24px;display:flex;align-items:center;gap:24px;font-size:11px;color:var(--text-muted)}
+.export-menu-wrap{position:relative;display:flex;align-items:stretch}
+.export-btn-main{border-radius:6px 0 0 6px!important;border-right:1px solid #1e40af!important}
+.export-btn-chevron{padding:6px 10px;border-radius:0 6px 6px 0;background:var(--blue);color:#fff;border:1px solid var(--blue);border-left:none;cursor:pointer;font-size:10px;display:flex;align-items:center;justify-content:center;min-width:28px}
+.export-btn-chevron:hover{background:#1d4ed8}
+.export-menu{position:absolute;top:calc(100% + 4px);right:0;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);min-width:240px;z-index:50;display:none;overflow:hidden}
+.export-menu.open{display:block}
+.export-menu-item{padding:10px 14px;font-size:12px;color:var(--text);cursor:pointer;display:flex;align-items:flex-start;gap:10px;border-bottom:1px solid #f1f5f9}
+.export-menu-item:last-child{border-bottom:none}
+.export-menu-item:hover{background:#f8fafc}
+.export-menu-item .icon{font-size:16px;line-height:1.2}
+.export-menu-item .label{font-weight:600;font-size:12px;color:var(--text)}
+.export-menu-item .sub{font-size:10px;color:var(--text-muted);margin-top:2px}
+.export-overlay{position:fixed;inset:0;background:rgba(15,29,53,.7);z-index:9999;display:none;align-items:center;justify-content:center}
+.export-overlay.active{display:flex}
+.export-overlay-card{background:#fff;border-radius:10px;padding:24px 32px;box-shadow:0 4px 20px rgba(0,0,0,.3);text-align:center;min-width:240px}
+.export-overlay-card .spinner{display:inline-block;width:32px;height:32px;border:3px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:spin .8s linear infinite;margin-bottom:12px}
+.export-overlay-card .msg{font-size:13px;font-weight:600;color:var(--text)}
+.export-overlay-card .sub{font-size:11px;color:var(--text-muted);margin-top:4px}
+body.exporting-pdf button{display:none!important}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media(max-width:900px){
+  .grid-2,.grid-3{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<nav class="sidebar">
+  <div class="sidebar-logo">
+    <div class="logo-icon">📊</div>
+    <h1>Model Monitoring</h1>
+    <p>Wholesale Credit Platform</p>
+  </div>
+  <ul class="nav-list"><li class="nav-item" data-tab="overview" onclick="switchTab('overview')"><span class="nav-icon">📊</span><span class="nav-label">Overview</span></li>
+<li class="nav-item" data-tab="pd_models" onclick="switchTab('pd_models')"><span class="nav-icon">🧠</span><span class="nav-label">PD Models</span></li></ul>
+  <div class="sidebar-footer" id="sidebar-footer"></div>
+</nav>
+<div class="main">
+  <div class="top-bar">
+    <div style="flex:1">
+      <div style="font-size:14px;font-weight:700;color:#111">Wholesale Portfolio Model Monitoring Dashboard</div>
+      <div class="monitoring-controls"><div class="monitoring-filter"><label>Monitoring Point</label><select id="monitoring-quarter-select" onchange="setCurrentQuarter(this.value)"></select></div><div class="monitoring-filter monitoring-mode-filter"><label>Filter By</label><div class="monitoring-mode-switch" role="group" aria-label="Monitoring filter mode"><button type="button" id="monitoring-mode-group" onclick="setMonitoringFilterMode('group')">Group &amp; Segment</button><button type="button" id="monitoring-mode-models" onclick="setMonitoringFilterMode('models')">Specific Models</button></div></div><div class="monitoring-filter monitoring-model-group-filter"><label>Model Group</label><select id="monitoring-metric-segment-select" aria-label="Metric segment" onchange="setMonitoringSegment('metric',this.value)"><option value="all">All</option><option value="ead">EAD</option><option value="lgd">LGD</option><option value="pd">PD</option></select></div><div class="monitoring-filter"><label>Segment</label><select id="monitoring-portfolio-segment-select" aria-label="Portfolio segment" onchange="setMonitoringSegment('portfolio',this.value)"><option value="all">All</option><option value="cre">CRE</option><option value="cyclical">Cyclical</option><option value="defensive">Defensive</option><option value="l-and-c">L&amp;C</option><option value="o-and-m">O&amp;M</option></select></div><div class="monitoring-filter monitoring-model-filter"><label>Specific Models</label><div class="checkbox-dropdown"><button type="button" class="checkbox-dropdown-toggle" id="monitoring-model-toggle" onclick="toggleMonitoringModelMenu(event)">Select models</button><div class="checkbox-dropdown-menu" id="monitoring-model-menu"><label><input type="checkbox" value="All" data-model-all onchange="setMonitoringModels(this)">All</label><label><input type="checkbox" value="CRE EAD Model" onchange="setMonitoringModels(this)">CRE EAD Model</label><label><input type="checkbox" value="CRE LGD Model" onchange="setMonitoringModels(this)">CRE LGD Model</label><label><input type="checkbox" value="CRE PD Model" onchange="setMonitoringModels(this)">CRE PD Model</label><label><input type="checkbox" value="Corporate EAD" onchange="setMonitoringModels(this)">Corporate EAD</label><label><input type="checkbox" value="Corporate LGD" onchange="setMonitoringModels(this)">Corporate LGD</label><label><input type="checkbox" value="Corporate PD" onchange="setMonitoringModels(this)">Corporate PD</label></div></div></div><div class="monitoring-filter-help" id="monitoring-filter-help"></div></div>
+    </div>
+    <div class="export-menu-wrap">
+      <button class="btn btn-primary export-btn-main" id="export-btn" onclick="exportData()">📄 Export PDF</button>
+      <button class="export-btn-chevron" onclick="toggleExportMenu(event)" aria-label="More export options">▼</button>
+      <div class="export-menu" id="export-menu">
+        <div class="export-menu-item" onclick="event.stopPropagation();closeExportMenu();exportData()">
+          <span class="icon">📄</span>
+          <div><div class="label">Export current tab</div><div class="sub">Just the visible dashboard</div></div>
+        </div>
+        <div class="export-menu-item" onclick="event.stopPropagation();closeExportMenu();exportAllTabs()">
+          <span class="icon">📚</span>
+          <div><div class="label">Export all tabs</div><div class="sub">Full multi-page report (~30s)</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="content">
+    <div id="tab-overview" class="tab-panel active"></div>
+    <div id="tab-pd_models" class="tab-panel"></div>
+  </div>
+  <div class="page-footer">
+    <span id="footer-data-as-of"></span>
+    <span id="footer-source"></span>
+    <span id="footer-run-id"></span>
+    <span id="footer-refresh"></span>
+  </div>
+</div>
+<script>
+const DASH_DATA = {"run_id": "RUN_20260530_232245_44E512", "data_as_of": "2022-12-31", "last_refresh": "2026-05-30 23:22:45", "source": "portfolio.xlsx", "quarters": ["2019Q1", "2019Q2", "2019Q3", "2019Q4", "2020Q1", "2020Q2", "2020Q3", "2020Q4", "2021Q1", "2021Q2", "2021Q3", "2021Q4", "2022Q1", "2022Q2", "2022Q3", "2022Q4"], "latest_quarter": "2022Q4", "prior_quarter": "2022Q3", "monitoring": {"overview": {"portfolio_records": 1000, "unique_accounts": 1000, "latest_quarter": "2022Q4", "thresholds_file": "statpy_monitoring_thresholds.xlsx", "threshold_sheet_count": 5, "total_threshold_rows": 28, "empty_threshold_sheets": 1, "sheet_summary": [{"sheet_key": "ead_thresholds", "sheet_name": "EAD_Thresholds", "rows": 6, "cols": 14, "is_empty": false}, {"sheet_key": "lgd_thresholds", "sheet_name": "LGD_Thresholds", "rows": 5, "cols": 14, "is_empty": false}, {"sheet_key": "loss_thresholds", "sheet_name": "LOSS_Thresholds", "rows": 0, "cols": 0, "is_empty": true}, {"sheet_key": "pd_thresholds", "sheet_name": "PD_Thresholds", "rows": 11, "cols": 15, "is_empty": false}, {"sheet_key": "scenario_test_thresholds", "sheet_name": "Scenario_Test_Thresholds", "rows": 6, "cols": 7, "is_empty": false}], "overview_text": "This page summarizes portfolio size and monitoring threshold coverage for the current portfolio snapshot."}, "pd_models": {"model_column": "pd_model", "model_names": ["CRE PD Model", "Corporate PD Model"], "latest_quarter": "2022Q4", "portfolio_records": 1000, "portfolio_unique_accounts": 1000, "threshold_summary": [{"threshold_key": "ead_thresholds", "rows": 6, "cols": 14, "is_empty": false}, {"threshold_key": "lgd_thresholds", "rows": 5, "cols": 14, "is_empty": false}, {"threshold_key": "loss_thresholds", "rows": 0, "cols": 0, "is_empty": true}, {"threshold_key": "pd_thresholds", "rows": 11, "cols": 15, "is_empty": false}, {"threshold_key": "scenario_test_thresholds", "rows": 6, "cols": 7, "is_empty": false}], "by_model": {"CRE PD Model": {"model_name": "CRE PD Model", "rows": 144, "unique_accounts": 144, "pct_of_portfolio": 14.4, "threshold_coverages": []}, "Corporate PD Model": {"model_name": "Corporate PD Model", "rows": 856, "unique_accounts": 856, "pct_of_portfolio": 85.6, "threshold_coverages": []}}}}, "monitoring_thresholds": {"pd_thresholds": [{"metric": "Actual / Expected Ratio", "dimension": "Calibration Conservatism", "green_rule": "0.75 <= value <= 1.25", "amber_rule": "0.60 <= value < 0.75 OR 1.25 < value <= 1.50", "red_rule": "value < 0.60 OR value > 1.50", "green_min": 0.75, "green_max": 1.25, "amber_min": 0.6, "amber_max": 1.5, "red_condition": "outside amber range", "higher_is_better": false, "lower_is_better": false, "target_value": 1.0, "warning_message": null, "notes": "Distance to 1.0 is used for movement direction."}, {"metric": "Accuracy Ratio", "dimension": "Discriminatory Power", "green_rule": "value >= 0.45", "amber_rule": "0.35 <= value < 0.45", "red_rule": "value < 0.35", "green_min": 0.45, "green_max": NaN, "amber_min": 0.35, "amber_max": 0.45, "red_condition": "below amber_min", "higher_is_better": true, "lower_is_better": false, "target_value": NaN, "warning_message": "No defaults in latest monitoring snapshot", "notes": "Requires both default and non-default observations."}, {"metric": "Gini Coefficient", "dimension": "Discriminatory Power", "green_rule": "value >= 0.45", "amber_rule": "0.35 <= value < 0.45", "red_rule": "value < 0.35", "green_min": 0.45, "green_max": NaN, "amber_min": 0.35, "amber_max": 0.45, "red_condition": "below amber_min", "higher_is_better": true, "lower_is_better": false, "target_value": NaN, "warning_message": "No defaults in latest monitoring snapshot", "notes": "Requires both default and non-default observations."}, {"metric": "KS Statistic", "dimension": "Discriminatory Power", "green_rule": "value >= 0.35", "amber_rule": "0.25 <= value < 0.35", "red_rule": "value < 0.25", "green_min": 0.35, "green_max": NaN, "amber_min": 0.25, "amber_max": 0.35, "red_condition": "below amber_min", "higher_is_better": true, "lower_is_better": false, "target_value": NaN, "warning_message": "No defaults in latest monitoring snapshot", "notes": "Requires both default and non-default observations."}, {"metric": "Brier Score", "dimension": "Performance", "green_rule": "value <= 0.03", "amber_rule": "0.03 < value <= 0.06", "red_rule": "value > 0.06", "green_min": NaN, "green_max": 0.03, "amber_min": 0.03, "amber_max": 0.06, "red_condition": "above amber_max", "higher_is_better": false, "lower_is_better": true, "target_value": NaN, "warning_message": null, "notes": "Lower is better."}, {"metric": "Population Stability Index", "dimension": "Performance", "green_rule": "value <= 0.10", "amber_rule": "0.10 < value <= 0.25", "red_rule": "value > 0.25", "green_min": NaN, "green_max": 0.1, "amber_min": 0.1, "amber_max": 0.25, "red_condition": "above amber_max", "higher_is_better": false, "lower_is_better": true, "target_value": NaN, "warning_message": null, "notes": "Lower is better."}, {"metric": "Rating Migration Index", "dimension": "Performance", "green_rule": "value <= 0.25", "amber_rule": "0.25 < value <= 0.50", "red_rule": "value > 0.50", "green_min": NaN, "green_max": 0.25, "amber_min": 0.25, "amber_max": 0.5, "red_condition": "above amber_max", "higher_is_better": false, "lower_is_better": true, "target_value": NaN, "warning_message": null, "notes": "Lower is better."}, {"metric": "Notching Test", "dimension": "Calibration Conservatism", "green_rule": "value == 0", "amber_rule": "0 < value <= 1", "red_rule": "value > 1", "green_min": 0.0, "green_max": 0.0, "amber_min": 0.0, "amber_max": 1.0, "red_condition": "above amber_max", "higher_is_better": false, "lower_is_better": true, "target_value": 0.0, "warning_message": null, "notes": "Lower is better; zero violations is ideal."}, {"metric": "Kendall's Tau", "dimension": "Discriminatory Power", "green_rule": "value >= 0.25", "amber_rule": "0.15 <= value < 0.25", "red_rule": "value < 0.15", "green_min": 0.25, "green_max": NaN, "amber_min": 0.15, "amber_max": 0.25, "red_condition": "below amber_min", "higher_is_better": true, "lower_is_better": false, "target_value": NaN, "warning_message": "No defaults in latest monitoring snapshot", "notes": "Requires both default and non-default observations."}, {"metric": "Observed Default Rate", "dimension": "Reference", "green_rule": "No RAG", "amber_rule": "No RAG", "red_rule": "No RAG", "green_min": NaN, "green_max": NaN, "amber_min": NaN, "amber_max": NaN, "red_condition": "no_rag", "higher_is_better": false, "lower_is_better": true, "target_value": NaN, "warning_message": null, "notes": "Display metric only."}, {"metric": "Predicted Default Rate", "dimension": "Reference", "green_rule": "No RAG", "amber_rule": "No RAG", "red_rule": "No RAG", "green_min": NaN, "green_max": NaN, "amber_min": NaN, "amber_max": NaN, "red_condition": "no_rag", "higher_is_better": false, "lower_is_better": true, "target_value": NaN, "warning_message": null, "notes": "Display metric only."}], "lgd_thresholds": [{"metric": "ME", "dimension": "Performance", "green_rule": "abs(value) <= 0.03", "amber_rule": "0.03 < abs(value) <= 0.06", "red_rule": "abs(value) > 0.06", "green_min": -0.03, "green_max": 0.03, "amber_min": -0.06, "amber_max": 0.06, "red_condition": "abs above amber_max", "higher_is_better": false, "lower_is_better": true, "target_value": 0.0, "notes": "Mean error; closer to 0 is better."}, {"metric": "RMSE", "dimension": "Performance", "green_rule": "value <= 0.15", "amber_rule": "0.15 < value <= 0.25", "red_rule": "value > 0.25", "green_min": NaN, "green_max": 0.15, "amber_min": 0.15, "amber_max": 0.25, "red_condition": "above amber_max", "higher_is_better": false, "lower_is_better": true, "target_value": NaN, "notes": "Lower is better."}, {"metric": "Kendall's Tau", "dimension": "Rank Ordering", "green_rule": "value >= 0.50", "amber_rule": "0.30 <= value < 0.50", "red_rule": "value < 0.30", "green_min": 0.5, "green_max": NaN, "amber_min": 0.3, "amber_max": 0.5, "red_condition": "below amber_min", "higher_is_better": true, "lower_is_better": false, "target_value": NaN, "notes": "Higher is better."}, {"metric": "Actual / Expected LGD", "dimension": "Calibration", "green_rule": "0.85 <= value <= 1.15", "amber_rule": "0.75 <= value < 0.85 OR 1.15 < value <= 1.25", "red_rule": "value < 0.75 OR value > 1.25", "green_min": 0.85, "green_max": 1.15, "amber_min": 0.75, "amber_max": 1.25, "red_condition": "outside amber range", "higher_is_better": false, "lower_is_better": false, "target_value": 1.0, "notes": "Distance to 1.0 is used."}, {"metric": "Recovery Rate", "dimension": "Reference", "green_rule": "No RAG", "amber_rule": "No RAG", "red_rule": "No RAG", "green_min": NaN, "green_max": NaN, "amber_min": NaN, "amber_max": NaN, "red_condition": "no_rag", "higher_is_better": true, "lower_is_better": false, "target_value": NaN, "notes": "Display metric only."}], "ead_thresholds": [{"metric": "ME", "dimension": "Performance", "green_rule": "abs(value) <= 0.03", "amber_rule": "0.03 < abs(value) <= 0.06", "red_rule": "abs(value) > 0.06", "green_min": -0.03, "green_max": 0.03, "amber_min": -0.06, "amber_max": 0.06, "red_condition": "abs above amber_max", "higher_is_better": false, "lower_is_better": true, "target_value": 0.0, "notes": "Mean error; closer to 0 is better."}, {"metric": "RMSE", "dimension": "Performance", "green_rule": "value <= 0.15", "amber_rule": "0.15 < value <= 0.25", "red_rule": "value > 0.25", "green_min": NaN, "green_max": 0.15, "amber_min": 0.15, "amber_max": 0.25, "red_condition": "above amber_max", "higher_is_better": false, "lower_is_better": true, "target_value": NaN, "notes": "Lower is better."}, {"metric": "Kendall's Tau", "dimension": "Rank Ordering", "green_rule": "value >= 0.50", "amber_rule": "0.30 <= value < 0.50", "red_rule": "value < 0.30", "green_min": 0.5, "green_max": NaN, "amber_min": 0.3, "amber_max": 0.5, "red_condition": "below amber_min", "higher_is_better": true, "lower_is_better": false, "target_value": NaN, "notes": "Higher is better."}, {"metric": "Actual / Expected EAD", "dimension": "Calibration", "green_rule": "0.85 <= value <= 1.15", "amber_rule": "0.75 <= value < 0.85 OR 1.15 < value <= 1.25", "red_rule": "value < 0.75 OR value > 1.25", "green_min": 0.85, "green_max": 1.15, "amber_min": 0.75, "amber_max": 1.25, "red_condition": "outside amber range", "higher_is_better": false, "lower_is_better": false, "target_value": 1.0, "notes": "Distance to 1.0 is used."}, {"metric": "CCF", "dimension": "Reference", "green_rule": "No RAG", "amber_rule": "No RAG", "red_rule": "No RAG", "green_min": NaN, "green_max": NaN, "amber_min": NaN, "amber_max": NaN, "red_condition": "no_rag", "higher_is_better": false, "lower_is_better": true, "target_value": NaN, "notes": "Display metric only."}, {"metric": "Utilization Rate", "dimension": "Reference", "green_rule": "No RAG", "amber_rule": "No RAG", "red_rule": "No RAG", "green_min": NaN, "green_max": NaN, "amber_min": NaN, "amber_max": NaN, "red_condition": "no_rag", "higher_is_better": false, "lower_is_better": true, "target_value": NaN, "notes": "Display metric only."}], "loss_thresholds": [], "scenario_test_thresholds": [{"test": "Scenario Rank Ordering", "model_type": "PD", "green_rule": "Observed scenario order equals Upward < Base < Severe", "red_rule": "Any rank inversion", "threshold": NaN, "expected_order": "Upward < Base < Severe", "notes": "Used in Scenario Tests view."}, {"test": "Scenario Rank Ordering", "model_type": "LGD", "green_rule": "Observed scenario order equals Upward < Base < Severe", "red_rule": "Any rank inversion", "threshold": NaN, "expected_order": "Upward < Base < Severe", "notes": "Used in Scenario Tests view."}, {"test": "Scenario Rank Ordering", "model_type": "EAD", "green_rule": "Observed scenario order equals Upward < Base < Severe", "red_rule": "Any rank inversion", "threshold": NaN, "expected_order": "Upward < Base < Severe", "notes": "Used in Scenario Tests view."}, {"test": "Sensitivity Analysis", "model_type": "PD", "green_rule": "abs(output - base) / base <= threshold", "red_rule": "abs(output - base) / base > threshold", "threshold": 0.15, "expected_order": null, "notes": "Base vs +/- 2 SD."}, {"test": "Sensitivity Analysis", "model_type": "LGD", "green_rule": "abs(output - base) / base <= threshold", "red_rule": "abs(output - base) / base > threshold", "threshold": 0.15, "expected_order": null, "notes": "Base vs +/- 2 SD."}, {"test": "Sensitivity Analysis", "model_type": "EAD", "green_rule": "abs(output - base) / base <= threshold", "red_rule": "abs(output - base) / base > threshold", "threshold": 0.15, "expected_order": null, "notes": "Base vs +/- 2 SD."}]}, "dashboard_type": "monitoring"};
+const DASHBOARD_TYPE = 'monitoring';
+let CQ = DASH_DATA.latest_quarter;
+let PQ = DASH_DATA.prior_quarter;
+
+// ── MONITORING HELPERS ─────────────────────────────────────────
+const fmtN = (v) => v == null ? '—' : (+v).toLocaleString('en-US');
+
+function qLabel(q) {
+  return q ? q.slice(0,4)+' Q'+q[5] : '';
+}
+
+
+let activeTab = 'overview';
+function switchTab(tabId) {
+  document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  document.getElementById('tab-'+tabId).classList.add('active');
+  document.querySelector(`[data-tab="${tabId}"]`).classList.add('active');
+  activeTab = tabId;
+  renderTab(tabId);  syncMonitoringFilterControls();}
+
+function renderTab(tabId) {
+  const renders = {
+    overview     : renderOverview,
+    pd_models    : renderPdModels
+  };
+  if (renders[tabId]) renders[tabId]();
+}
+
+
+function renderOverview() {
+  const m = DASH_DATA.monitoring || {};
+  const overview = m.overview || {};
+  const sheets = overview.sheet_summary || [];
+
+  const cards = [
+    {
+      title: 'Portfolio records',
+      value: fmtN(overview.portfolio_records || 0),
+      detail: overview.latest_quarter ? `Latest quarter: ${qLabel(overview.latest_quarter)}` : 'No quarter data',
+    },
+    {
+      title: 'Unique accounts',
+      value: fmtN(overview.unique_accounts || 0),
+      detail: 'ID column from config',
+    },
+    {
+      title: 'Threshold sheets',
+      value: overview.threshold_sheet_count || 0,
+      detail: `${overview.empty_threshold_sheets || 0} empty`,
+    },
+    {
+      title: 'Threshold rows',
+      value: fmtN(overview.total_threshold_rows || 0),
+      detail: overview.thresholds_file || 'No threshold file',
+    },
+  ];
+
+  const cardsHtml = cards.map(c => `
+    <div class="kpi-card">
+      <div class="kpi-card-title">${c.title}</div>
+      <div class="kpi-card-value">${c.value}</div>
+      <div class="kpi-card-subtext">${c.detail}</div>
+    </div>`).join('');
+
+  const sheetRows = sheets.map(s => `
+    <tr>
+      <td>${s.sheet_name}</td>
+      <td style="text-align:right">${fmtN(s.rows)}</td>
+      <td style="text-align:right">${fmtN(s.cols)}</td>
+      <td>${s.is_empty ? '<span class="badge badge-critical">Empty</span>' : '<span class="badge badge-green">Loaded</span>'}</td>
+    </tr>
+  `).join('');
+
+  document.getElementById('tab-overview').innerHTML = `
+    <div class="dash-header">
+      <h2>Monitoring Overview — ${qLabel(CQ)}</h2>
+      <p>${overview.overview_text}</p>
+    </div>
+
+    <div class="grid-3" style="gap:16px;margin-bottom:20px">
+      ${cardsHtml}
+    </div>
+
+    <div class="grid-2">
+      <div class="section-card">
+        <div class="section-title">Threshold sheets loaded</div>
+        <div id="mon-chart-sheets" class="chart-box"></div>
+      </div>
+      <div class="section-card">
+        <div class="section-title">Sheet details</div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Sheet</th>
+                <th style="text-align:right">Rows</th>
+                <th style="text-align:right">Cols</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${sheetRows || '<tr><td colspan="4" style="text-align:center;color:#94a3b8;padding:20px">No threshold sheets found.</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+
+  drawMonitoringChart();
+}
+
+function drawMonitoringChart() {
+  if (!document.getElementById('mon-chart-sheets')) return;
+  const overview = (DASH_DATA.monitoring || {}).overview || {};
+  const sheets = overview.sheet_summary || [];
+
+  const trace = {
+    x: sheets.map(s => s.sheet_name),
+    y: sheets.map(s => s.rows),
+    type: 'bar',
+    marker: {color: '#2563eb'},
+    text: sheets.map(s => fmtN(s.rows)),
+    textposition: 'auto',
+  };
+  const layout = {
+    margin: {t:16, r:16, b:50, l:50},
+    height: 280,
+    paper_bgcolor: 'rgba(0,0,0,0)',
+    plot_bgcolor: 'rgba(0,0,0,0)',
+    xaxis: {tickangle: -45, automargin: true, tickfont: {size: 11}},
+    yaxis: {title: 'Rows', gridcolor: '#f1f5f9', tickfont: {size: 10}},
+    showlegend: false,
+  };
+  Plotly.react('mon-chart-sheets', [trace], layout, {responsive: true, displayModeBar: false});
+}
+
+
+function renderPdModels() {{
+  const pd = (DASH_DATA.monitoring || {{}}).pd_models || {{}};
+  const names = pd.model_names || [];
+  const byModel = pd.by_model || {{}};
+
+  const cards = [
+    {{
+      title: 'PD Models',
+      value: fmtN(names.length),
+      detail: 'Unique models in portfolio',
+    }},
+    {{
+      title: 'Portfolio records',
+      value: fmtN(pd.portfolio_records || 0),
+      detail: pd.latest_quarter ? `Latest quarter: ${{qLabel(pd.latest_quarter)}}` : 'No quarter data',
+    }},
+    {{
+      title: 'Unique accounts',
+      value: fmtN(pd.portfolio_unique_accounts || 0),
+      detail: 'Based on portfolio ID column',
+    }},
+  ];
+
+  const cardsHtml = cards.map(c => `
+    <div class="kpi-card">
+      <div class="kpi-card-title">${{c.title}}</div>
+      <div class="kpi-card-value">${{c.value}}</div>
+      <div class="kpi-card-subtext">${{c.detail}}</div>
+    </div>`).join('');
+
+  const rowsHtml = names.map(name => {
+    const item = byModel[name] || {};
+    return `
+      <tr>
+        <td>${{name}}</td>
+        <td style="text-align:right">${{fmtN(item.rows)}}</td>
+        <td style="text-align:right">${{fmtN(item.unique_accounts)}}</td>
+        <td style="text-align:right">${{fmtN(item.pct_of_portfolio)}}%</td>
+      </tr>`;
+  }).join('');
+
+  document.getElementById('tab-pd_models').innerHTML = `
+    <div class="dash-header">
+      <h2>PD Models</h2>
+      <p>Review portfolio PD model coverage and counts by model.</p>
+    </div>
+
+    <div class="grid-3" style="gap:16px;margin-bottom:20px">
+      ${{cardsHtml}}
+    </div>
+
+    <div class="section-card">
+      <div class="section-title">PD model portfolio distribution</div>
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Model</th>
+              <th style="text-align:right">Records</th>
+              <th style="text-align:right">Accounts</th>
+              <th style="text-align:right">Portfolio %</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${{rowsHtml || '<tr><td colspan="4" style="text-align:center;color:#94a3b8;padding:20px">No PD model data available.</td></tr>'}}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}}
+
+
+// ── Monitoring selectors ────────────────────────────────────────
+let MONITORING_METRIC_SEGMENT = 'all';
+let MONITORING_PORTFOLIO_SEGMENT = 'all';
+let MONITORING_MODELS = [];
+let MONITORING_FILTER_MODE = 'group';
+
+function initSelectors() {
+  const sel = document.getElementById('monitoring-quarter-select');
+  if (sel) {
+    const quarters = (DASH_DATA.quarters || []).slice().filter(Boolean);
+    quarters.sort((a,b) => (a>b ? -1 : (a<b ? 1 : 0)));
+    [...new Set(quarters)].forEach(q => {
+      const opt = document.createElement('option');
+      opt.value = q;
+      opt.text = qLabel(q);
+      if (q === CQ) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  }
+  syncMonitoringFilterControls();
+}
+function setCurrentQuarter(q) { CQ=q; renderAll(); }
+function setMonitoringFilterMode(mode) {
+  if (mode !== 'group' && mode !== 'models') return;
+  MONITORING_FILTER_MODE = mode;
+  syncMonitoringFilterControls();
+  renderAll();
+}
+function setMonitoringSegment(which, value) {
+  if (which === 'metric') MONITORING_METRIC_SEGMENT = value;
+  if (which === 'portfolio') MONITORING_PORTFOLIO_SEGMENT = value;
+  syncMonitoringFilterControls();
+  renderAll();
+}
+function setMonitoringModels(changedInput) {
+  const inputs = Array.from(document.querySelectorAll('#monitoring-model-menu input[type="checkbox"]'));
+  const allInput = inputs.find(input => input.hasAttribute('data-model-all'));
+  const modelInputs = inputs.filter(input => !input.hasAttribute('data-model-all'));
+  if (changedInput && changedInput.hasAttribute('data-model-all')) {
+    modelInputs.forEach(input => { input.checked = changedInput.checked; });
+  } else if (allInput) {
+    allInput.checked = modelInputs.length > 0 && modelInputs.every(input => input.checked);
+  }
+  MONITORING_MODELS = modelInputs.filter(input => input.checked).map(input => input.value);
+  syncMonitoringFilterControls();
+  renderAll();
+}
+function syncMonitoringFilterControls() {
+  const groupMode = MONITORING_FILTER_MODE === 'group';
+  const modelMode = MONITORING_FILTER_MODE === 'models';
+  const metricSelect = document.getElementById('monitoring-metric-segment-select');
+  const portfolioSelect = document.getElementById('monitoring-portfolio-segment-select');
+  const toggle = document.getElementById('monitoring-model-toggle');
+  const menu = document.getElementById('monitoring-model-menu');
+  const inputs = document.querySelectorAll('#monitoring-model-menu input[type="checkbox"]');
+  const groupButton = document.getElementById('monitoring-mode-group');
+  const modelsButton = document.getElementById('monitoring-mode-models');
+  const help = document.getElementById('monitoring-filter-help');
+
+  if (groupMode) {
+    MONITORING_MODELS = [];
+    inputs.forEach(input => { input.checked = false; });
+    if (menu) menu.classList.remove('open');
+  }
+
+  const modelGroupFilter = document.querySelector('.monitoring-model-group-filter');
+  if (modelGroupFilter) {
+    modelGroupFilter.style.display = activeTab === 'pd_models' ? 'none' : 'flex';
+  }
+
+  if (metricSelect) metricSelect.disabled = !groupMode;
+  if (portfolioSelect) portfolioSelect.disabled = !groupMode;
+  inputs.forEach(input => { input.disabled = !modelMode; });
+
+  if (toggle) {
+    toggle.disabled = !modelMode;
+    if (!modelMode) toggle.textContent = 'Switch mode to select models';
+    else if (!MONITORING_MODELS.length) toggle.textContent = 'Select models';
+    else if (MONITORING_MODELS.length === 6) toggle.textContent = 'All models';
+    else if (MONITORING_MODELS.length === 1) toggle.textContent = MONITORING_MODELS[0];
+    else toggle.textContent = `${MONITORING_MODELS.length} models selected`;
+  }
+
+  if (groupButton) groupButton.classList.toggle('active', groupMode);
+  if (modelsButton) modelsButton.classList.toggle('active', modelMode);
+  if (help) {
+    help.textContent = groupMode
+      ? 'Choose a model group and segment. Switch to Specific Models to select individual models.'
+      : 'Results include any selected model. Model Group and Segment are disabled in this mode.';
+  }
+}
+function toggleMonitoringModelMenu(e) {
+  if (e) e.stopPropagation();
+  const toggle = document.getElementById('monitoring-model-toggle');
+  const menu = document.getElementById('monitoring-model-menu');
+  if (toggle && !toggle.disabled && menu) menu.classList.toggle('open');
+}
+function renderAll() { renderTab(activeTab); }
+
+// ── Footer & sidebar ───────────────────────────────────────────
+function initFooter() {
+  document.getElementById('footer-data-as-of').textContent = 'Data as of: '+DASH_DATA.data_as_of;
+  document.getElementById('footer-source').textContent     = 'Source: '+DASH_DATA.source;
+  document.getElementById('footer-run-id').textContent     = 'Run ID: '+DASH_DATA.run_id;
+  document.getElementById('footer-refresh').textContent    = 'Last refresh: '+DASH_DATA.last_refresh;
+  document.getElementById('sidebar-footer').innerHTML =
+    `Data as of:<br>${DASH_DATA.data_as_of}<br><br>Last refresh:<br>${DASH_DATA.last_refresh}`;
+}
+
+// ── PDF Export ─────────────────────────────────────────────────
+function _showExportOverlay(msg, sub) {
+  let ov = document.getElementById('export-overlay');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'export-overlay';
+    ov.className = 'export-overlay';
+    ov.innerHTML = `<div class="export-overlay-card">
+      <div class="spinner"></div>
+      <div class="msg" id="export-overlay-msg">${msg}</div>
+      <div class="sub" id="export-overlay-sub">${sub||''}</div>
+    </div>`;
+    document.body.appendChild(ov);
+  } else {
+    document.getElementById('export-overlay-msg').textContent = msg;
+    document.getElementById('export-overlay-sub').textContent = sub||'';
+  }
+  ov.classList.add('active');
+}
+function _hideExportOverlay() {
+  const ov = document.getElementById('export-overlay');
+  if (ov) ov.classList.remove('active');
+}
+async function exportData() {
+  if (typeof html2pdf === 'undefined') {
+    alert('PDF library failed to load. Check your internet connection and reload the page.');
+    return;
+  }
+  const tab = document.getElementById('tab-' + activeTab);
+  if (!tab) return;
+  const filename = `Monitoring_Dashboard_${CQ}.pdf`;
+  _showExportOverlay('Generating PDF...', `Capturing monitoring overview (${qLabel(CQ)})`);
+  document.body.classList.add('exporting-pdf');
+  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+  try {
+    await html2pdf().from(tab).set({
+      margin: [8, 8, 12, 8],
+      filename,
+      image: {type:'jpeg',quality:.96},
+      html2canvas: {scale:2,useCORS:true,backgroundColor:'#ffffff',logging:false},
+      jsPDF: {unit:'mm',format:'a3',orientation:'landscape',compress:true},
+    }).save();
+    _showExportOverlay('PDF downloaded', filename);
+    setTimeout(_hideExportOverlay, 1200);
+  } catch (e) {
+    console.error('PDF export failed:', e);
+    _showExportOverlay('Export failed', e.message || 'Unknown error');
+    setTimeout(_hideExportOverlay, 2500);
+  } finally {
+    document.body.classList.remove('exporting-pdf');
+  }
+}
+async function exportAllTabs() { await exportData(); }
+function toggleExportMenu(e) {
+  if (e) e.stopPropagation();
+  const m = document.getElementById('export-menu');
+  if (m) m.classList.toggle('open');
+}
+function closeExportMenu() {
+  const m = document.getElementById('export-menu');
+  if (m) m.classList.remove('open');
+}
+document.addEventListener('click', (e) => {
+  const wrap = e.target.closest('.export-menu-wrap');
+  if (!wrap) closeExportMenu();
+  const modelWrap = e.target.closest('.checkbox-dropdown');
+  if (!modelWrap) {
+    const menu = document.getElementById('monitoring-model-menu');
+    if (menu) menu.classList.remove('open');
+  }
+});
+
+// INIT (runs at script load)
+(function init() {
+  initSelectors();
+  initFooter();
+  document.querySelector('[data-tab="overview"]').classList.add('active');
+  renderOverview();
+})();
+
+</script>
+</body>
+</html>
