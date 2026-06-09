@@ -150,12 +150,12 @@ const PD_TIME_RANGES = {
   discrimination_accuracy: {from: '', to: ''},
   discrimination_rag: {from: '', to: ''},
   discrimination: {from: '', to: ''},
+  mev: {from: '', to: ''},
   stability: {from: '', to: ''},
 };
+const PD_RANGE_PERIOD_OVERRIDES = {};
 let PD_CALIBRATION_TREND_HORIZON = '1y';
 let PD_DISCRIMINATION_TREND_HORIZON = '1y';
-let PD_EXPANDED_PANEL = null;
-let PD_EXPANDED_PLACEHOLDER = null;
 const PD_GO_LIVE_QUARTER_START = '2019Q2';
 const PD_GO_LIVE_QUARTER_END = '2019Q4';
 
@@ -178,6 +178,12 @@ function filterPdPeriodsByRange(rangeKey, periods) {
   return periods.filter(period => (!range.from || period >= range.from) && (!range.to || period <= range.to));
 }
 
+function getPdRangeSourcePeriods(rangeKey, maxQuarter) {
+  const overridePeriods = PD_RANGE_PERIOD_OVERRIDES[rangeKey] || [];
+  if (overridePeriods.length) return overridePeriods.slice();
+  return getPdRangePeriods(maxQuarter);
+}
+
 function getPdRangePreset(rangeKey, periods) {
   const range = getPdRangeSelection(rangeKey, periods);
   if (!range.from && !range.to) return 'all';
@@ -191,7 +197,7 @@ function getPdRangePreset(rangeKey, periods) {
 
 function setPdRangePreset(rangeKey, preset, maxQuarter) {
   if (!PD_TIME_RANGES[rangeKey]) return;
-  const periods = getPdRangePeriods(maxQuarter);
+  const periods = getPdRangeSourcePeriods(rangeKey, maxQuarter);
   if (preset === 'all') {
     PD_TIME_RANGES[rangeKey] = {from: '', to: ''};
   } else {
@@ -224,6 +230,7 @@ function buildPdPeriodOptions(periods, selected, allLabel) {
 }
 
 function buildPdRangeControls(rangeKey, periods, maxQuarter) {
+  PD_RANGE_PERIOD_OVERRIDES[rangeKey] = periods.slice();
   const range = getPdRangeSelection(rangeKey, periods);
   const preset = getPdRangePreset(rangeKey, periods);
   return `
@@ -303,12 +310,6 @@ function buildPdFrozenOneYearHorizonControl(label = 'PD Horizon') {
     </div>`;
 }
 
-function pdExpandButton(panelId, title) {
-  return `<button type="button" class="pd-expand-button" onclick="openPdExpandedPanel('${panelId}')" aria-label="Enlarge ${title}" title="Enlarge ${title}">
-    <span aria-hidden="true">&#x26F6;</span><span>Enlarge</span>
-  </button>`;
-}
-
 function buildPdChartHeader(title, subtitle, panelId, rangeKey = '', periods = [], maxQuarter = '', extraControls = '') {
   return `
     <div class="pd-chart-heading">
@@ -319,64 +320,8 @@ function buildPdChartHeader(title, subtitle, panelId, rangeKey = '', periods = [
       <div class="pd-chart-actions">
         ${extraControls}
         ${rangeKey ? buildPdRangeControls(rangeKey, periods, maxQuarter) : ''}
-        ${pdExpandButton(panelId, title)}
       </div>
     </div>`;
-}
-
-function resizePdPanelCharts(panel, expanded) {
-  if (!panel || typeof Plotly === 'undefined') return;
-  panel.querySelectorAll('.js-plotly-plot').forEach(chart => {
-    if (!chart.__pdBaseHeight) chart.__pdBaseHeight = (chart.layout && chart.layout.height) || chart.offsetHeight;
-    Plotly.relayout(chart, {height: expanded ? Math.max(520, window.innerHeight - 210) : chart.__pdBaseHeight});
-    requestAnimationFrame(() => Plotly.Plots.resize(chart));
-  });
-}
-
-function openPdExpandedPanel(panelId) {
-  closePdExpandedPanel(false);
-  const panel = document.getElementById(panelId);
-  const modal = document.getElementById('pd-expanded-modal');
-  const modalBody = document.getElementById('pd-expanded-modal-body');
-  const modalTitle = document.getElementById('pd-expanded-modal-title');
-  if (!panel || !modal || !modalBody || !modalTitle) return;
-
-  PD_EXPANDED_PANEL = panel;
-  PD_EXPANDED_PLACEHOLDER = document.createComment(`Restore ${panelId}`);
-  panel.parentNode.insertBefore(PD_EXPANDED_PLACEHOLDER, panel);
-  modalTitle.textContent = panel.dataset.pdExpandTitle || 'PD Analysis';
-  modalBody.appendChild(panel);
-  panel.classList.add('pd-expanded-panel');
-  modal.classList.add('active');
-  modal.setAttribute('aria-hidden', 'false');
-  document.body.classList.add('pd-modal-open');
-  document.getElementById('pd-expanded-modal-close').focus();
-  requestAnimationFrame(() => resizePdPanelCharts(panel, true));
-}
-
-function closePdExpandedPanel(restoreFocus = true) {
-  const modal = document.getElementById('pd-expanded-modal');
-  if (!PD_EXPANDED_PANEL || !PD_EXPANDED_PLACEHOLDER) return;
-  const panelId = PD_EXPANDED_PANEL.id;
-  resizePdPanelCharts(PD_EXPANDED_PANEL, false);
-  PD_EXPANDED_PLACEHOLDER.parentNode.insertBefore(PD_EXPANDED_PANEL, PD_EXPANDED_PLACEHOLDER);
-  PD_EXPANDED_PLACEHOLDER.remove();
-  PD_EXPANDED_PANEL.classList.remove('pd-expanded-panel');
-  PD_EXPANDED_PANEL = null;
-  PD_EXPANDED_PLACEHOLDER = null;
-  if (modal) {
-    modal.classList.remove('active');
-    modal.setAttribute('aria-hidden', 'true');
-  }
-  document.body.classList.remove('pd-modal-open');
-  if (restoreFocus) {
-    const button = document.querySelector(`[onclick="openPdExpandedPanel('${panelId}')"]`);
-    if (button) button.focus();
-  }
-}
-
-function handlePdModalKeydown(event) {
-  if (event.key === 'Escape') closePdExpandedPanel();
 }
 
 function calculatePdBrierScore(rows) {
@@ -1042,34 +987,51 @@ function calculatePdCalibrationConservatismRag(pd, observations, ratingObservati
 
 function buildPdCalibrationTooltip(details) {
   if (!details || !details.horizons || !details.horizons.length) {
-    return 'Calibration Conservatism is based on weighted RAG Assignment by EAD share.';
+    return 'Calibration Conservatism RAG (ECL PIT) combines the 1-year and 2-year RAG Assignment results using EAD share weights. Higher scores are better: Green = 3, Amber = 2, Red = 1. The required inputs are unavailable for the current filtered population.';
   }
   const pieces = details.horizons.map(horizon => (
-    `${horizon.key === '1y' ? '1y' : '2y'} ${horizon.rag}= ${horizon.score} x ${(horizon.weight * 100).toFixed(1)}%`
-  ));
+    `${horizon.key === '1y' ? '1-year RAG Assignment' : '2-year RAG Assignment'}: ${horizon.rag} (${horizon.score}) x ${(horizon.weight * 100).toFixed(1)}%`
+  )).join('; ');
   const weightedLabel = details.weightedAverage == null || !Number.isFinite(details.weightedAverage)
     ? '—'
     : details.weightedAverage.toFixed(2);
   const roundedLabel = details.roundedScore == null || !Number.isFinite(details.roundedScore)
     ? '—'
     : `${details.roundedScore}`;
-  return `Calibration Conservatism = weighted RAG Assignment by EAD share.\n${pieces.join(' + ')} = ${weightedLabel}\nRounded score: ${roundedLabel} -> ${details.rag}`;
+  if (details.weightedAverage == null || !Number.isFinite(details.weightedAverage) || details.roundedScore == null || !Number.isFinite(details.roundedScore)) {
+    return `Calibration Conservatism RAG (ECL PIT) combines the 1-year and 2-year RAG Assignment results using EAD share weights. Higher scores are better: Green = 3, Amber = 2, Red = 1. Current inputs: ${pieces}. One or more inputs are unavailable, so the final Calibration Conservatism RAG is ${details.rag}.`;
+  }
+  return `Calibration Conservatism RAG (ECL PIT) combines the 1-year and 2-year RAG Assignment results using EAD share weights. Higher scores are better: Green = 3, Amber = 2, Red = 1. Current inputs: ${pieces}. Weighted average score = ${weightedLabel}. Rounded score = ${roundedLabel}, so the final Calibration Conservatism RAG is ${details.rag}.`;
 }
 
-function buildPdCalibrationNote(details) {
-  if (!details || !details.horizons || !details.horizons.length) {
-    return 'Weighted RAG Assignment by EAD share is unavailable for the current filtered population.';
+function formatPdConfidenceBucketLabel(bucket) {
+  if (bucket === 'pLow') return 'p < 5%';
+  if (bucket === 'pMid') return '5% <= p <= 90%';
+  if (bucket === 'pHigh') return '90% < p <= 97.5%';
+  if (bucket === 'pVeryHigh') return 'p > 97.5%';
+  return '—';
+}
+
+function formatPdSignedNotchingLabel(value) {
+  if (value == null || !Number.isFinite(value)) return '—';
+  const rounded = Math.round(value);
+  return rounded > 0 ? `+${rounded}` : `${rounded}`;
+}
+
+function buildPdCalibrationAssignmentTooltip(label, confidenceInterval, signedNotchingDifference, lookupRag, displayedRag, confidenceRag, notchingRag) {
+  const confidenceBucket = getPdConfidenceIntervalBucket(confidenceInterval);
+  const notchingBucket = getPdNotchingBucket(signedNotchingDifference);
+  const lookupLabel = lookupRag || 'N/A';
+  const fallbackActive = lookupLabel === 'N/A' && displayedRag && displayedRag !== 'N/A';
+  const fallbackText = fallbackActive
+    ? ` The lookup result is unavailable, so the card falls back to the worse of Confidence Interval Test (${confidenceRag || 'N/A'}) and Notching Test (${notchingRag || 'N/A'}): ${displayedRag}.`
+    : ` Final displayed RAG = ${displayedRag || 'N/A'}.`;
+
+  if (!confidenceBucket || !notchingBucket) {
+    return `RAG Assignment ${label} is determined from a lookup table using the Confidence Interval Test bucket and the signed notch difference bucket (predicted notch minus actual notch). The signed notch difference is not the same as the absolute Notching Test shown in the KPI card. One or more current inputs are unavailable, so the direct lookup result is ${lookupLabel}.${fallbackText}`;
   }
-  const horizonMap = Object.fromEntries(details.horizons.map(horizon => [horizon.key, horizon]));
-  const weightedLabel = details.weightedAverage == null || !Number.isFinite(details.weightedAverage)
-    ? '—'
-    : details.weightedAverage.toFixed(2);
-  const formatPiece = key => {
-    const horizon = horizonMap[key];
-    if (!horizon) return `EAD ${key} (—) * RAG Assignment ${key} (—=—)`;
-    return `EAD ${key} (${(horizon.weight * 100).toFixed(1)}%) * RAG Assignment ${key} (${horizon.rag}=${horizon.score})`;
-  };
-  return `${formatPiece('1y')} + ${formatPiece('2y')} = ${weightedLabel}`;
+
+  return `RAG Assignment ${label} is determined from a lookup table using the Confidence Interval Test bucket and the signed notch difference bucket (predicted notch minus actual notch). The signed notch difference is not the same as the absolute Notching Test shown in the KPI card. Current inputs: Confidence Interval = ${formatPdMetric(confidenceInterval, 'percent')} (${formatPdConfidenceBucketLabel(confidenceBucket)}); signed notch difference = ${formatPdSignedNotchingLabel(signedNotchingDifference)} (${notchingBucket}). Direct lookup result = ${lookupLabel}.${fallbackText}`;
 }
 
 function pdStatusLabel(rag) {
@@ -1279,6 +1241,24 @@ function buildPdEadCard(currentSummary, previousSummary, context, options = {}) 
     </article>`;
 }
 
+function buildPdStaticInfoCard(title, value, metaRows = [], options = {}) {
+  return `
+    <article class="pd-test-card ${options.extraClass || ''}">
+      <div class="pd-test-card-heading">
+        <div>
+          ${options.testLabel ? `<span>${escapePdHtml(options.testLabel)}</span>` : ''}
+          <div class="pd-card-title-row">
+            <h4>${escapePdHtml(title)}</h4>
+            ${options.tooltip ? `<span class="pd-info-chip" role="img" aria-label="${escapePdHtml(options.tooltip)}" title="${escapePdHtml(options.tooltip)}">i</span>` : ''}
+          </div>
+        </div>
+      </div>
+      <div class="pd-test-value">${escapePdHtml(value)}</div>
+      ${metaRows.map(row => `<div class="pd-test-meta">${escapePdHtml(row.label)}: ${escapePdHtml(row.value)}</div>`).join('')}
+      ${options.footnote ? `<div class="pd-test-footnote">${escapePdHtml(options.footnote)}</div>` : ''}
+    </article>`;
+}
+
 function buildPdSectionHeading(index, title, description, rag, options = {}) {
   return `
     <div class="pd-domain-heading">
@@ -1298,37 +1278,100 @@ function buildPdSectionHeading(index, title, description, rag, options = {}) {
     </div>`;
 }
 
-function buildPdOverviewMetricCell(label, value, format, rag, options = {}) {
-  const tone = pdToneClass(rag);
-  const metricBody = `
-      <div class="pd-overview-metric-label pd-overview-metric-label-${tone}">${escapePdHtml(label)}</div>
-      <div class="pd-overview-metric-value">${escapePdHtml(formatPdMetric(value, format))}</div>`;
+function buildPdChapterHeading(index, title, description, options = {}) {
   return `
-    <td class="pd-overview-metric-cell pd-overview-metric-${tone} ${options.extraClass || ''}">
-      ${options.href
-        ? `<a class="pd-overview-summary-link" href="${options.href}" aria-label="Jump to ${escapePdHtml(label)} section">${metricBody}</a>`
-        : metricBody}
-    </td>`;
+    <div class="pd-chapter-heading ${options.extraClass || ''}">
+      <div class="pd-chapter-heading-copy">
+        <div class="pd-chapter-kicker">${escapePdHtml(index)}</div>
+        <h2>${escapePdHtml(title)}</h2>
+        <p>${escapePdHtml(description)}</p>
+      </div>
+      ${options.note
+        ? `<div class="pd-chapter-note">${escapePdHtml(options.note)}</div>`
+        : ''}
+    </div>`;
 }
 
-function buildPdOverviewSummaryCell(label, rag, options = {}) {
-  const tone = pdToneClass(rag);
-  const summaryBody = `
-      <div class="pd-overview-metric-label pd-overview-metric-label-${tone}">
+function buildPdPlaceholderCard(title, message, tags = []) {
+  return `
+    <div class="section-card pd-placeholder-card">
+      <div class="pd-placeholder-badge">Placeholder module</div>
+      <div class="pd-placeholder-title">${escapePdHtml(title)}</div>
+      <p>${escapePdHtml(message)}</p>
+      ${tags.length
+        ? `<div class="pd-placeholder-tags">${tags.map(tag => `<span>${escapePdHtml(tag)}</span>`).join('')}</div>`
+        : ''}
+    </div>`;
+}
+
+function buildPdOverviewFlowConnectorSpans(options = {}) {
+  return `
+    ${options.incoming ? '<span class="pd-overview-flow-connector pd-overview-flow-connector-in" aria-hidden="true"></span>' : ''}
+    ${options.outgoing ? '<span class="pd-overview-flow-connector pd-overview-flow-connector-out" aria-hidden="true"></span>' : ''}`;
+}
+
+function buildPdOverviewFlowStage(number, title, subtitle = '') {
+  const label = [number, title, subtitle].filter(Boolean).join(' ');
+  return `
+    <div class="pd-overview-flow-stage">
+      <span>${escapePdHtml(label)}</span>
+    </div>`;
+}
+
+function buildPdOverviewFlowInput(label, options = {}) {
+  return `
+    <div class="pd-overview-flow-input ${options.extraClass || ''}">
+      <strong>${escapePdHtml(label)}</strong>
+      ${options.note ? `<span>${escapePdHtml(options.note)}</span>` : ''}
+    </div>`;
+}
+
+function buildPdOverviewFlowMetric(label, value, format, rag, options = {}) {
+  const tone = pdToneClass(options.ragOverride || rag);
+  const valueMarkup = options.isRag
+    ? `${pdRagDot(value)} ${escapePdHtml(value)}`
+    : escapePdHtml(formatPdMetric(value, format));
+  const body = `
+      ${buildPdOverviewFlowConnectorSpans(options)}
+      <span class="pd-overview-flow-node-label">
         ${escapePdHtml(label)}
         ${options.tooltip ? `<span class="pd-info-chip" role="img" aria-label="${escapePdHtml(options.tooltip)}" title="${escapePdHtml(options.tooltip)}">i</span>` : ''}
-      </div>
-      <div class="pd-overview-metric-value">${pdRagDot(rag)} ${escapePdHtml(rag)}</div>`;
+      </span>
+      <span class="pd-overview-flow-node-value ${options.isRag ? 'pd-overview-flow-node-value-rag' : ''}">${valueMarkup}</span>
+      ${options.note ? `<span class="pd-overview-flow-node-note">${escapePdHtml(options.note)}</span>` : ''}`;
   return `
-    <td class="pd-overview-metric-cell pd-overview-metric-${tone} pd-overview-summary-cell ${options.extraClass || ''}"${options.rowspan ? ` rowspan="${options.rowspan}"` : ''}>
+    <article class="pd-overview-flow-node pd-overview-flow-node-${tone} ${options.extraClass || ''}">
       ${options.href
-        ? `<a class="pd-overview-summary-link" href="${options.href}" aria-label="Jump to ${escapePdHtml(label)} section">${summaryBody}</a>`
-        : summaryBody}
-    </td>`;
+        ? `<a class="pd-overview-flow-link" href="${options.href}" aria-label="Jump to ${escapePdHtml(label)} section">${body}</a>`
+        : body}
+    </article>`;
 }
 
-function buildPdOverviewEmptyCell() {
-  return '<td class="pd-overview-metric-cell pd-overview-metric-empty" aria-hidden="true"></td>';
+function buildPdOverviewFlowTestStack(metrics, options = {}) {
+  return `
+    <div class="pd-overview-flow-test-stack ${options.extraClass || ''}">
+      ${buildPdOverviewFlowConnectorSpans(options)}
+      ${metrics.join('')}
+    </div>`;
+}
+
+function buildPdOverviewFlowPassThrough(options = {}) {
+  return `
+    <div class="pd-overview-flow-pass-through ${options.extraClass || ''}" aria-hidden="true">
+      ${buildPdOverviewFlowConnectorSpans({incoming: true, outgoing: true})}
+    </div>`;
+}
+
+function buildPdOverviewFlowPerformance(overview) {
+  const tone = pdToneClass(overview.performancePd.rag);
+  return `
+    <article class="pd-overview-flow-performance pd-overview-flow-performance-${tone}">
+      <span class="pd-overview-flow-performance-title">
+        Performance<br>PD RAG
+        <span class="pd-info-chip" role="img" aria-label="${escapePdHtml(overview.performancePd.tooltip)}" title="${escapePdHtml(overview.performancePd.tooltip)}">i</span>
+      </span>
+      <strong>${pdRagDot(overview.performancePd.rag)} ${escapePdHtml(overview.performancePd.rag)}</strong>
+    </article>`;
 }
 
 function calculatePdOverviewPerformanceRag(calibrationRag, discriminationRag, balanceSheetRag) {
@@ -1358,70 +1401,131 @@ function buildPdOverviewPerformanceRagTooltip(calibrationRag, discriminationRag,
     const score = pdRagScore(rag);
     return score == null ? '—' : `${score}`;
   };
+  const componentSummary = [
+    `ECL PIT Calibration: ${calibrationRag} (${scoreLabel(calibrationRag)}) x 25%`,
+    `ECL PIT Discriminatory Power: ${discriminationRag} (${scoreLabel(discriminationRag)}) x 25%`,
+    `Balance Sheet Calibration: ${balanceSheetRag} (${scoreLabel(balanceSheetRag)}) x 50%`,
+  ].join('; ');
   const weightedLabel = details.weightedScore == null || !Number.isFinite(details.weightedScore)
     ? '—'
     : details.weightedScore.toFixed(2);
   const roundedLabel = details.roundedScore == null || !Number.isFinite(details.roundedScore)
     ? '—'
     : `${details.roundedScore}`;
-  return `Performance PD RAG = ECL PIT PD Calibration Conservatism RAG (${calibrationRag}=${scoreLabel(calibrationRag)}) x 0.25 + ECL PIT PD Discriminatory Power RAG (${discriminationRag}=${scoreLabel(discriminationRag)}) x 0.25 + Balance Sheet PD Calibration Conservatism RAG (${balanceSheetRag}=${scoreLabel(balanceSheetRag)}) x 0.50 = ${weightedLabel}. Rounded score: ${roundedLabel} -> ${details.rag}.`;
+  if (details.weightedScore == null || !Number.isFinite(details.weightedScore) || details.roundedScore == null || !Number.isFinite(details.roundedScore)) {
+    return `Performance PD RAG combines three inputs with weights of 25%, 25%, and 50%. Higher scores are better: Green = 3, Amber = 2, Red = 1. Current inputs: ${componentSummary}. One or more inputs are unavailable, so the final Performance PD RAG is ${details.rag}.`;
+  }
+  return `Performance PD RAG combines three inputs with weights of 25%, 25%, and 50%. Higher scores are better: Green = 3, Amber = 2, Red = 1. Current inputs: ${componentSummary}. Weighted average score = ${weightedLabel}. Rounded score = ${roundedLabel}, so the final Performance PD RAG is ${details.rag}.`;
 }
 
 function buildPdOverviewHeatmap(overview) {
+  const eclPitCalibrationSummary = buildPdOverviewFlowMetric(
+    'Calibration Conservatism RAG (ECL PIT)',
+    overview.calibration.overallRag,
+    'rag',
+    overview.calibration.overallRag,
+    {
+      isRag: true,
+      href: '#pd-calibration-rag',
+      tooltip: overview.calibration.tooltip,
+      outgoing: true,
+      extraClass: 'pd-flow-dimension-calibration',
+    },
+  );
+  const discriminationSummary = buildPdOverviewFlowMetric(
+    'Discriminatory Power RAG',
+    overview.discrimination.overallRag,
+    'rag',
+    overview.discrimination.overallRag,
+    {
+      isRag: true,
+      href: '#pd-discrimination-rag',
+      tooltip: overview.discrimination.tooltip,
+      incoming: true,
+      outgoing: true,
+      extraClass: 'pd-flow-dimension-discrimination',
+    },
+  );
+  const balanceSheetSummary = buildPdOverviewFlowMetric(
+    'Calibration Conservatism RAG (Balance Sheet)',
+    overview.balanceSheet.overallRag,
+    'rag',
+    overview.balanceSheet.overallRag,
+    {
+      isRag: true,
+      href: '#pd-balance-sheet-calibration',
+      tooltip: overview.balanceSheet.assignmentTooltip,
+      incoming: true,
+      outgoing: true,
+      extraClass: 'pd-flow-dimension-balance',
+    },
+  );
   return `
-    <div class="pd-overview-meta" aria-label="PD overview scope">
-      <span><strong>Monitoring point:</strong> ${escapePdHtml(overview.monitoringPoint)}</span>
-      <span><strong>Segment:</strong> ${escapePdHtml(overview.segmentLabel)}</span>
-      <span><strong>PD models selected:</strong> ${escapePdHtml(fmtN(overview.selectedModelCount))}</span>
-    </div>
-    <div class="pd-overview-heatmap-wrap">
-      <table class="pd-overview-heatmap" aria-label="PD monitoring overview">
-        <thead>
-          <tr>
-            <th class="pd-overview-blank"></th>
-            <th class="pd-overview-blank"></th>
-            <th colspan="3">Tests</th>
-            <th>Monitoring Dimension RAG</th>
-            <th>PD RAG</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <th rowspan="3" class="pd-overview-domain">ECL PIT PD</th>
-            <th rowspan="2" class="pd-overview-section-label">Calibration Conservatism</th>
-            ${buildPdOverviewMetricCell('Notching Test 1 year', overview.calibration.oneYear.notchingValue, 'count', overview.calibration.oneYear.notchingRag, {href: '#pd-calibration-rag'})}
-            ${buildPdOverviewMetricCell('Confidence Interval 1 year', overview.calibration.oneYear.confidenceValue, 'percent', overview.calibration.oneYear.confidenceRag, {href: '#pd-calibration-rag'})}
-            ${buildPdOverviewSummaryCell('RAG Assignment 1 year', overview.calibration.oneYear.assignmentRag, {href: '#pd-calibration-rag'})}
-            ${buildPdOverviewSummaryCell('Calibration Conservatism RAG', overview.calibration.overallRag, {rowspan: 2, href: '#pd-calibration-rag'})}
-            ${buildPdOverviewSummaryCell('Performance PD RAG', overview.performancePd.rag, {
-              rowspan: 4,
-              extraClass: 'pd-overview-pd-rag-cell',
-              tooltip: overview.performancePd.tooltip,
-              href: '#pd-performance-rag',
-            })}
-          </tr>
-          <tr>
-            ${buildPdOverviewMetricCell('Notching Test 2 year', overview.calibration.twoYear.notchingValue, 'count', overview.calibration.twoYear.notchingRag, {href: '#pd-calibration-rag'})}
-            ${buildPdOverviewMetricCell('Confidence Interval 2 year', overview.calibration.twoYear.confidenceValue, 'percent', overview.calibration.twoYear.confidenceRag, {href: '#pd-calibration-rag'})}
-            ${buildPdOverviewSummaryCell('RAG Assignment 2 year', overview.calibration.twoYear.assignmentRag, {href: '#pd-calibration-rag'})}
-          </tr>
-          <tr>
-            <th class="pd-overview-section-label">Discriminatory Power</th>
-            ${buildPdOverviewMetricCell('Accuracy Ratio 1 year', overview.discrimination.accuracyValue, 'ratio', overview.discrimination.accuracyRag, {href: '#pd-discrimination-rag'})}
-            ${buildPdOverviewMetricCell('Delta Accuracy Ratio 1 year', overview.discrimination.deltaValue, 'ratio', overview.discrimination.deltaRag, {href: '#pd-discrimination-rag'})}
-            ${buildPdOverviewEmptyCell()}
-            ${buildPdOverviewSummaryCell('Discriminatory Power RAG', overview.discrimination.overallRag, {href: '#pd-discrimination-rag'})}
-          </tr>
-          <tr>
-            <th class="pd-overview-domain">Balance Sheet PD</th>
-            <th class="pd-overview-section-label">Calibration Conservatism</th>
-            ${buildPdOverviewMetricCell('Notching Test 1 year', overview.balanceSheet.notchingValue, 'count', overview.balanceSheet.notchingRag, {href: '#pd-balance-sheet-calibration'})}
-            ${buildPdOverviewMetricCell('Confidence Interval 1 year', overview.balanceSheet.confidenceValue, 'percent', overview.balanceSheet.confidenceRag, {href: '#pd-balance-sheet-calibration'})}
-            ${buildPdOverviewEmptyCell()}
-            ${buildPdOverviewSummaryCell('Calibration Conservatism RAG', overview.balanceSheet.overallRag, {href: '#pd-balance-sheet-calibration'})}
-          </tr>
-        </tbody>
-      </table>
+    <div class="pd-overview-flow-wrap">
+      <div class="pd-overview-flow" aria-label="PD monitoring overview process flow">
+        <div class="pd-flow-stage-input">${buildPdOverviewFlowStage('1.', 'Components')}</div>
+        <div class="pd-flow-stage-tests">${buildPdOverviewFlowStage('2.', 'Tests')}</div>
+        <div class="pd-flow-stage-assignment">${buildPdOverviewFlowStage('3.', 'RAG Assignment')}</div>
+        <div class="pd-flow-stage-dimension">${buildPdOverviewFlowStage('4.', 'Monitoring Dimension RAG')}</div>
+        <div class="pd-flow-stage-performance">${buildPdOverviewFlowStage('5.', 'Performance', 'PD RAG')}</div>
+
+        <div class="pd-flow-input-ecl">
+          ${buildPdOverviewFlowInput('ECL PIT PD', {extraClass: 'pd-overview-flow-input-ecl'})}
+        </div>
+        <div class="pd-flow-input-balance">
+          ${buildPdOverviewFlowInput('Balance Sheet PD', {extraClass: 'pd-overview-flow-input-balance'})}
+        </div>
+
+        ${buildPdOverviewFlowTestStack([
+          buildPdOverviewFlowMetric('Notching Test 1 year', overview.calibration.oneYear.notchingValue, 'count', overview.calibration.oneYear.notchingRag, {href: '#pd-calibration-rag'}),
+          buildPdOverviewFlowMetric('Confidence Interval 1 year', overview.calibration.oneYear.confidenceValue, 'percent', overview.calibration.oneYear.confidenceRag, {href: '#pd-calibration-rag'}),
+        ], {incoming: true, extraClass: 'pd-flow-tests-calibration-1'})}
+
+        ${buildPdOverviewFlowMetric('RAG Assignment 1 year', overview.calibration.oneYear.assignmentRag, 'rag', overview.calibration.oneYear.assignmentRag, {
+          isRag: true,
+          href: '#pd-calibration-rag',
+          tooltip: overview.calibration.oneYear.assignmentTooltip,
+          incoming: true,
+          outgoing: true,
+          extraClass: 'pd-flow-assignment-1',
+        })}
+
+        ${buildPdOverviewFlowTestStack([
+          buildPdOverviewFlowMetric('Notching Test 2 year', overview.calibration.twoYear.notchingValue, 'count', overview.calibration.twoYear.notchingRag, {href: '#pd-calibration-rag'}),
+          buildPdOverviewFlowMetric('Confidence Interval 2 year', overview.calibration.twoYear.confidenceValue, 'percent', overview.calibration.twoYear.confidenceRag, {href: '#pd-calibration-rag'}),
+        ], {incoming: true, extraClass: 'pd-flow-tests-calibration-2'})}
+
+        ${buildPdOverviewFlowMetric('RAG Assignment 2 year', overview.calibration.twoYear.assignmentRag, 'rag', overview.calibration.twoYear.assignmentRag, {
+          isRag: true,
+          href: '#pd-calibration-rag',
+          tooltip: overview.calibration.twoYear.assignmentTooltip,
+          incoming: true,
+          outgoing: true,
+          extraClass: 'pd-flow-assignment-2',
+        })}
+
+        ${buildPdOverviewFlowTestStack([
+          buildPdOverviewFlowMetric('Accuracy Ratio 1 year', overview.discrimination.accuracyValue, 'ratio', overview.discrimination.accuracyRag, {href: '#pd-discrimination-rag'}),
+          buildPdOverviewFlowMetric('Delta Accuracy Ratio 1 year', overview.discrimination.deltaValue, 'ratio', overview.discrimination.deltaRag, {href: '#pd-discrimination-rag'}),
+        ], {incoming: true, extraClass: 'pd-flow-tests-discrimination'})}
+
+        ${buildPdOverviewFlowPassThrough({extraClass: 'pd-flow-pass-discrimination'})}
+
+        ${buildPdOverviewFlowTestStack([
+          buildPdOverviewFlowMetric('Notching Test 1 year', overview.balanceSheet.notchingValue, 'count', overview.balanceSheet.notchingRag, {href: '#pd-balance-sheet-calibration'}),
+          buildPdOverviewFlowMetric('Confidence Interval 1 year', overview.balanceSheet.confidenceValue, 'percent', overview.balanceSheet.confidenceRag, {href: '#pd-balance-sheet-calibration'}),
+        ], {incoming: true, extraClass: 'pd-flow-tests-balance'})}
+
+        ${buildPdOverviewFlowPassThrough({extraClass: 'pd-flow-pass-balance'})}
+
+        ${eclPitCalibrationSummary}
+        ${discriminationSummary}
+        ${balanceSheetSummary}
+
+        <div class="pd-flow-performance">
+          ${buildPdOverviewFlowPerformance(overview)}
+        </div>
+      </div>
     </div>`;
 }
 
@@ -1944,6 +2048,8 @@ function drawPdDefaultRateTrend(observations, ratingObservations, snapshotQuarte
   const rangeKey = options.rangeKey || 'calibration';
   const chart = document.getElementById(chartId);
   if (!chart) return;
+  const useHorizontalLayout = (options.horizontalSubplots ?? (chartId === 'pd-default-rate-trend-chart'))
+    && (chart.clientWidth || chart.offsetWidth || window.innerWidth || 0) >= 960;
   const performanceTrend = buildPdPerformanceTrendForHorizon(observations, ratingObservations, snapshotQuarter, horizonKey);
   const periods = filterPdPeriodsByRange(rangeKey, performanceTrend.map(row => row.quarter));
   const trend = performanceTrend.filter(row => periods.includes(row.quarter));
@@ -1953,13 +2059,37 @@ function drawPdDefaultRateTrend(observations, ratingObservations, snapshotQuarte
   }
 
   const quarters = trend.map(row => row.quarter);
+  const lastQuarter = quarters[quarters.length - 1];
   const aeThreshold = getPdThresholds()
     .find(row => row.metric === 'Actual / Expected Ratio') || {};
   const ratios = trend.map(row => row.actual_expected_ratio);
   const ratioRags = trend.map(row => calculatePdMetricRag([aeThreshold], 'Actual / Expected Ratio', row.actual_expected_ratio));
   const ratioBands = buildPdAeRatioBands(aeThreshold, ratios);
-  const shapes = ratioBands.shapes.slice();
-  if (quarters.includes(snapshotQuarter)) {
+  const shapes = ratioBands.shapes.map(shape => (
+    useHorizontalLayout ? {...shape, xref: 'x2 domain', yref: 'y2'} : shape
+  ));
+  if (useHorizontalLayout) {
+    shapes.push({
+      type: 'line',
+      xref: 'x',
+      x0: lastQuarter,
+      x1: lastQuarter,
+      yref: 'y domain',
+      y0: 0,
+      y1: 1,
+      line: {color: '#64748b', width: 1.5, dash: 'dot'},
+    });
+    shapes.push({
+      type: 'line',
+      xref: 'x2',
+      x0: lastQuarter,
+      x1: lastQuarter,
+      yref: 'y2 domain',
+      y0: 0,
+      y1: 1,
+      line: {color: '#64748b', width: 1.5, dash: 'dot'},
+    });
+  } else if (quarters.includes(snapshotQuarter)) {
     shapes.push({
       type: 'line',
       xref: 'x2',
@@ -1998,6 +2128,7 @@ function drawPdDefaultRateTrend(observations, ratingObservations, snapshotQuarte
       type: 'scatter',
       mode: 'lines+markers',
       name: 'A/E Ratio',
+      showlegend: !useHorizontalLayout,
       xaxis: 'x2',
       yaxis: 'y2',
       line: {color: '#d97706', width: 2.5},
@@ -2006,38 +2137,110 @@ function drawPdDefaultRateTrend(observations, ratingObservations, snapshotQuarte
       hovertemplate: '%{x}<br>A/E Ratio: %{y:.3f}<br>RAG: %{customdata}<extra></extra>',
     },
   ];
+  const mainXAxisDomain = useHorizontalLayout ? [0, 0.45] : [0, 1];
+  const secondaryXAxisDomain = useHorizontalLayout ? [0.56, 1] : [0, 1];
+  const mainYAxisDomain = useHorizontalLayout ? [0, 1] : [0.42, 1];
+  const secondaryYAxisDomain = useHorizontalLayout ? [0, 1] : [0, 0.28];
+  const axisLineColor = '#cbd5e1';
+  const annotations = [];
+  if (useHorizontalLayout) {
+    const legendLineStart = secondaryXAxisDomain[0] + 0.02;
+    const legendLineEnd = secondaryXAxisDomain[0] + 0.075;
+    const legendMarkerCenter = secondaryXAxisDomain[0] + 0.0475;
+    const legendY = 1.09;
+    shapes.push({
+      type: 'line',
+      xref: 'paper',
+      yref: 'paper',
+      x0: legendLineStart,
+      x1: legendLineEnd,
+      y0: legendY,
+      y1: legendY,
+      line: {color: '#d97706', width: 2.5},
+    });
+    shapes.push({
+      type: 'circle',
+      xref: 'paper',
+      yref: 'paper',
+      x0: legendMarkerCenter - 0.006,
+      x1: legendMarkerCenter + 0.006,
+      y0: legendY - 0.012,
+      y1: legendY + 0.012,
+      fillcolor: '#d97706',
+      line: {color: '#ffffff', width: 1},
+    });
+    annotations.push({
+      xref: 'paper',
+      yref: 'paper',
+      x: legendLineEnd + 0.01,
+      y: legendY,
+      text: 'A/E Ratio',
+      showarrow: false,
+      xanchor: 'left',
+      yanchor: 'middle',
+      font: {size: 12, color: '#475569'},
+    });
+  }
   const layout = {
-    height: 420,
-    margin: {t: 18, r: 30, b: 52, l: 68},
+    height: useHorizontalLayout ? 330 : 470,
+    margin: {t: useHorizontalLayout ? 34 : 18, r: 48, b: useHorizontalLayout ? 82 : 52, l: 72},
     paper_bgcolor: 'rgba(0,0,0,0)',
     plot_bgcolor: 'rgba(0,0,0,0)',
-    hovermode: 'x unified',
-    legend: {orientation: 'h', x: 0, y: 1.08},
+    hovermode: useHorizontalLayout ? 'closest' : 'x unified',
+    legend: {orientation: 'h', x: 0, y: useHorizontalLayout ? 1.22 : 1.08},
+    annotations,
     shapes,
-    xaxis: {
-      domain: [0, 1],
+    xaxis: buildMonitoringTimeSeriesXAxis(quarters, {
+      domain: mainXAxisDomain,
       anchor: 'y',
-      showticklabels: false,
+      title: useHorizontalLayout ? 'Portfolio Quarter' : undefined,
+      showticklabels: useHorizontalLayout,
+      showline: true,
+      linecolor: axisLineColor,
+      mirror: false,
+      ticks: 'outside',
       gridcolor: '#e5e7eb',
-    },
+    }, {
+      chart,
+      density: 'compact',
+      panelFraction: useHorizontalLayout ? (mainXAxisDomain[1] - mainXAxisDomain[0]) : 1,
+    }),
     yaxis: {
-      domain: [0.42, 1],
+      domain: mainYAxisDomain,
       title: 'Default Rate',
       tickformat: '.1%',
       rangemode: 'tozero',
+      side: 'left',
+      automargin: true,
+      showline: true,
+      linecolor: axisLineColor,
+      ticks: 'outside',
       gridcolor: '#e5e7eb',
     },
-    xaxis2: {
-      domain: [0, 1],
+    xaxis2: buildMonitoringTimeSeriesXAxis(quarters, {
+      domain: secondaryXAxisDomain,
       anchor: 'y2',
       title: 'Portfolio Quarter',
-      type: 'category',
+      showline: true,
+      linecolor: axisLineColor,
+      mirror: false,
+      ticks: 'outside',
       gridcolor: '#e5e7eb',
-    },
+    }, {
+      chart,
+      density: 'compact',
+      panelFraction: useHorizontalLayout ? (secondaryXAxisDomain[1] - secondaryXAxisDomain[0]) : 1,
+    }),
     yaxis2: {
-      domain: [0, 0.28],
-      title: 'A/E Ratio',
+      anchor: 'x2',
+      domain: secondaryYAxisDomain,
+      title: {text: 'A/E Ratio', standoff: 8},
       range: ratioBands.axisRange,
+      side: 'left',
+      automargin: true,
+      showline: true,
+      linecolor: axisLineColor,
+      ticks: 'outside',
       gridcolor: '#e5e7eb',
     },
   };
@@ -2098,23 +2301,25 @@ function drawPdCalibrationRagTrend(pd, observations, ratingObservations, monitor
         line: {color: '#ffffff', width: 1},
       },
       customdata: customData,
-      hovertemplate: '%{x}<br>Calibration Conservatism RAG: %{customdata[0]}<br>Weighted score: %{customdata[1]}<br>Rounded score: %{customdata[2]}<extra></extra>',
+      hovertemplate: '%{x}<br>Calibration Conservatism RAG (ECL PIT): %{customdata[0]}<br>Weighted score: %{customdata[1]}<br>Rounded score: %{customdata[2]}<extra></extra>',
     },
   ];
 
   Plotly.react(chartId, traces, {
-    height: 250,
+    height: 290,
     margin: {t: 18, r: 28, b: 54, l: 78},
     paper_bgcolor: 'rgba(0,0,0,0)',
     plot_bgcolor: 'rgba(0,0,0,0)',
     hovermode: 'closest',
     showlegend: false,
     shapes,
-    xaxis: {
+    xaxis: buildMonitoringTimeSeriesXAxis(quarters, {
       title: 'Monitoring Point',
-      type: 'category',
       gridcolor: '#e5e7eb',
-    },
+    }, {
+      chart,
+      density: 'compact',
+    }),
     yaxis: {
       title: 'Calibration Conservatism Score',
       range: [0.5, 3.5],
@@ -2189,18 +2394,20 @@ function drawPdDiscriminationRagTrend(observations, ratingObservations, monitori
   ];
 
   Plotly.react(chartId, traces, {
-    height: 250,
+    height: 290,
     margin: {t: 18, r: 28, b: 54, l: 78},
     paper_bgcolor: 'rgba(0,0,0,0)',
     plot_bgcolor: 'rgba(0,0,0,0)',
     hovermode: 'closest',
     showlegend: false,
     shapes,
-    xaxis: {
+    xaxis: buildMonitoringTimeSeriesXAxis(quarters, {
       title: 'Monitoring Point',
-      type: 'category',
       gridcolor: '#e5e7eb',
-    },
+    }, {
+      chart,
+      density: 'compact',
+    }),
     yaxis: {
       title: 'Discriminatory Power Score',
       range: [0.5, 3.5],
@@ -2269,23 +2476,25 @@ function drawPdBalanceSheetCalibrationRagTrend(observations, ratingObservations,
         line: {color: '#ffffff', width: 1},
       },
       customdata: customData,
-      hovertemplate: '%{x}<br>Calibration Conservatism RAG: %{customdata[0]}<br>RAG Assignment: %{customdata[1]}<br>Confidence Interval: %{customdata[2]} (%{customdata[3]})<br>Notching Test: %{customdata[4]} (%{customdata[5]})<extra></extra>',
+      hovertemplate: '%{x}<br>Calibration Conservatism RAG (ECL PIT): %{customdata[0]}<br>RAG Assignment: %{customdata[1]}<br>Confidence Interval: %{customdata[2]} (%{customdata[3]})<br>Notching Test: %{customdata[4]} (%{customdata[5]})<extra></extra>',
     },
   ];
 
   Plotly.react(chartId, traces, {
-    height: 250,
+    height: 290,
     margin: {t: 18, r: 28, b: 54, l: 78},
     paper_bgcolor: 'rgba(0,0,0,0)',
     plot_bgcolor: 'rgba(0,0,0,0)',
     hovermode: 'closest',
     showlegend: false,
     shapes,
-    xaxis: {
+    xaxis: buildMonitoringTimeSeriesXAxis(quarters, {
       title: 'Monitoring Point',
-      type: 'category',
       gridcolor: '#e5e7eb',
-    },
+    }, {
+      chart,
+      density: 'compact',
+    }),
     yaxis: {
       title: 'Calibration Conservatism Score',
       range: [0.5, 3.5],
@@ -2302,6 +2511,7 @@ function drawPdNotchingTrend(observations, ratingObservations, snapshotQuarter, 
   const rangeKey = options.rangeKey || 'calibration';
   const chart = document.getElementById(chartId);
   if (!chart) return;
+  const useHorizontalLayout = (chart.clientWidth || chart.offsetWidth || window.innerWidth || 0) >= 960;
   const performanceTrend = buildPdPerformanceTrendForHorizon(observations, ratingObservations, snapshotQuarter, horizonKey);
   const periods = filterPdPeriodsByRange(rangeKey, performanceTrend.map(row => row.quarter));
   const trend = performanceTrend.filter(row => periods.includes(row.quarter));
@@ -2311,24 +2521,33 @@ function drawPdNotchingTrend(observations, ratingObservations, snapshotQuarter, 
   }
 
   const quarters = trend.map(row => row.quarter);
+  const lastQuarter = quarters[quarters.length - 1];
   const thresholds = getPdThresholds();
   const threshold = thresholds.find(row => row.metric === 'Notching Test') || {};
   const differences = trend.map(row => row.notching_difference);
   const differenceRags = trend.map(row => calculatePdMetricRag(thresholds, 'Notching Test', row.notching_difference));
   const differenceBands = buildPdThresholdBands(threshold, differences, {minAxisMax: 2});
-  const shapes = differenceBands.shapes.map(shape => ({...shape, yref: 'y2'}));
-  if (quarters.includes(snapshotQuarter)) {
-    shapes.push({
-      type: 'line',
-      xref: 'x2',
-      x0: snapshotQuarter,
-      x1: snapshotQuarter,
-      yref: 'paper',
-      y0: 0,
-      y1: 1,
-      line: {color: '#64748b', width: 1.5, dash: 'dot'},
-    });
-  }
+  const shapes = differenceBands.shapes.map(shape => ({...shape, xref: 'x2 domain', yref: 'y2'}));
+  shapes.push({
+    type: 'line',
+    xref: 'x',
+    x0: lastQuarter,
+    x1: lastQuarter,
+    yref: 'y domain',
+    y0: 0,
+    y1: 1,
+    line: {color: '#64748b', width: 1.5, dash: 'dot'},
+  });
+  shapes.push({
+    type: 'line',
+    xref: 'x2',
+    x0: lastQuarter,
+    x1: lastQuarter,
+    yref: 'y2 domain',
+    y0: 0,
+    y1: 1,
+    line: {color: '#64748b', width: 1.5, dash: 'dot'},
+  });
 
   const traces = [
     {
@@ -2357,6 +2576,7 @@ function drawPdNotchingTrend(observations, ratingObservations, snapshotQuarter, 
       type: 'scatter',
       mode: 'lines+markers',
       name: 'Notching Difference',
+      showlegend: !useHorizontalLayout,
       xaxis: 'x2',
       yaxis: 'y2',
       line: {color: '#d97706', width: 2.5},
@@ -2365,41 +2585,113 @@ function drawPdNotchingTrend(observations, ratingObservations, snapshotQuarter, 
       hovertemplate: '%{x}<br>Notching Difference: %{y:.0f}<br>RAG: %{customdata}<extra></extra>',
     },
   ];
+  const mainXAxisDomain = useHorizontalLayout ? [0, 0.45] : [0, 1];
+  const secondaryXAxisDomain = useHorizontalLayout ? [0.56, 1] : [0, 1];
+  const mainYAxisDomain = useHorizontalLayout ? [0, 1] : [0.42, 1];
+  const secondaryYAxisDomain = useHorizontalLayout ? [0, 1] : [0, 0.28];
+  const axisLineColor = '#cbd5e1';
+  const annotations = [];
+  if (useHorizontalLayout) {
+    const legendLineStart = secondaryXAxisDomain[0] + 0.02;
+    const legendLineEnd = secondaryXAxisDomain[0] + 0.075;
+    const legendMarkerCenter = secondaryXAxisDomain[0] + 0.0475;
+    const legendY = 1.09;
+    shapes.push({
+      type: 'line',
+      xref: 'paper',
+      yref: 'paper',
+      x0: legendLineStart,
+      x1: legendLineEnd,
+      y0: legendY,
+      y1: legendY,
+      line: {color: '#d97706', width: 2.5},
+    });
+    shapes.push({
+      type: 'circle',
+      xref: 'paper',
+      yref: 'paper',
+      x0: legendMarkerCenter - 0.006,
+      x1: legendMarkerCenter + 0.006,
+      y0: legendY - 0.012,
+      y1: legendY + 0.012,
+      fillcolor: '#d97706',
+      line: {color: '#ffffff', width: 1},
+    });
+    annotations.push({
+      xref: 'paper',
+      yref: 'paper',
+      x: legendLineEnd + 0.01,
+      y: legendY,
+      text: 'Notching Difference',
+      showarrow: false,
+      xanchor: 'left',
+      yanchor: 'middle',
+      font: {size: 12, color: '#475569'},
+    });
+  }
   const layout = {
-    height: 420,
-    margin: {t: 18, r: 30, b: 52, l: 68},
+    height: useHorizontalLayout ? 330 : 470,
+    margin: {t: useHorizontalLayout ? 34 : 18, r: 48, b: useHorizontalLayout ? 82 : 52, l: 72},
     paper_bgcolor: 'rgba(0,0,0,0)',
     plot_bgcolor: 'rgba(0,0,0,0)',
-    hovermode: 'x unified',
-    legend: {orientation: 'h', x: 0, y: 1.08},
+    hovermode: useHorizontalLayout ? 'closest' : 'x unified',
+    legend: {orientation: 'h', x: 0, y: useHorizontalLayout ? 1.22 : 1.08},
+    annotations,
     shapes,
-    xaxis: {
-      domain: [0, 1],
+    xaxis: buildMonitoringTimeSeriesXAxis(quarters, {
+      domain: mainXAxisDomain,
       anchor: 'y',
-      showticklabels: false,
+      title: useHorizontalLayout ? 'Portfolio Quarter' : undefined,
+      showticklabels: useHorizontalLayout,
+      showline: true,
+      linecolor: axisLineColor,
+      mirror: false,
+      ticks: 'outside',
       gridcolor: '#e5e7eb',
-    },
+    }, {
+      chart,
+      density: 'compact',
+      panelFraction: useHorizontalLayout ? (mainXAxisDomain[1] - mainXAxisDomain[0]) : 1,
+    }),
     yaxis: {
-      domain: [0.42, 1],
+      domain: mainYAxisDomain,
       title: 'CRR Notch',
       tickmode: 'linear',
       dtick: 1,
       range: [0.5, 9.5],
+      side: 'left',
+      automargin: true,
+      showline: true,
+      linecolor: axisLineColor,
+      ticks: 'outside',
       gridcolor: '#e5e7eb',
     },
-    xaxis2: {
-      domain: [0, 1],
+    xaxis2: buildMonitoringTimeSeriesXAxis(quarters, {
+      domain: secondaryXAxisDomain,
       anchor: 'y2',
       title: 'Portfolio Quarter',
-      type: 'category',
+      showline: true,
+      linecolor: axisLineColor,
+      mirror: false,
+      ticks: 'outside',
       gridcolor: '#e5e7eb',
-    },
+    }, {
+      chart,
+      density: 'compact',
+      panelFraction: useHorizontalLayout ? (secondaryXAxisDomain[1] - secondaryXAxisDomain[0]) : 1,
+    }),
     yaxis2: {
-      domain: [0, 0.28],
-      title: 'Notching Difference',
+      anchor: 'x2',
+      domain: secondaryYAxisDomain,
+      title: {text: 'Notching Difference', standoff: 8},
       range: differenceBands.axisRange,
       tickmode: 'linear',
       dtick: 1,
+      side: 'left',
+      automargin: true,
+      showline: true,
+      linecolor: axisLineColor,
+      ticks: 'outside',
       gridcolor: '#e5e7eb',
     },
   };
@@ -2451,18 +2743,20 @@ function drawPdConfidenceIntervalTrend(observations, ratingObservations, snapsho
     hovertemplate: '%{x}<br>Confidence Interval Test: %{y:.1%}<br>RAG: %{customdata}<extra></extra>',
   }];
   const layout = {
-    height: 300,
+    height: 340,
     margin: {t: 18, r: 30, b: 52, l: 68},
     paper_bgcolor: 'rgba(0,0,0,0)',
     plot_bgcolor: 'rgba(0,0,0,0)',
     hovermode: 'x unified',
     legend: {orientation: 'h', x: 0, y: 1.08},
     shapes,
-    xaxis: {
+    xaxis: buildMonitoringTimeSeriesXAxis(quarters, {
       title: 'Portfolio Quarter',
-      type: 'category',
       gridcolor: '#e5e7eb',
-    },
+    }, {
+      chart,
+      density: 'compact',
+    }),
     yaxis: {
       title: 'Confidence Interval Test',
       tickformat: '.0%',
@@ -2528,15 +2822,17 @@ function drawPdDiscriminationTrend(observations, ratingObservations, snapshotQua
       customdata: rags,
       hovertemplate: `%{x}<br>${metric.name}: %{y:.3f}<br>RAG: %{customdata}<extra></extra>`,
     }], {
-      height: 270,
-      margin: {t: 34, r: 20, b: 42, l: 52},
+      height: 296,
+      margin: {t: 18, r: 20, b: 42, l: 52},
       paper_bgcolor: 'rgba(0,0,0,0)',
       plot_bgcolor: 'rgba(0,0,0,0)',
       hovermode: 'x unified',
       showlegend: false,
       shapes,
-      title: {text: metric.name, x: 0, y: 1, xanchor: 'left', yanchor: 'top', font: {size: 12, color: '#0f172a'}},
-      xaxis: {title: 'Portfolio Quarter', type: 'category', gridcolor: '#e5e7eb'},
+      xaxis: buildMonitoringTimeSeriesXAxis(quarters, {title: 'Portfolio Quarter', gridcolor: '#e5e7eb'}, {
+        chart,
+        density: 'compact',
+      }),
       yaxis: {title: metric.name, range: bands.axisRange, gridcolor: '#e5e7eb', zerolinecolor: '#cbd5e1'},
     }, {responsive: true, displayModeBar: false});
   });
@@ -2545,6 +2841,7 @@ function drawPdDiscriminationTrend(observations, ratingObservations, snapshotQua
 function drawPdGoLiveAccuracyTrend(observations, ratingObservations, snapshotQuarter) {
   const chart = document.getElementById('pd-go-live-accuracy-trend-chart');
   if (!chart) return;
+  const useHorizontalLayout = (chart.clientWidth || chart.offsetWidth || window.innerWidth || 0) >= 960;
 
   const horizonKey = '1y';
   const performanceTrend = buildPdPerformanceTrendForHorizon(
@@ -2570,14 +2867,38 @@ function drawPdGoLiveAccuracyTrend(observations, ratingObservations, snapshotQua
   }
 
   const quarters = trend.map(row => row.quarter);
+  const lastQuarter = quarters[quarters.length - 1];
   const thresholds = getPdThresholds();
   const deltaThreshold = thresholds.find(row => row.metric === 'Delta Accuracy Ratio') || {};
   const deltaValues = trend.map(row => row.delta_accuracy_ratio);
   const deltaRags = trend.map(row => calculatePdMetricRag(thresholds, 'Delta Accuracy Ratio', row.delta_accuracy_ratio));
   const deltaBands = buildPdThresholdBands(deltaThreshold, deltaValues, {minAxisMax: 0.3});
-  const shapes = deltaBands.shapes.map(shape => ({...shape, yref: 'y2'}));
+  const shapes = deltaBands.shapes.map(shape => (
+    useHorizontalLayout ? {...shape, xref: 'x2 domain', yref: 'y2'} : {...shape, yref: 'y2'}
+  ));
 
-  if (quarters.includes(snapshotQuarter)) {
+  if (useHorizontalLayout) {
+    shapes.push({
+      type: 'line',
+      xref: 'x',
+      x0: lastQuarter,
+      x1: lastQuarter,
+      yref: 'y domain',
+      y0: 0,
+      y1: 1,
+      line: {color: '#64748b', width: 1.5, dash: 'dot'},
+    });
+    shapes.push({
+      type: 'line',
+      xref: 'x2',
+      x0: lastQuarter,
+      x1: lastQuarter,
+      yref: 'y2 domain',
+      y0: 0,
+      y1: 1,
+      line: {color: '#64748b', width: 1.5, dash: 'dot'},
+    });
+  } else if (quarters.includes(snapshotQuarter)) {
     shapes.push({
       type: 'line',
       xref: 'x2',
@@ -2616,6 +2937,7 @@ function drawPdGoLiveAccuracyTrend(observations, ratingObservations, snapshotQua
       type: 'scatter',
       mode: 'lines+markers',
       name: 'Delta Accuracy Ratio',
+      showlegend: !useHorizontalLayout,
       xaxis: 'x2',
       yaxis: 'y2',
       line: {color: '#d97706', width: 2.5},
@@ -2624,38 +2946,110 @@ function drawPdGoLiveAccuracyTrend(observations, ratingObservations, snapshotQua
       hovertemplate: '%{x}<br>Delta Accuracy Ratio: %{y:.3f}<br>RAG: %{customdata}<extra></extra>',
     },
   ];
+  const mainXAxisDomain = useHorizontalLayout ? [0, 0.45] : [0, 1];
+  const secondaryXAxisDomain = useHorizontalLayout ? [0.56, 1] : [0, 1];
+  const mainYAxisDomain = useHorizontalLayout ? [0, 1] : [0.42, 1];
+  const secondaryYAxisDomain = useHorizontalLayout ? [0, 1] : [0, 0.28];
+  const axisLineColor = '#cbd5e1';
+  const annotations = [];
+  if (useHorizontalLayout) {
+    const legendLineStart = secondaryXAxisDomain[0] + 0.02;
+    const legendLineEnd = secondaryXAxisDomain[0] + 0.075;
+    const legendMarkerCenter = secondaryXAxisDomain[0] + 0.0475;
+    const legendY = 1.09;
+    shapes.push({
+      type: 'line',
+      xref: 'paper',
+      yref: 'paper',
+      x0: legendLineStart,
+      x1: legendLineEnd,
+      y0: legendY,
+      y1: legendY,
+      line: {color: '#d97706', width: 2.5},
+    });
+    shapes.push({
+      type: 'circle',
+      xref: 'paper',
+      yref: 'paper',
+      x0: legendMarkerCenter - 0.006,
+      x1: legendMarkerCenter + 0.006,
+      y0: legendY - 0.012,
+      y1: legendY + 0.012,
+      fillcolor: '#d97706',
+      line: {color: '#ffffff', width: 1},
+    });
+    annotations.push({
+      xref: 'paper',
+      yref: 'paper',
+      x: legendLineEnd + 0.01,
+      y: legendY,
+      text: 'Delta Accuracy Ratio',
+      showarrow: false,
+      xanchor: 'left',
+      yanchor: 'middle',
+      font: {size: 12, color: '#475569'},
+    });
+  }
 
   const layout = {
-    height: 420,
-    margin: {t: 18, r: 30, b: 52, l: 68},
+    height: useHorizontalLayout ? 330 : 470,
+    margin: {t: useHorizontalLayout ? 34 : 18, r: 48, b: useHorizontalLayout ? 82 : 52, l: 72},
     paper_bgcolor: 'rgba(0,0,0,0)',
     plot_bgcolor: 'rgba(0,0,0,0)',
-    hovermode: 'x unified',
-    legend: {orientation: 'h', x: 0, y: 1.08},
+    hovermode: useHorizontalLayout ? 'closest' : 'x unified',
+    legend: {orientation: 'h', x: 0, y: useHorizontalLayout ? 1.22 : 1.08},
+    annotations,
     shapes,
-    xaxis: {
-      domain: [0, 1],
+    xaxis: buildMonitoringTimeSeriesXAxis(quarters, {
+      domain: mainXAxisDomain,
       anchor: 'y',
-      showticklabels: false,
+      title: useHorizontalLayout ? 'Portfolio Quarter' : undefined,
+      showticklabels: useHorizontalLayout,
+      showline: true,
+      linecolor: axisLineColor,
+      mirror: false,
+      ticks: 'outside',
       gridcolor: '#e5e7eb',
-    },
+    }, {
+      chart,
+      density: 'compact',
+      panelFraction: useHorizontalLayout ? (mainXAxisDomain[1] - mainXAxisDomain[0]) : 1,
+    }),
     yaxis: {
-      domain: [0.42, 1],
+      domain: mainYAxisDomain,
       title: 'Accuracy Ratio',
+      side: 'left',
+      automargin: true,
+      showline: true,
+      linecolor: axisLineColor,
+      ticks: 'outside',
       gridcolor: '#e5e7eb',
       zerolinecolor: '#cbd5e1',
     },
-    xaxis2: {
-      domain: [0, 1],
+    xaxis2: buildMonitoringTimeSeriesXAxis(quarters, {
+      domain: secondaryXAxisDomain,
       anchor: 'y2',
       title: `Portfolio Quarter (from ${goLiveQuarter})`,
-      type: 'category',
+      showline: true,
+      linecolor: axisLineColor,
+      mirror: false,
+      ticks: 'outside',
       gridcolor: '#e5e7eb',
-    },
+    }, {
+      chart,
+      density: 'compact',
+      panelFraction: useHorizontalLayout ? (secondaryXAxisDomain[1] - secondaryXAxisDomain[0]) : 1,
+    }),
     yaxis2: {
-      domain: [0, 0.28],
-      title: 'Delta Accuracy Ratio',
+      anchor: 'x2',
+      domain: secondaryYAxisDomain,
+      title: {text: 'Delta Accuracy Ratio', standoff: 8},
       range: deltaBands.axisRange,
+      side: 'left',
+      automargin: true,
+      showline: true,
+      linecolor: axisLineColor,
+      ticks: 'outside',
       gridcolor: '#e5e7eb',
       zerolinecolor: '#cbd5e1',
     },
@@ -2713,7 +3107,7 @@ function drawPdStabilityTrend(observations, ratingObservations, snapshotQuarter)
       customdata: rags,
       hovertemplate: `%{x}<br>${metric.name}: %{y:.3f}<br>RAG: %{customdata}<extra></extra>`,
     }], {
-      height: 280,
+      height: 288,
       margin: {t: 34, r: 20, b: 42, l: 52},
       paper_bgcolor: 'rgba(0,0,0,0)',
       plot_bgcolor: 'rgba(0,0,0,0)',
@@ -2721,7 +3115,10 @@ function drawPdStabilityTrend(observations, ratingObservations, snapshotQuarter)
       showlegend: false,
       shapes,
       title: {text: metric.name, x: 0, y: 1, xanchor: 'left', yanchor: 'top', font: {size: 12, color: '#0f172a'}},
-      xaxis: {title: 'Portfolio Quarter', type: 'category', gridcolor: '#e5e7eb'},
+      xaxis: buildMonitoringTimeSeriesXAxis(quarters, {title: 'Portfolio Quarter', gridcolor: '#e5e7eb'}, {
+        chart,
+        density: 'compact',
+      }),
       yaxis: {title: metric.yTitle, range: bands.axisRange, gridcolor: '#e5e7eb', zerolinecolor: '#cbd5e1'},
     }, {responsive: true, displayModeBar: false});
   });
@@ -2770,8 +3167,863 @@ function drawPdDistributionShift(observations, snapshotQuarter, previousQuarter)
   }, {responsive: true, displayModeBar: false});
 }
 
+const PD_MEV_PALETTE = ['#0f766e', '#2563eb', '#7c3aed', '#ea580c', '#0891b2', '#be123c', '#a16207', '#334155'];
+let PD_MEV_FILTER_MODELS = [];
+let PD_MEV_FILTER_NAMES = [];
+let PD_MEV_FILTER_NAMES_EMPTY = false;
+let PD_MEV_FILTER_EVENTS_BOUND = false;
+let PD_MEV_FILTER_STATE_RESTORED = false;
+let PD_MEV_FILTER_REOPEN_MENU_ID = '';
+let PD_MEV_FILTER_REOPEN_MENU_SCROLL_TOP = 0;
+
+function getPdMevFilterStorageKey() {
+  const runId = (DASH_DATA && DASH_DATA.run_id) ? DASH_DATA.run_id : 'default';
+  return `monitoring:pd:mev-filters:${runId}`;
+}
+
+function getPdMevFilterStores() {
+  const stores = [];
+  try {
+    if (window.localStorage) stores.push(window.localStorage);
+  } catch (error) {
+    // Storage can be unavailable for local files or privacy-restricted sessions.
+  }
+  try {
+    if (window.sessionStorage) stores.push(window.sessionStorage);
+  } catch (error) {
+    // Storage can be unavailable for local files or privacy-restricted sessions.
+  }
+  return stores;
+}
+
+function readPdMevFilterStorage() {
+  const key = getPdMevFilterStorageKey();
+  for (const store of getPdMevFilterStores()) {
+    try {
+      const raw = store.getItem(key);
+      if (raw) return raw;
+    } catch (error) {
+      continue;
+    }
+  }
+  return '';
+}
+
+function writePdMevFilterStorage(payload) {
+  const serialized = JSON.stringify(payload);
+  const key = getPdMevFilterStorageKey();
+  getPdMevFilterStores().forEach(store => {
+    try {
+      store.setItem(key, serialized);
+    } catch (error) {
+      // Ignore browser storage restrictions and keep the in-memory state.
+    }
+  });
+}
+
+function restorePdMevFilterState() {
+  if (PD_MEV_FILTER_STATE_RESTORED) return;
+  PD_MEV_FILTER_STATE_RESTORED = true;
+  const raw = readPdMevFilterStorage();
+  if (!raw) return;
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed.models)) {
+      PD_MEV_FILTER_MODELS = parsed.models
+        .map(value => String(value || '').trim())
+        .filter(Boolean);
+    }
+    if (Array.isArray(parsed.names)) {
+      PD_MEV_FILTER_NAMES = parsed.names
+        .map(value => String(value || '').trim())
+        .filter(Boolean);
+    }
+  } catch (error) {
+    PD_MEV_FILTER_MODELS = [];
+    PD_MEV_FILTER_NAMES = [];
+    PD_MEV_FILTER_NAMES_EMPTY = false;
+  }
+}
+
+function persistPdMevFilterState() {
+  writePdMevFilterStorage({
+    models: PD_MEV_FILTER_MODELS.slice(),
+    names: PD_MEV_FILTER_NAMES.slice(),
+  });
+}
+
+function slugifyPdToken(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function formatPdShortDate(value) {
+  if (!value) return '—';
+  const parsed = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleDateString('en-US', {year: 'numeric', month: 'short', day: 'numeric'});
+}
+
+function formatPdMevValue(value) {
+  if (value == null || !Number.isFinite(value)) return '—';
+  return value.toLocaleString('en-US', {maximumFractionDigits: 2});
+}
+
+function formatPdDateSummary(dates) {
+  const uniqueDates = Array.from(new Set((dates || []).filter(Boolean)));
+  if (!uniqueDates.length) return '—';
+  if (uniqueDates.length <= 2) return uniqueDates.map(formatPdShortDate).join(' / ');
+  return `${uniqueDates.length} dates`;
+}
+
+function isoDateToPdQuarter(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value || '');
+  if (!match) return '';
+  const quarter = Math.floor((Number(match[2]) - 1) / 3) + 1;
+  return `${match[1]}-Q${quarter}`;
+}
+
+function comparePdQuarterLabels(left, right) {
+  const pattern = /^(\d{4})-Q([1-4])$/;
+  const leftMatch = pattern.exec(left || '');
+  const rightMatch = pattern.exec(right || '');
+  if (!leftMatch || !rightMatch) return String(left || '').localeCompare(String(right || ''));
+  const leftSort = Number(leftMatch[1]) * 10 + Number(leftMatch[2]);
+  const rightSort = Number(rightMatch[1]) * 10 + Number(rightMatch[2]);
+  return leftSort - rightSort;
+}
+
+function getPdMevCatalog(pd) {
+  return pd.mev_catalog || {};
+}
+
+function getPdMevSelectedModels(pd) {
+  const catalog = getPdMevCatalog(pd);
+  const availableModels = Object.keys(catalog);
+  let modelNames = MONITORING_MODELS.length
+    ? availableModels.filter(name => MONITORING_MODELS.includes(name))
+    : availableModels.slice();
+
+  if (MONITORING_PORTFOLIO_SEGMENT !== 'all') {
+    modelNames = modelNames.filter(name => (catalog[name].segments || []).includes(MONITORING_PORTFOLIO_SEGMENT));
+  }
+  return modelNames;
+}
+
+function getPdMevAvailableNamesForModels(pd, modelNames) {
+  const catalog = getPdMevCatalog(pd);
+  return Array.from(new Set(
+    modelNames.flatMap(modelName => Object.keys(catalog[modelName]?.mevs || {})),
+  )).sort((left, right) => left.localeCompare(right));
+}
+
+function getPdMevVisiblePeriods(catalog, modelNames, mevNames) {
+  return Array.from(new Set(
+    modelNames.flatMap(modelName => Object.entries(catalog[modelName]?.mevs || {})
+      .filter(([mevName]) => mevNames.includes(mevName))
+      .flatMap(([, mevData]) => Object.keys(mevData?.time_series || {}))),
+  )).sort(comparePdQuarterLabels);
+}
+
+function getPdMevChartModelNames(pd) {
+  const availableModels = getPdMevSelectedModels(pd);
+  if (!availableModels.length) {
+    PD_MEV_FILTER_MODELS = [];
+    return [];
+  }
+  const preserved = PD_MEV_FILTER_MODELS.filter(modelName => availableModels.includes(modelName));
+  if (!preserved.length || preserved.length === availableModels.length) {
+    PD_MEV_FILTER_MODELS = availableModels.slice();
+  } else {
+    PD_MEV_FILTER_MODELS = [preserved[0]];
+  }
+  return PD_MEV_FILTER_MODELS.slice();
+}
+
+function getPdMevChartNames(pd) {
+  const availableNames = getPdMevAvailableNamesForModels(pd, getPdMevChartModelNames(pd));
+  if (!availableNames.length) {
+    PD_MEV_FILTER_NAMES = [];
+    PD_MEV_FILTER_NAMES_EMPTY = false;
+    return [];
+  }
+  const preserved = PD_MEV_FILTER_NAMES.filter(mevName => availableNames.includes(mevName));
+  if (preserved.length) {
+    PD_MEV_FILTER_NAMES = preserved;
+    PD_MEV_FILTER_NAMES_EMPTY = false;
+  } else if (PD_MEV_FILTER_NAMES_EMPTY) {
+    PD_MEV_FILTER_NAMES = [];
+  } else {
+    PD_MEV_FILTER_NAMES = availableNames.slice();
+  }
+  return PD_MEV_FILTER_NAMES.slice();
+}
+
+function getPdMevChartId(modelName, mevName) {
+  return `pd-mev-chart-${slugifyPdToken(modelName)}-${slugifyPdToken(mevName)}`;
+}
+
+function getPdMevChartColor(index) {
+  return PD_MEV_PALETTE[index % PD_MEV_PALETTE.length];
+}
+
+function colorToRgba(hexColor, alpha) {
+  const match = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hexColor || '');
+  if (!match) return `rgba(37,99,235,${alpha})`;
+  return `rgba(${parseInt(match[1], 16)},${parseInt(match[2], 16)},${parseInt(match[3], 16)},${alpha})`;
+}
+
+function calculatePdMevThresholds(devRange = {}) {
+  const greenMin = Number(devRange.min);
+  const greenMax = Number(devRange.max);
+  const mean = Number(devRange.mean);
+  const twoStdLower = Number(devRange['2std_lower']);
+  const twoStdUpper = Number(devRange['2std_upper']);
+  if (!Number.isFinite(greenMin) || !Number.isFinite(greenMax) || !Number.isFinite(mean)) return null;
+
+  const lowerStd = Number.isFinite(twoStdLower) ? Math.max((mean - twoStdLower) / 2, 0) : 0;
+  const upperStd = Number.isFinite(twoStdUpper) ? Math.max((twoStdUpper - mean) / 2, 0) : 0;
+  return {
+    greenMin,
+    greenMax,
+    amberLower: Math.min(greenMin, greenMin - 2 * lowerStd),
+    amberUpper: Math.max(greenMax, greenMax + 2 * upperStd),
+    developmentDate: devRange.development_date || '',
+  };
+}
+
+function buildPdMevThresholdChip(label, value, tone) {
+  return `<span class="pd-mev-threshold-chip pd-mev-threshold-chip-${tone}"><strong>${escapePdHtml(label)}</strong>${escapePdHtml(value)}</span>`;
+}
+
+function buildPdMevThresholdChipRow(thresholds) {
+  if (!thresholds) return '';
+  return `
+    <div class="pd-mev-threshold-chip-row">
+      ${buildPdMevThresholdChip('Green', `${formatPdMevValue(thresholds.greenMin)} to ${formatPdMevValue(thresholds.greenMax)}`, 'green')}
+      ${buildPdMevThresholdChip('Amber low', `${formatPdMevValue(thresholds.amberLower)} to ${formatPdMevValue(thresholds.greenMin)}`, 'amber')}
+      ${buildPdMevThresholdChip('Amber high', `${formatPdMevValue(thresholds.greenMax)} to ${formatPdMevValue(thresholds.amberUpper)}`, 'amber')}
+      ${buildPdMevThresholdChip('Red', `< ${formatPdMevValue(thresholds.amberLower)} or > ${formatPdMevValue(thresholds.amberUpper)}`, 'red')}
+    </div>`;
+}
+
+function buildPdMevMarkerLegendItem(label, dateValue, tone) {
+  return `
+    <div class="pd-mev-marker-legend-item pd-mev-marker-legend-item-${tone}">
+      <span class="pd-mev-marker-legend-line pd-mev-marker-legend-line-${tone}" aria-hidden="true"></span>
+      <span class="pd-mev-marker-legend-copy">
+        <span class="pd-mev-marker-legend-label">${escapePdHtml(label)}</span>
+        <span class="pd-mev-marker-legend-date">${escapePdHtml(formatPdShortDate(dateValue))}</span>
+      </span>
+    </div>`;
+}
+
+function buildPdMevMarkerLegendRow(modelData, mevData) {
+  const items = [];
+  if (mevData?.dev_range?.development_date) {
+    items.push(buildPdMevMarkerLegendItem('Development', mevData.dev_range.development_date, 'development'));
+  }
+  if (modelData?.severe_scenario_date) {
+    items.push(buildPdMevMarkerLegendItem('Severe scenario', modelData.severe_scenario_date, 'scenario'));
+  }
+  if (!items.length) return '';
+  return `<div class="pd-mev-marker-legend-row" aria-label="Reference date markers">${items.join('')}</div>`;
+}
+
+function closePdMevFilterMenus() {
+  document.querySelectorAll('.pd-mev-filter-row .checkbox-dropdown-menu').forEach(menu => {
+    menu.classList.remove('open');
+  });
+  PD_MEV_FILTER_REOPEN_MENU_ID = '';
+  PD_MEV_FILTER_REOPEN_MENU_SCROLL_TOP = 0;
+}
+
+function initPdMevFilterEvents() {
+  if (PD_MEV_FILTER_EVENTS_BOUND) return;
+  document.addEventListener('click', function(evt) {
+    if (!evt.target.closest('.pd-mev-filter-row .checkbox-dropdown')) {
+      closePdMevFilterMenus();
+    }
+  });
+  PD_MEV_FILTER_EVENTS_BOUND = true;
+}
+
+function togglePdMevFilterMenu(event, menuId) {
+  event.stopPropagation();
+  const menu = document.getElementById(menuId);
+  if (!menu) return;
+  const shouldOpen = !menu.classList.contains('open');
+  closePdMevFilterMenus();
+  menu.classList.toggle('open', shouldOpen);
+  if (shouldOpen) {
+    PD_MEV_FILTER_REOPEN_MENU_ID = menuId;
+    PD_MEV_FILTER_REOPEN_MENU_SCROLL_TOP = menu.scrollTop || 0;
+  }
+}
+
+function queuePdMevMenuRestore(menuId, scrollTop = 0) {
+  PD_MEV_FILTER_REOPEN_MENU_ID = menuId || '';
+  PD_MEV_FILTER_REOPEN_MENU_SCROLL_TOP = Number.isFinite(scrollTop) ? scrollTop : 0;
+}
+
+function restorePdMevMenuState() {
+  if (!PD_MEV_FILTER_REOPEN_MENU_ID) return;
+  const menu = document.getElementById(PD_MEV_FILTER_REOPEN_MENU_ID);
+  if (!menu) {
+    PD_MEV_FILTER_REOPEN_MENU_ID = '';
+    PD_MEV_FILTER_REOPEN_MENU_SCROLL_TOP = 0;
+    return;
+  }
+  menu.classList.add('open');
+  menu.scrollTop = PD_MEV_FILTER_REOPEN_MENU_SCROLL_TOP;
+}
+
+function getPdMevQuarterKey(quarter) {
+  const match = /^(\d{4})Q([1-4])$/.exec(quarter || '');
+  return match ? `${match[1]}-Q${match[2]}` : '';
+}
+
+function calculatePdMevRag(value, thresholds) {
+  if (!Number.isFinite(value) || !thresholds) return 'N/A';
+  if (value < thresholds.amberLower || value > thresholds.amberUpper) return 'Red';
+  if (value < thresholds.greenMin || value > thresholds.greenMax) return 'Amber';
+  return 'Green';
+}
+
+function calculatePdMevWorstRagAfterQuarter(mevData, startQuarter) {
+  const thresholds = calculatePdMevThresholds(mevData?.dev_range || {});
+  if (!thresholds) return 'N/A';
+  const postScenarioValues = Object.entries(mevData?.time_series || {})
+    .filter(([quarter, rawValue]) => (
+      (!startQuarter || comparePdQuarterLabels(quarter, startQuarter) >= 0)
+      && Number.isFinite(Number(rawValue))
+    ))
+    .map(([, rawValue]) => Number(rawValue));
+  if (!postScenarioValues.length) return 'N/A';
+
+  let worstRag = 'Green';
+  for (const value of postScenarioValues) {
+    const rag = calculatePdMevRag(value, thresholds);
+    if (rag === 'Red') return 'Red';
+    if (rag === 'Amber') worstRag = 'Amber';
+  }
+  return worstRag;
+}
+
+function buildPdMevRagTagRow(label, names, tone) {
+  return `
+    <div class="pd-mev-rag-tag-row">
+      <span class="pd-mev-rag-tag-label pd-mev-rag-tag-label-${tone}">${escapePdHtml(label)}</span>
+      <div class="pd-mev-rag-tags">
+        ${names.length
+          ? names.map(name => `<span class="pd-mev-rag-tag pd-mev-rag-tag-${tone}">${escapePdHtml(name)}</span>`).join('')
+          : `<span class="pd-mev-rag-tag pd-mev-rag-tag-neutral">None</span>`}
+      </div>
+    </div>`;
+}
+
+function buildPdMevDropdownMenu(menuId, options, selectedValues, onChangeFn, allAttribute) {
+  const safeAllAttribute = allAttribute ? ` ${allAttribute}` : '';
+  return `
+    <div class="checkbox-dropdown-menu" id="${menuId}">
+      <label><input type="checkbox" value="All"${safeAllAttribute} onchange="${onChangeFn}(this)"${options.length && selectedValues.length === options.length ? ' checked' : ''}>All</label>
+      ${options.map(option => `
+        <label>
+          <input type="checkbox" value="${escapePdHtml(option)}" onchange="${onChangeFn}(this)"${selectedValues.includes(option) ? ' checked' : ''}>
+          ${escapePdHtml(option)}
+        </label>
+      `).join('')}
+    </div>`;
+}
+
+function buildPdMevSelectOptions(options, selectedValue, allLabel) {
+  return [
+    `<option value="all"${selectedValue === 'all' ? ' selected' : ''}>${escapePdHtml(allLabel)}</option>`,
+    ...options.map(option => (
+      `<option value="${escapePdHtml(option)}"${selectedValue === option ? ' selected' : ''}>${escapePdHtml(option)}</option>`
+    )),
+  ].join('');
+}
+
+function formatPdMevFilterToggle(selectedValues, totalCount, singularLabel, pluralLabel) {
+  if (!totalCount || !selectedValues.length) return `Select ${pluralLabel}`;
+  if (selectedValues.length === totalCount) return `All ${pluralLabel}`;
+  if (selectedValues.length === 1) return selectedValues[0];
+  return `${selectedValues.length} ${pluralLabel} selected`;
+}
+
+function resetPdMevFilters() {
+  PD_MEV_FILTER_MODELS = [];
+  PD_MEV_FILTER_NAMES = [];
+  PD_MEV_FILTER_NAMES_EMPTY = false;
+  PD_TIME_RANGES.mev = {from: '', to: ''};
+  persistPdMevFilterState();
+  closePdMevFilterMenus();
+  renderPdModels();
+}
+
+function buildPdMevFilterRow(pd, mevPeriods) {
+  const availableModelNames = getPdMevSelectedModels(pd);
+  const selectedModelNames = getPdMevChartModelNames(pd);
+  const availableMevNames = getPdMevAvailableNamesForModels(pd, selectedModelNames);
+  const selectedMevNames = getPdMevChartNames(pd);
+  const selectedModelValue = selectedModelNames.length === availableModelNames.length
+    ? 'all'
+    : (selectedModelNames[0] || 'all');
+  const mevRangeSelection = getPdRangeSelection('mev', mevPeriods);
+  const hasMevRangeSelection = !!mevRangeSelection.from || !!mevRangeSelection.to;
+  const hasModelSelection = selectedModelNames.length !== availableModelNames.length;
+  const hasMevSelection = selectedMevNames.length !== availableMevNames.length;
+  const canResetFilters = hasModelSelection || hasMevSelection || hasMevRangeSelection;
+  return `
+    <div class="pd-mev-filter-row">
+      <div class="pd-mev-filter-copy">
+        <div class="pd-content-kicker">Chart Filters</div>
+        <p>Refine the MEV charts below by PD model or by individual macroeconomic variable.</p>
+      </div>
+      <div class="pd-mev-filter-controls">
+        <div class="pd-mev-filter-group">
+          <label>PD Model</label>
+          <select
+            id="pd-mev-model-filter-select"
+            class="pd-mev-filter-select"
+            aria-label="PD model chart filter"
+            onchange="setPdMevModelFilter(this.value)"
+            ${availableModelNames.length ? '' : 'disabled'}
+          >${buildPdMevSelectOptions(availableModelNames, selectedModelValue, 'All')}</select>
+        </div>
+        <div class="pd-mev-filter-group">
+          <label>MEV</label>
+          <div class="checkbox-dropdown pd-mev-filter-dropdown">
+            <button
+              type="button"
+              class="checkbox-dropdown-toggle"
+              id="pd-mev-name-filter-toggle"
+              onclick="togglePdMevFilterMenu(event,'pd-mev-name-filter-menu')"
+              ${availableMevNames.length ? '' : 'disabled'}
+            >${escapePdHtml(formatPdMevFilterToggle(selectedMevNames, availableMevNames.length, 'MEV', 'MEVs'))}</button>
+            ${buildPdMevDropdownMenu(
+              'pd-mev-name-filter-menu',
+              availableMevNames,
+              selectedMevNames,
+              'setPdMevNameFilters',
+              'data-pd-mev-name-all',
+            )}
+          </div>
+        </div>
+        ${mevPeriods.length ? buildPdRangeControls('mev', mevPeriods, mevPeriods[mevPeriods.length - 1]) : ''}
+        <div class="pd-mev-filter-actions">
+          <button
+            type="button"
+            class="btn pd-mev-filter-reset"
+            onclick="resetPdMevFilters()"
+            ${canResetFilters ? '' : 'disabled'}
+          >Reset chart filters</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function setPdMevModelFilter(value) {
+  const pd = (DASH_DATA.monitoring || {}).pd_models || {};
+  const availableModelNames = getPdMevSelectedModels(pd);
+  if (!availableModelNames.length) {
+    PD_MEV_FILTER_MODELS = [];
+  } else if (!value || value === 'all' || !availableModelNames.includes(value)) {
+    PD_MEV_FILTER_MODELS = availableModelNames.slice();
+  } else {
+    PD_MEV_FILTER_MODELS = [value];
+  }
+  persistPdMevFilterState();
+  closePdMevFilterMenus();
+  renderPdModels();
+}
+
+function setPdMevNameFilters(changedInput) {
+  const inputs = Array.from(document.querySelectorAll('#pd-mev-name-filter-menu input[type="checkbox"]'));
+  const allInput = inputs.find(input => input.hasAttribute('data-pd-mev-name-all'));
+  const mevInputs = inputs.filter(input => !input.hasAttribute('data-pd-mev-name-all'));
+  const toggle = document.getElementById('pd-mev-name-filter-toggle');
+  const menu = document.getElementById('pd-mev-name-filter-menu');
+  if (changedInput && changedInput.hasAttribute('data-pd-mev-name-all')) {
+    mevInputs.forEach(input => { input.checked = changedInput.checked; });
+  } else if (allInput) {
+    allInput.checked = mevInputs.length > 0 && mevInputs.every(input => input.checked);
+  }
+  const selectedNames = mevInputs.filter(input => input.checked).map(input => input.value);
+  if (!selectedNames.length) {
+    PD_MEV_FILTER_NAMES_EMPTY = false;
+    if (toggle) toggle.textContent = 'Select MEVs';
+    return;
+  }
+  PD_MEV_FILTER_NAMES = selectedNames;
+  PD_MEV_FILTER_NAMES_EMPTY = false;
+  if (menu && menu.classList.contains('open')) {
+    queuePdMevMenuRestore('pd-mev-name-filter-menu', menu.scrollTop || 0);
+  }
+  persistPdMevFilterState();
+  renderPdModels();
+}
+
+function buildPdMevRagSummaryCard(selectedModels, catalog) {
+  const severeScenarioDates = selectedModels
+    .map(modelName => catalog[modelName]?.severe_scenario_date)
+    .filter(Boolean);
+  const modelSummaries = selectedModels.map(modelName => {
+    const mevEntries = Object.entries(catalog[modelName]?.mevs || {});
+    const severeQuarter = isoDateToPdQuarter(catalog[modelName]?.severe_scenario_date);
+    const summary = {
+      modelName,
+      severeQuarter,
+      red: [],
+      amber: [],
+      unavailable: [],
+    };
+    mevEntries.forEach(([mevName, mevData]) => {
+      const rag = calculatePdMevWorstRagAfterQuarter(mevData, severeQuarter);
+      if (rag === 'Red') summary.red.push(mevName);
+      else if (rag === 'Amber') summary.amber.push(mevName);
+      else if (rag === 'N/A') summary.unavailable.push(mevName);
+    });
+    return summary;
+  });
+
+  return `
+    <article class="pd-test-card pd-mev-rag-summary-card">
+      <div class="pd-test-card-heading">
+        <div>
+          <span>Post-scenario RAG</span>
+          <div class="pd-card-title-row">
+            <h4>Worst amber / red MEV counts</h4>
+          </div>
+        </div>
+      </div>
+      <div class="pd-test-value">${escapePdHtml(formatPdDateSummary(severeScenarioDates))}</div>
+      <div class="pd-test-meta">Evaluation window: each model severe scenario date onward</div>
+      <div class="pd-test-meta">Method: worst RAG observed across all post-scenario MEV values</div>
+      <div class="pd-mev-rag-summary-list">
+        ${modelSummaries.length
+          ? modelSummaries.map(summary => `
+            <div class="pd-mev-rag-model">
+              <div class="pd-mev-rag-model-header">
+                <strong>${escapePdHtml(summary.modelName)}</strong>
+                <div class="pd-mev-rag-counts">
+                  <span class="pd-mev-rag-count pd-mev-rag-count-red">${summary.red.length} red</span>
+                  <span class="pd-mev-rag-count pd-mev-rag-count-amber">${summary.amber.length} amber</span>
+                </div>
+              </div>
+              <div class="pd-test-meta">Window start: ${escapePdHtml(summary.severeQuarter || 'Unavailable')}</div>
+              ${buildPdMevRagTagRow('Red', summary.red, 'red')}
+              ${buildPdMevRagTagRow('Amber', summary.amber, 'amber')}
+            </div>
+          `).join('')
+          : `<div class="pd-test-meta">No PD models are currently in scope for MEV evaluation.</div>`}
+      </div>
+    </article>`;
+}
+
+function buildPdMevDevelopmentDatesCard(selectedModels, catalog) {
+  const modelDates = selectedModels.map(modelName => {
+    const dates = Array.from(new Set(
+      Object.values(catalog[modelName]?.mevs || {})
+        .map(mev => mev?.dev_range?.development_date)
+        .filter(Boolean),
+    )).sort();
+    return {modelName, dates};
+  });
+  const distinctCheckpointCount = new Set(modelDates.flatMap(item => item.dates)).size;
+
+  return `
+    <article class="pd-test-card pd-mev-development-card">
+      <div class="pd-test-card-heading">
+        <div>
+          <span>Reference</span>
+          <div class="pd-card-title-row">
+            <h4>Development dates</h4>
+          </div>
+        </div>
+      </div>
+      <div class="pd-mev-development-list">
+        ${modelDates.length
+          ? modelDates.map(item => {
+            const dateLabel = item.dates.length
+              ? item.dates.map(formatPdShortDate).join(' / ')
+              : '—';
+            return `
+              <div class="pd-mev-development-row">
+                <strong>${escapePdHtml(item.modelName)}</strong>
+                <span>${escapePdHtml(dateLabel)}</span>
+              </div>`;
+          }).join('')
+          : '<div class="pd-test-meta">No development dates in scope.</div>'}
+      </div>
+      <div class="pd-test-meta">Distinct checkpoints: ${escapePdHtml(`${distinctCheckpointCount}`)}</div>
+      <div class="pd-test-meta">Purpose: Green range reference</div>
+    </article>`;
+}
+
+function buildPdMevRangeSection(pd) {
+  const catalog = getPdMevCatalog(pd);
+  const selectedModels = getPdMevSelectedModels(pd);
+  const chartModelNames = getPdMevChartModelNames(pd);
+  const chartMevNames = getPdMevChartNames(pd);
+  const mevPeriods = getPdMevVisiblePeriods(catalog, chartModelNames, chartMevNames);
+  const totalMevs = selectedModels.reduce(
+    (sum, modelName) => sum + Object.keys(catalog[modelName]?.mevs || {}).length,
+    0,
+  );
+  const developmentDates = selectedModels.flatMap(modelName => (
+    Object.values(catalog[modelName]?.mevs || {})
+      .map(mev => mev?.dev_range?.development_date)
+      .filter(Boolean)
+  ));
+  const severeScenarioDates = selectedModels
+    .map(modelName => catalog[modelName]?.severe_scenario_date)
+    .filter(Boolean);
+  const modelScopeLabel = selectedModels.length
+    ? selectedModels.join(', ')
+    : 'No models matched the current filters';
+  const modelPanels = chartModelNames.map((modelName, modelIndex) => {
+    const modelData = catalog[modelName] || {};
+    const mevEntries = Object.entries(modelData.mevs || {})
+      .filter(([mevName]) => chartMevNames.includes(mevName))
+      .sort(([left], [right]) => left.localeCompare(right));
+    if (!mevEntries.length) return '';
+    return `
+      <div class="section-card pd-mev-model-panel">
+        <div class="pd-mev-model-heading">
+          <div class="pd-mev-model-copy">
+            <div class="pd-content-kicker">Model Scope</div>
+            <h4>${escapePdHtml(modelName)}</h4>
+            <p>Segments covered: ${escapePdHtml((modelData.segments || []).join(', ') || '—')}</p>
+          </div>
+          <div class="pd-mev-model-badges">
+            <span class="pd-mev-model-badge">${escapePdHtml(mevEntries.length)} MEVs</span>
+            <span class="pd-mev-model-badge">Severe scenario: ${escapePdHtml(formatPdShortDate(modelData.severe_scenario_date))}</span>
+          </div>
+        </div>
+        <div class="pd-mev-chart-grid">
+          ${mevEntries.map(([mevName, mevData], mevIndex) => {
+            const thresholds = calculatePdMevThresholds(mevData.dev_range || {});
+            const chartId = getPdMevChartId(modelName, mevName);
+            return `
+              <article class="pd-mev-chart-card">
+                <div class="pd-mev-chart-header">
+                  <div>
+                    <div class="pd-mev-chart-title">${escapePdHtml(mevName)}</div>
+                    <div class="pd-mev-chart-meta">Reference dates and threshold ranges for ${escapePdHtml(mevName)}.</div>
+                  </div>
+                </div>
+                ${buildPdMevThresholdChipRow(thresholds)}
+                ${buildPdMevMarkerLegendRow(modelData, mevData)}
+                <div id="${chartId}" class="pd-mev-chart" data-mev-color="${escapePdHtml(getPdMevChartColor(modelIndex * 8 + mevIndex))}"></div>
+              </article>`;
+          }).join('')}
+        </div>
+      </div>`;
+  }).filter(Boolean).join('');
+
+  const emptyState = `
+    <div class="section-card pd-mev-empty-state">
+      <div class="pd-mev-chart-title">No MEV charts match the current chart filters</div>
+      <p class="pd-section-subtitle">
+        Adjust the PD model selector or MEV checkboxes below the summary cards, or broaden the dashboard filters above.
+      </p>
+    </div>`;
+
+  return `
+    <section id="pd-mev-range" class="pd-content-section pd-live-section">
+      ${buildPdSectionHeading(
+        '2.6 MEV Range',
+        'MEV Range',
+        'Plot the selected PD models against their development green range, amber two-standard-deviation buffers, and red out-of-range zones.',
+        'N/A',
+        {showRag: false},
+      )}
+      <div class="pd-performance-note">
+        Each chart uses the model-specific development min/max as the green band, extends amber by two standard deviations beyond that development range, and marks the model development date and severe scenario date directly on the timeline. Source: <strong>${escapePdHtml(pd.mev_source_file || 'mev_dummy_data.json')}</strong>.
+      </div>
+      <div class="pd-test-grid pd-mev-summary-grid">
+        ${buildPdMevRagSummaryCard(selectedModels, catalog)}
+        ${buildPdStaticInfoCard(
+          'Models in scope',
+          `${selectedModels.length}`,
+          [
+            {label: 'Segment filter', value: MONITORING_PORTFOLIO_SEGMENT === 'all' ? 'All segments' : MONITORING_PORTFOLIO_SEGMENT},
+            {label: 'Model scope', value: modelScopeLabel},
+          ],
+          {testLabel: 'Filters'},
+        )}
+        ${buildPdStaticInfoCard(
+          'MEV charts',
+          `${totalMevs}`,
+          [
+            {label: 'Rendered panels', value: totalMevs ? `${totalMevs} charts` : 'No charts in scope'},
+            {label: 'Catalog models', value: `${Object.keys(catalog).length}`},
+          ],
+          {testLabel: 'Coverage'},
+        )}
+        ${buildPdMevDevelopmentDatesCard(selectedModels, catalog)}
+        ${buildPdStaticInfoCard(
+          'Severe scenario',
+          formatPdDateSummary(severeScenarioDates),
+          [
+            {label: 'Distinct checkpoints', value: `${new Set(severeScenarioDates).size}`},
+            {label: 'Purpose', value: 'Scenario marker'},
+          ],
+          {testLabel: 'Scenario'},
+        )}
+      </div>
+      ${buildPdMevFilterRow(pd, mevPeriods)}
+      ${chartModelNames.length && chartMevNames.length && modelPanels ? modelPanels : emptyState}
+    </section>`;
+}
+
+function drawPdMevRangeChart(chartId, modelData, mevName, mevData, color) {
+  const chart = document.getElementById(chartId);
+  if (!chart) return;
+
+  const allPoints = Object.entries(mevData.time_series || {})
+    .map(([quarter, value]) => [quarter, Number(value)])
+    .filter(([, value]) => Number.isFinite(value))
+    .sort(([left], [right]) => comparePdQuarterLabels(left, right));
+  const visibleQuarters = filterPdPeriodsByRange('mev', allPoints.map(([quarter]) => quarter));
+  const points = allPoints.filter(([quarter]) => visibleQuarters.includes(quarter));
+  if (!points.length) {
+    chart.innerHTML = '<div class="pd-performance-note">No MEV time-series data is available for the selected time window.</div>';
+    return;
+  }
+
+  const thresholds = calculatePdMevThresholds(mevData.dev_range || {});
+  const quarters = points.map(([quarter]) => quarter);
+  const values = points.map(([, value]) => value);
+  const developmentQuarter = isoDateToPdQuarter(mevData?.dev_range?.development_date);
+  const severeQuarter = isoDateToPdQuarter(modelData?.severe_scenario_date);
+  const allYValues = values.slice();
+  if (thresholds) {
+    allYValues.push(thresholds.greenMin, thresholds.greenMax, thresholds.amberLower, thresholds.amberUpper);
+  }
+  const minValue = Math.min(...allYValues);
+  const maxValue = Math.max(...allYValues);
+  const padding = Math.max((maxValue - minValue) * 0.08, Math.abs(maxValue || 1) * 0.05, 0.25);
+  const yMin = minValue - padding;
+  const yMax = maxValue + padding;
+  const shapes = [];
+
+  if (thresholds) {
+    shapes.push(
+      {type: 'rect', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: yMin, y1: thresholds.amberLower, fillcolor: 'rgba(220,38,38,0.14)', line: {width: 0}, layer: 'below'},
+      {type: 'rect', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: thresholds.amberLower, y1: thresholds.greenMin, fillcolor: 'rgba(217,119,6,0.20)', line: {width: 0}, layer: 'below'},
+      {type: 'rect', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: thresholds.greenMin, y1: thresholds.greenMax, fillcolor: 'rgba(22,163,74,0.16)', line: {width: 0}, layer: 'below'},
+      {type: 'rect', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: thresholds.greenMax, y1: thresholds.amberUpper, fillcolor: 'rgba(217,119,6,0.20)', line: {width: 0}, layer: 'below'},
+      {type: 'rect', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: thresholds.amberUpper, y1: yMax, fillcolor: 'rgba(220,38,38,0.14)', line: {width: 0}, layer: 'below'},
+      {type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: thresholds.greenMin, y1: thresholds.greenMin, line: {color: 'rgba(22,163,74,0.9)', width: 1.8}},
+      {type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: thresholds.greenMax, y1: thresholds.greenMax, line: {color: 'rgba(22,163,74,0.9)', width: 1.8}},
+      {type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: thresholds.amberLower, y1: thresholds.amberLower, line: {color: 'rgba(217,119,6,0.82)', width: 1.4, dash: 'dash'}},
+      {type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: thresholds.amberUpper, y1: thresholds.amberUpper, line: {color: 'rgba(217,119,6,0.82)', width: 1.4, dash: 'dash'}},
+    );
+  }
+
+  if (developmentQuarter && quarters.includes(developmentQuarter)) {
+    shapes.push({
+      type: 'line',
+      xref: 'x',
+      x0: developmentQuarter,
+      x1: developmentQuarter,
+      yref: 'paper',
+      y0: 0,
+      y1: 1,
+      line: {color: '#0f172a', width: 1.5, dash: 'dot'},
+    });
+  }
+
+  if (severeQuarter && quarters.includes(severeQuarter)) {
+    shapes.push({
+      type: 'line',
+      xref: 'x',
+      x0: severeQuarter,
+      x1: severeQuarter,
+      yref: 'paper',
+      y0: 0,
+      y1: 1,
+      line: {color: '#9a3412', width: 1.5, dash: 'dash'},
+    });
+  }
+
+  Plotly.react(chartId, [{
+    x: quarters,
+    y: values,
+    type: 'scatter',
+    mode: 'lines+markers',
+    connectgaps: false,
+    line: {
+      color,
+      width: 2.6,
+      shape: 'spline',
+      smoothing: 0.45,
+    },
+    marker: {
+      size: 6,
+      color: '#ffffff',
+      line: {color, width: 2},
+    },
+    hovertemplate: `%{x}<br>${escapePdHtml(mevName)}: %{y:,.2f}<extra></extra>`,
+  }], {
+    height: 292,
+    margin: {t: 16, r: 18, b: 54, l: 58},
+    paper_bgcolor: 'rgba(0,0,0,0)',
+    plot_bgcolor: 'rgba(0,0,0,0)',
+    hovermode: 'x unified',
+    showlegend: false,
+    shapes,
+    xaxis: buildMonitoringTimeSeriesXAxis(quarters, {
+      title: 'Quarter',
+      gridcolor: '#e2e8f0',
+      showline: true,
+      linecolor: '#cbd5e1',
+      ticks: 'outside',
+    }, {
+      chart,
+      density: 'compact',
+    }),
+    yaxis: {
+      title: mevName,
+      range: [yMin, yMax],
+      automargin: true,
+      gridcolor: '#e2e8f0',
+      zerolinecolor: '#cbd5e1',
+      showline: true,
+      linecolor: '#cbd5e1',
+      ticks: 'outside',
+    },
+  }, {responsive: true, displayModeBar: false});
+}
+
+function drawPdMevCharts(pd) {
+  const catalog = getPdMevCatalog(pd);
+  const selectedModels = getPdMevChartModelNames(pd);
+  const selectedMevNames = getPdMevChartNames(pd);
+  selectedModels.forEach((modelName, modelIndex) => {
+    const modelData = catalog[modelName] || {};
+    Object.entries(modelData.mevs || {})
+      .filter(([mevName]) => selectedMevNames.includes(mevName))
+      .sort(([left], [right]) => left.localeCompare(right))
+      .forEach(([mevName, mevData], mevIndex) => {
+        drawPdMevRangeChart(
+          getPdMevChartId(modelName, mevName),
+          modelData,
+          mevName,
+          mevData,
+          getPdMevChartColor(modelIndex * 8 + mevIndex),
+        );
+      });
+  });
+}
+
 function renderPdModels() {
-  closePdExpandedPanel(false);
+  restorePdMevFilterState();
   const pd = (DASH_DATA.monitoring || {}).pd_models || {};
   const observations = pd.performance_observations || [];
   const ratingObservations = pd.rating_migration_observations || [];
@@ -2864,6 +4116,25 @@ function renderPdModels() {
       metric => calculatePdMetricRag(thresholds, metric, previousBalanceSheetCalibrationValues[metric]),
     ))
     : previousBalanceSheetCalibrationAssignmentRag;
+  const balanceSheetConfidenceRag = calculatePdMetricRag(
+    thresholds,
+    'Confidence Interval Test',
+    balanceSheetCalibrationValues['Confidence Interval Test'],
+  );
+  const balanceSheetNotchingRag = calculatePdMetricRag(
+    thresholds,
+    'Notching Test',
+    balanceSheetCalibrationValues['Notching Test'],
+  );
+  const balanceSheetAssignmentTooltip = buildPdCalibrationAssignmentTooltip(
+    'Balance Sheet 1 year',
+    balanceSheetCalibrationValues['Confidence Interval Test'],
+    balanceSheetCalibrationNotching.signedDifference,
+    balanceSheetCalibrationAssignmentRag,
+    balanceSheetCalibrationRag,
+    balanceSheetConfidenceRag,
+    balanceSheetNotchingRag,
+  );
   const balanceSheetAvailabilityNote = filterPdPerformanceObservationsForHorizon(
     observations,
     balanceSheetCalibrationContext.snapshotQuarter,
@@ -2923,14 +4194,14 @@ function renderPdModels() {
   const calibrationOverview = {};
   calibrationHorizonCards.push(
     buildPdSectionRagCard(
-      'Calibration Conservatism RAG',
+      'Calibration Conservatism RAG (ECL PIT)',
       calibrationRag,
       previousCalibrationRag,
       context,
       {
-        cardTitle: 'Calibration Conservatism RAG',
+        cardTitle: 'Calibration Conservatism RAG (ECL PIT)',
         extraClass: 'pd-calibration-summary-card',
-        tooltip: buildPdCalibrationNote(calibrationAssignmentDetails),
+        tooltip: buildPdCalibrationTooltip(calibrationAssignmentDetails),
         hideStatus: true,
         metaLabel: 'Monitoring point',
         metaValue: context.monitoringPoint,
@@ -2979,14 +4250,34 @@ function renderPdModels() {
     const previousHorizonCalibrationRag = previousHorizonCalibrationAssignmentRag === 'N/A'
       ? getWorstPdRag(PD_RAG_GROUPS.calibration.map(metric => calculatePdMetricRag(thresholds, metric, previousHorizonValues[metric])))
       : previousHorizonCalibrationAssignmentRag;
+    const horizonConfidenceRag = calculatePdMetricRag(
+      thresholds,
+      'Confidence Interval Test',
+      horizonValues['Confidence Interval Test'],
+    );
+    const horizonNotchingRag = calculatePdMetricRag(
+      thresholds,
+      'Notching Test',
+      horizonValues['Notching Test'],
+    );
+    const horizonAssignmentTooltip = buildPdCalibrationAssignmentTooltip(
+      horizonConfig.suffix,
+      horizonValues['Confidence Interval Test'],
+      horizonNotching.signedDifference,
+      horizonCalibrationAssignmentRag,
+      horizonCalibrationRag,
+      horizonConfidenceRag,
+      horizonNotchingRag,
+    );
     const currentHorizonEad = currentMonitoringEad[horizonConfig.key] || {ead: null, share: null, combinedEad: null};
     const previousHorizonEad = previousMonitoringEad[horizonConfig.key] || {ead: null, share: null, combinedEad: null};
     calibrationOverview[horizonConfig.key] = {
       notchingValue: horizonValues['Notching Test'],
-      notchingRag: calculatePdMetricRag(thresholds, 'Notching Test', horizonValues['Notching Test']),
+      notchingRag: horizonNotchingRag,
       confidenceValue: horizonValues['Confidence Interval Test'],
-      confidenceRag: calculatePdMetricRag(thresholds, 'Confidence Interval Test', horizonValues['Confidence Interval Test']),
+      confidenceRag: horizonConfidenceRag,
       assignmentRag: horizonCalibrationRag,
+      assignmentTooltip: horizonAssignmentTooltip,
     };
     calibrationHorizonCards.push(
       buildPdEadCard(
@@ -3004,7 +4295,7 @@ function renderPdModels() {
         horizonCalibrationRag,
         previousHorizonCalibrationRag,
         horizonContext,
-        {cardTitle: `RAG Assignment ${horizonConfig.suffix}`, hideStatus: true},
+        {cardTitle: `RAG Assignment ${horizonConfig.suffix}`, tooltip: horizonAssignmentTooltip, hideStatus: true},
       ),
       buildPdTestCard(
         'Notching Test',
@@ -3043,6 +4334,7 @@ function renderPdModels() {
       oneYear: calibrationOverview['1y'] || {},
       twoYear: calibrationOverview['2y'] || {},
       overallRag: calibrationRag,
+      tooltip: buildPdCalibrationTooltip(calibrationAssignmentDetails),
     },
     discrimination: {
       accuracyValue: currentRagValues['Accuracy Ratio'],
@@ -3050,39 +4342,45 @@ function renderPdModels() {
       deltaValue: currentRagValues['Delta Accuracy Ratio'],
       deltaRag: calculatePdMetricRag(thresholds, 'Delta Accuracy Ratio', currentRagValues['Delta Accuracy Ratio']),
       overallRag: discriminationRag,
+      tooltip: 'If the 1-year default count is below 15, the RAG is forced to Amber. Otherwise: if Delta Accuracy Ratio is Red and Accuracy Ratio is Green, the RAG is Amber. If Delta Accuracy Ratio is Red and Accuracy Ratio is Amber, the RAG is Red. Otherwise the Accuracy Ratio RAG is used.',
     },
     balanceSheet: {
       notchingValue: balanceSheetCalibrationValues['Notching Test'],
-      notchingRag: calculatePdMetricRag(thresholds, 'Notching Test', balanceSheetCalibrationValues['Notching Test']),
+      notchingRag: balanceSheetNotchingRag,
       confidenceValue: balanceSheetCalibrationValues['Confidence Interval Test'],
-      confidenceRag: calculatePdMetricRag(thresholds, 'Confidence Interval Test', balanceSheetCalibrationValues['Confidence Interval Test']),
+      confidenceRag: balanceSheetConfidenceRag,
       overallRag: balanceSheetCalibrationRag,
+      assignmentTooltip: balanceSheetAssignmentTooltip,
     },
     performancePd: performancePdOverview,
   });
 
   document.getElementById('tab-pd_models').innerHTML = `
-    <nav class="pd-section-nav" aria-label="PD performance sections">
-      <a href="#pd-analysis-scope">Overview</a>
-      <a href="#pd-calibration-rag">ECL PIT PD - Calibration Conservatism</a>
-      <a href="#pd-discrimination-rag">ECL PIT PD - Discriminatory Power</a>
-      <a href="#pd-balance-sheet-calibration">Balance Sheet PD - Calibration Conservatism</a>
-      <a href="#pd-performance-rag">Performance</a>
-    </nav>
+    <section id="pd-rag-assignment" class="pd-content-section pd-chapter-section">
+      ${buildPdChapterHeading(
+        '1.',
+        'RAG Assignment',
+        'Core monitoring view for PD model health, combining the current overview with ECL PIT PD and Balance Sheet PD calibration and discriminatory-power diagnostics.',
+        {
+          note: `Monitoring point ${CQ}`,
+        },
+      )}
+    </section>
 
-    <section id="pd-analysis-scope" class="pd-content-section pd-overview-section">
+    <div class="pd-chapter-body pd-chapter-body-primary">
+    <section id="pd-analysis-scope" class="pd-content-section pd-overview-section pd-live-section">
       <div class="pd-content-heading">
-        <div class="pd-content-kicker">1. Overview</div>
-        <h3>PD Monitoring Overview</h3>
+        <div class="pd-content-kicker">1.1 Overview</div>
+        <h3>RAG Assignment Overview</h3>
         <p>At-a-glance summary of the current ECL PIT PD and Balance Sheet PD calibration and discriminatory power diagnostics.</p>
       </div>
       ${overviewHeatmap}
       ${availabilityNote}
     </section>
 
-    <section id="pd-calibration-rag" class="pd-content-section">
+    <section id="pd-calibration-rag" class="pd-content-section pd-live-section">
       ${buildPdSectionHeading(
-        '2. ECL PIT PD - Calibration Conservatism',
+        '1.2 ECL PIT PD - Calibration Conservatism',
         'ECL PIT PD - Calibration Conservatism',
         'Compare observed defaults with predicted PIT PD, and review monotonicity across rating grades for the ECL monitoring population.',
         calibrationRag,
@@ -3093,28 +4391,17 @@ function renderPdModels() {
       <div class="pd-test-grid pd-calibration-test-grid">
         ${calibrationHorizonCards.join('')}
       </div>
-      <div id="pd-calibration-rag-trend-panel" class="section-card pd-default-rate-trend-section" data-pd-expand-title="Calibration Conservatism RAG Trend">
+      <div class="pd-trend-detail-grid">
+      <div id="pd-calibration-rag-trend-panel" class="section-card pd-default-rate-trend-section" data-pd-expand-title="Calibration Conservatism RAG (ECL PIT) Trend">
         ${buildPdChartHeader(
-          'Calibration Conservatism RAG Trend',
-          'Quarter-by-quarter Calibration Conservatism RAG shown as a simple color-coded dot timeline.',
+          'Calibration Conservatism RAG (ECL PIT) Trend',
+          'Quarter-by-quarter Calibration Conservatism RAG (ECL PIT) shown as a simple color-coded dot timeline.',
           'pd-calibration-rag-trend-panel',
           'calibration_rag',
           getPdRangePeriods(CQ),
           CQ,
         )}
-        <div id="pd-calibration-rag-trend-chart" class="pd-default-rate-trend-chart"></div>
-      </div>
-      <div id="pd-notching-trend-panel" class="section-card pd-default-rate-trend-section" data-pd-expand-title="Notching Trend">
-        ${buildPdChartHeader(
-          'Notching Trend',
-          `Actual notch, predicted notch, and notching difference using the ${calibrationTrendContext.horizonLabel} time horizon.`,
-          'pd-notching-trend-panel',
-          'calibration',
-          calibrationTrendPeriods,
-          calibrationTrendContext.snapshotQuarter,
-          buildPdCalibrationTrendHorizonControl(),
-        )}
-        <div id="pd-notching-trend-chart" class="pd-default-rate-trend-chart"></div>
+        <div id="pd-calibration-rag-trend-chart" class="pd-default-rate-trend-chart pd-default-rate-trend-chart-compact"></div>
       </div>
       <div id="pd-confidence-interval-trend-panel" class="section-card pd-default-rate-trend-section" data-pd-expand-title="Confidence Interval Test Trend">
         ${buildPdChartHeader(
@@ -3126,7 +4413,20 @@ function renderPdModels() {
           calibrationTrendContext.snapshotQuarter,
           buildPdCalibrationTrendHorizonControl(),
         )}
-        <div id="pd-confidence-interval-trend-chart" class="pd-default-rate-trend-chart"></div>
+        <div id="pd-confidence-interval-trend-chart" class="pd-default-rate-trend-chart pd-default-rate-trend-chart-medium"></div>
+      </div>
+      </div>
+      <div id="pd-notching-trend-panel" class="section-card pd-default-rate-trend-section" data-pd-expand-title="Notching Trend">
+        ${buildPdChartHeader(
+          'Notching Trend',
+          `Actual notch, predicted notch, and notching difference using the ${calibrationTrendContext.horizonLabel} time horizon.`,
+          'pd-notching-trend-panel',
+          'calibration',
+          calibrationTrendPeriods,
+          calibrationTrendContext.snapshotQuarter,
+          buildPdCalibrationTrendHorizonControl(),
+        )}
+        <div id="pd-notching-trend-chart" class="pd-default-rate-trend-chart pd-notching-trend-chart"></div>
       </div>
       <div id="pd-calibration-trend-panel" class="section-card pd-default-rate-trend-section" data-pd-expand-title="Calibration Trend">
         ${buildPdChartHeader(
@@ -3138,13 +4438,13 @@ function renderPdModels() {
           calibrationTrendContext.snapshotQuarter,
           buildPdCalibrationTrendHorizonControl(),
         )}
-        <div id="pd-default-rate-trend-chart" class="pd-default-rate-trend-chart"></div>
+        <div id="pd-default-rate-trend-chart" class="pd-default-rate-trend-chart pd-calibration-trend-chart"></div>
       </div>
     </section>
 
-    <section id="pd-discrimination-rag" class="pd-content-section">
+    <section id="pd-discrimination-rag" class="pd-content-section pd-live-section">
       ${buildPdSectionHeading(
-        '3. ECL PIT PD - Discriminatory Power',
+        '1.3 ECL PIT PD - Discriminatory Power',
         'ECL PIT PD - Discriminatory Power',
         'Assess how effectively PIT PD separates higher-risk and lower-risk observations within the monitored ECL population.',
         discriminationRag,
@@ -3200,7 +4500,7 @@ function renderPdModels() {
           getPdRangePeriods(CQ),
           CQ,
         )}
-        <div id="pd-discrimination-rag-trend-chart" class="pd-default-rate-trend-chart"></div>
+        <div id="pd-discrimination-rag-trend-chart" class="pd-default-rate-trend-chart pd-default-rate-trend-chart-compact"></div>
       </div>
       <div id="pd-go-live-accuracy-trend-panel" class="section-card pd-discrimination-trend-section" data-pd-expand-title="Accuracy Ratio and Go-Live Delta Trend">
         ${buildPdChartHeader(
@@ -3212,7 +4512,7 @@ function renderPdModels() {
           goLiveDiscriminationContext.snapshotQuarter,
           buildPdFrozenOneYearHorizonControl('Accuracy trend PD horizon'),
         )}
-        <div id="pd-go-live-accuracy-trend-chart" class="pd-default-rate-trend-chart"></div>
+        <div id="pd-go-live-accuracy-trend-chart" class="pd-default-rate-trend-chart pd-go-live-accuracy-trend-chart"></div>
       </div>
       <div id="pd-discrimination-trend-panel" class="section-card pd-discrimination-trend-section" data-pd-expand-title="Discriminatory Power Trend Other Metrics Trend">
         ${buildPdChartHeader(
@@ -3232,9 +4532,9 @@ function renderPdModels() {
       </div>
     </section>
 
-    <section id="pd-balance-sheet-calibration" class="pd-content-section">
+    <section id="pd-balance-sheet-calibration" class="pd-content-section pd-live-section">
       ${buildPdSectionHeading(
-        '4. Balance Sheet PD - Calibration Conservatism',
+        '1.4 Balance Sheet PD - Calibration Conservatism',
         'Balance Sheet PD - Calibration Conservatism',
         'Assess balance sheet PD calibration with the same framework, using CPD NCO as the predicted PD input for the 1-year horizon.',
         'N/A',
@@ -3250,7 +4550,7 @@ function renderPdModels() {
           balanceSheetCalibrationRag,
           previousBalanceSheetCalibrationRag,
           balanceSheetCalibrationContext,
-          {cardTitle: 'Calibration Conservatism RAG', hideStatus: true},
+          {cardTitle: 'Calibration Conservatism RAG', tooltip: balanceSheetAssignmentTooltip, hideStatus: true},
         )}
         ${buildPdTestCard(
           'Notching Test',
@@ -3269,6 +4569,7 @@ function renderPdModels() {
           {cardTitle: 'Confidence Interval 1 year', format: 'percent'},
         )}
       </div>
+      <div class="pd-trend-detail-grid">
       <div id="pd-balance-sheet-calibration-rag-trend-panel" class="section-card pd-default-rate-trend-section" data-pd-expand-title="Balance Sheet Calibration Conservatism RAG Trend">
         ${buildPdChartHeader(
           'Balance Sheet Calibration Conservatism RAG Trend',
@@ -3279,19 +4580,7 @@ function renderPdModels() {
           balanceSheetCalibrationContext.snapshotQuarter,
           buildPdFrozenOneYearHorizonControl('Balance sheet calibration RAG PD horizon'),
         )}
-        <div id="pd-balance-sheet-calibration-rag-trend-chart" class="pd-default-rate-trend-chart"></div>
-      </div>
-      <div id="pd-balance-sheet-notching-trend-panel" class="section-card pd-default-rate-trend-section" data-pd-expand-title="Balance Sheet Notching Trend">
-        ${buildPdChartHeader(
-          'Balance Sheet Notching Trend',
-          `Actual notch, predicted notch, and notching difference using ${balanceSheetCalibrationContext.predictedColumn} for the fixed ${balanceSheetCalibrationContext.horizonLabel} horizon.`,
-          'pd-balance-sheet-notching-trend-panel',
-          'balance_sheet_calibration',
-          balanceSheetCalibrationPeriods,
-          balanceSheetCalibrationContext.snapshotQuarter,
-          buildPdFrozenOneYearHorizonControl('Balance sheet calibration PD horizon'),
-        )}
-        <div id="pd-balance-sheet-notching-trend-chart" class="pd-default-rate-trend-chart"></div>
+        <div id="pd-balance-sheet-calibration-rag-trend-chart" class="pd-default-rate-trend-chart pd-default-rate-trend-chart-compact"></div>
       </div>
       <div id="pd-balance-sheet-confidence-interval-trend-panel" class="section-card pd-default-rate-trend-section" data-pd-expand-title="Balance Sheet Confidence Interval Test Trend">
         ${buildPdChartHeader(
@@ -3303,7 +4592,20 @@ function renderPdModels() {
           balanceSheetCalibrationContext.snapshotQuarter,
           buildPdFrozenOneYearHorizonControl('Balance sheet calibration PD horizon'),
         )}
-        <div id="pd-balance-sheet-confidence-interval-trend-chart" class="pd-default-rate-trend-chart"></div>
+        <div id="pd-balance-sheet-confidence-interval-trend-chart" class="pd-default-rate-trend-chart pd-default-rate-trend-chart-medium"></div>
+      </div>
+      </div>
+      <div id="pd-balance-sheet-notching-trend-panel" class="section-card pd-default-rate-trend-section" data-pd-expand-title="Balance Sheet Notching Trend">
+        ${buildPdChartHeader(
+          'Balance Sheet Notching Trend',
+          `Actual notch, predicted notch, and notching difference using ${balanceSheetCalibrationContext.predictedColumn} for the fixed ${balanceSheetCalibrationContext.horizonLabel} horizon.`,
+          'pd-balance-sheet-notching-trend-panel',
+          'balance_sheet_calibration',
+          balanceSheetCalibrationPeriods,
+          balanceSheetCalibrationContext.snapshotQuarter,
+          buildPdFrozenOneYearHorizonControl('Balance sheet calibration PD horizon'),
+        )}
+        <div id="pd-balance-sheet-notching-trend-chart" class="pd-default-rate-trend-chart pd-notching-trend-chart"></div>
       </div>
       <div id="pd-balance-sheet-calibration-trend-panel" class="section-card pd-default-rate-trend-section" data-pd-expand-title="Balance Sheet Calibration Trend">
         ${buildPdChartHeader(
@@ -3315,101 +4617,104 @@ function renderPdModels() {
           balanceSheetCalibrationContext.snapshotQuarter,
           buildPdFrozenOneYearHorizonControl('Balance sheet calibration PD horizon'),
         )}
-        <div id="pd-balance-sheet-default-rate-trend-chart" class="pd-default-rate-trend-chart"></div>
+        <div id="pd-balance-sheet-default-rate-trend-chart" class="pd-default-rate-trend-chart pd-calibration-trend-chart"></div>
       </div>
     </section>
+    </div>
 
-    <section id="pd-performance-rag" class="pd-content-section">
+    <section id="pd-post-subjective-review-analysis" class="pd-content-section pd-chapter-section">
+      ${buildPdChapterHeading(
+        '2.',
+        'Post Subjective Review Analysis',
+        'This is a qualitative analysis with a binary outcome: whether rank ordering holds or not. There is no direct RAG assignment for this process; however, any significant concerns identified through the deep-dive analysis will be highlighted in the monitoring report and reflected in the overall Model RAG.',
+        {
+          note: 'Scaffold aligned to requested subsections',
+        },
+      )}
+    </section>
+
+    <div class="pd-chapter-body pd-chapter-body-secondary">
+    <section id="pd-post-subjective-overview" class="pd-content-section pd-placeholder-section">
       ${buildPdSectionHeading(
-        '5. Performance',
-        'Performance',
-        'Monitor predictive error, population stability, and rating movement through time.',
-        performanceRag,
+        '2.1 Overview',
+        'Overview',
+        'High-level landing area for the future post subjective review analysis package.',
+        'N/A',
         {showRag: false},
       )}
-      <div class="pd-test-grid pd-performance-test-grid">
-        <div class="pd-domain-status pd-domain-status-top pd-domain-${pdToneClass(performanceRag)} pd-performance-domain-status">
-          <span>Performance RAG</span>
-          <strong>${pdRagDot(performanceRag)} ${escapePdHtml(performanceRag)}</strong>
-        </div>
-        ${testCards('performance', [
-          ['Brier Score', '', 'ratio'],
-          ['Population Stability Index', '', 'ratio'],
-          ['Rating Migration Index', '', 'ratio'],
-        ])}
-      </div>
-      <div id="pd-stability-trend-panel" class="section-card" data-pd-expand-title="Performance Trend">
-        ${buildPdChartHeader(
-          'Performance Trend',
-          'Population Stability Index and Brier Score trend markers use RAG colors.',
-          'pd-stability-trend-panel',
-          'stability',
-          trendPeriods,
-          context.snapshotQuarter,
-        )}
-        <div id="pd-stability-trend-grid" class="pd-stability-trend-grid">
-          <div id="pd-stability-trend-psi" class="pd-stability-trend-chart"></div>
-          <div id="pd-stability-trend-brier-score" class="pd-stability-trend-chart"></div>
-        </div>
-      </div>
-      <div id="pd-distribution-shift-panel" class="section-card" data-pd-expand-title="Predicted PD Distribution Shift">
-        ${buildPdChartHeader(
-          'Predicted PD Distribution Shift',
-          `Portfolio distribution comparison for ${previousLabel} and ${context.snapshotQuarter}.`,
-          'pd-distribution-shift-panel',
-        )}
-        <div id="pd-distribution-shift-chart" class="pd-distribution-shift-chart"></div>
-      </div>
-      <div id="pd-migration-analysis-panel" class="section-card pd-migration-section" data-pd-expand-title="Rating Migration Analysis">
-        ${buildPdChartHeader(
-          'Rating Migration Analysis',
-          `Counts of retained facilities moving from ${previousLabel} ratings (rows) to ${context.snapshotQuarter} ratings (columns).
-          The matrix uses the selected PD models and segment; the active monitoring setup determines these comparison quarters.`,
-          'pd-migration-analysis-panel',
-        )}
-        ${retentionWarning}
-        <div class="pd-migration-summary">
-          <span><strong>${fmtN(ratingMigration.retained)}</strong> Retained facilities</span>
-          <span><strong>${formatPdShare(ratingMigration.stable, ratingMigration.retained)}</strong> Stable ratings</span>
-          <span><strong>${formatPdShare(ratingMigration.upgrades, ratingMigration.retained)}</strong> Upgrades</span>
-          <span><strong>${formatPdShare(ratingMigration.downgrades, ratingMigration.retained)}</strong> Downgrades</span>
-          <span><strong>${formatPdShare(ratingMigration.migrated, ratingMigration.retained)}</strong> Migrated ratings</span>
-        </div>
-        <div class="pd-migration-grid">
-          <div class="pd-subchart-panel">
-            <div class="pd-subchart-title">Migration Direction</div>
-            <div id="pd-rating-direction-chart" class="pd-rating-direction-chart"></div>
-          </div>
-          <div class="pd-subchart-panel">
-            <div class="pd-subchart-title">Rating Migration Matrix</div>
-            <div id="pd-rating-migration-chart" class="pd-migration-chart"></div>
-          </div>
-        </div>
-      </div>
+      ${buildPdPlaceholderCard(
+        'Post Subjective Review Overview',
+        'This placeholder section is ready for the future summary narrative, key flags, and cross-check metrics that will frame the post subjective review analysis.',
+        ['Summary KPIs', 'Narrative insights', 'Reviewer actions'],
+      )}
     </section>
 
-    <div id="pd-expanded-modal" class="pd-expanded-modal" aria-hidden="true" onclick="if(event.target===this) closePdExpandedPanel()" onkeydown="handlePdModalKeydown(event)">
-      <div class="pd-expanded-dialog" role="dialog" aria-modal="true" aria-labelledby="pd-expanded-modal-title">
-        <div class="pd-expanded-modal-header">
-          <div>
-            <span>Expanded Analysis</span>
-            <strong id="pd-expanded-modal-title">PD Analysis</strong>
-          </div>
-          <button type="button" id="pd-expanded-modal-close" class="pd-expanded-close" onclick="closePdExpandedPanel()" aria-label="Close enlarged chart">Close</button>
-        </div>
-        <div id="pd-expanded-modal-body" class="pd-expanded-modal-body"></div>
-      </div>
+    <section id="pd-transition-matrix-distance" class="pd-content-section pd-placeholder-section">
+      ${buildPdSectionHeading(
+        '2.2 Transition Matrix',
+        'Transition Matrix',
+        'Future section for comparing post-review transition behavior against the reference migration structure.',
+        'N/A',
+        {showRag: false},
+      )}
+      ${buildPdPlaceholderCard(
+        'Transition Matrix',
+        'A compact placeholder is in place for the transition matrix views, distance metrics, and interpretation rules that will be added later.',
+        ['Transition view', 'Distance metric', 'Threshold guidance'],
+      )}
+    </section>
+
+    <section id="pd-population-stability-index" class="pd-content-section pd-placeholder-section">
+      ${buildPdSectionHeading(
+        '2.3 PSI',
+        'PSI',
+        'Future section for population stability diagnostics after subjective review adjustments.',
+        'N/A',
+        {showRag: false},
+      )}
+      ${buildPdPlaceholderCard(
+        'Population Stability Index (PSI)',
+        'This placeholder reserves space for PSI trends, distribution shift diagnostics, and any future threshold-based alerts.',
+        ['PSI trend', 'Shift diagnostics', 'Threshold alerts'],
+      )}
+    </section>
+
+    <section id="pd-rank-ordering" class="pd-content-section pd-placeholder-section">
+      ${buildPdSectionHeading(
+        '2.4 Scenario Rank Ordering',
+        'Scenario Rank Ordering',
+        'Future section for rank-order consistency diagnostics across scenarios after subjective review adjustments.',
+        'N/A',
+        {showRag: false},
+      )}
+      ${buildPdPlaceholderCard(
+        'Scenario Rank Ordering',
+        'This placeholder will later host scenario rank-order checks, supporting visuals, and exception commentary for post-review performance review.',
+        ['Ordering stability', 'Scenario comparison', 'Supporting evidence'],
+      )}
+    </section>
+
+    <section id="pd-sensitivity-analysis" class="pd-content-section pd-placeholder-section">
+      ${buildPdSectionHeading(
+        '2.5 Sensitivity Analysis',
+        'Sensitivity Analysis',
+        'Future section for showing how model outputs react to selected drivers and review overlays.',
+        'N/A',
+        {showRag: false},
+      )}
+      ${buildPdPlaceholderCard(
+        'Sensitivity Analysis',
+        'A lightweight placeholder is ready for future parameter sensitivities, comparative views, and documented interpretation logic.',
+        ['Driver impact', 'Scenario comparison', 'Review commentary'],
+      )}
+    </section>
+
+    ${buildPdMevRangeSection(pd)}
     </div>
+
   `;
 
-  drawPdRatingMigrationMatrix(
-    ratingValues,
-    ratingMigration.matrix,
-    previousLabel,
-    context.snapshotQuarter,
-    Boolean(context.previousQuarter),
-  );
-  drawPdRatingMigrationDirection(ratingMigration);
+  initPdMevFilterEvents();
   drawPdCalibrationRagTrend(
     pd,
     observations,
@@ -3474,10 +4779,10 @@ function renderPdModels() {
     ratingObservations,
     balanceSheetCalibrationContext.snapshotQuarter,
     'nco_1y',
-    {chartId: 'pd-balance-sheet-default-rate-trend-chart', rangeKey: 'balance_sheet_calibration'},
+    {chartId: 'pd-balance-sheet-default-rate-trend-chart', rangeKey: 'balance_sheet_calibration', horizontalSubplots: true},
   );
-  drawPdDistributionShift(observations, context.snapshotQuarter, context.previousQuarter);
-  drawPdStabilityTrend(observations, ratingObservations, context.snapshotQuarter);
+  drawPdMevCharts(pd);
+  restorePdMevMenuState();
 }
 
 """

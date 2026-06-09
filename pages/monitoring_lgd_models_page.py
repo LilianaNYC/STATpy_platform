@@ -273,6 +273,8 @@ function closeLgdExpandedPanel(restoreFocus = true) {
 function drawLgdCalibrationTrend(observations, snapshotQuarter) {
   const trend = filterLgdTrend('calibration', buildLgdTrend(observations, snapshotQuarter));
   const quarters = trend.map(row => row.quarter);
+  const chart = document.getElementById('lgd-calibration-trend-chart');
+  if (!chart) return;
   Plotly.react('lgd-calibration-trend-chart', [
     {x: quarters, y: trend.map(row => row.actual_lgd), type: 'scatter', mode: 'lines+markers', name: 'Actual LGD', line: {color: '#dc2626', width: 2.5}, hovertemplate: '%{x}<br>Actual LGD: %{y:.2%}<extra></extra>'},
     {x: quarters, y: trend.map(row => row.predicted_lgd), type: 'scatter', mode: 'lines+markers', name: 'Predicted LGD', line: {color: '#2563eb', width: 2.5, dash: 'dash'}, hovertemplate: '%{x}<br>Predicted LGD: %{y:.2%}<extra></extra>'},
@@ -280,7 +282,7 @@ function drawLgdCalibrationTrend(observations, snapshotQuarter) {
   ], {
     height: 390, margin: {t: 18, r: 64, b: 52, l: 62}, paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
     hovermode: 'x unified', legend: {orientation: 'h', x: 0, y: 1.14},
-    xaxis: {title: 'Portfolio Quarter', type: 'category', gridcolor: '#e5e7eb'},
+    xaxis: buildMonitoringTimeSeriesXAxis(quarters, {title: 'Portfolio Quarter', gridcolor: '#e5e7eb'}, {chart}),
     yaxis: {title: 'LGD', tickformat: '.1%', rangemode: 'tozero', gridcolor: '#e5e7eb'},
     yaxis2: {title: 'A / E', overlaying: 'y', side: 'right', rangemode: 'tozero'},
   }, {responsive: true, displayModeBar: false});
@@ -289,6 +291,8 @@ function drawLgdCalibrationTrend(observations, snapshotQuarter) {
 function drawLgdErrorTrend(observations, snapshotQuarter) {
   const trend = filterLgdTrend('error', buildLgdTrend(observations, snapshotQuarter));
   const quarters = trend.map(row => row.quarter);
+  const chart = document.getElementById('lgd-error-trend-chart');
+  if (!chart) return;
   Plotly.react('lgd-error-trend-chart', [
     {x: quarters, y: trend.map(row => row.mean_error), type: 'scatter', mode: 'lines+markers', name: 'Mean Error', line: {color: '#0891b2', width: 2.5}, hovertemplate: '%{x}<br>Mean Error: %{y:.3f}<extra></extra>'},
     {x: quarters, y: trend.map(row => row.rmse), type: 'scatter', mode: 'lines+markers', name: 'RMSE', line: {color: '#ea580c', width: 2.5, dash: 'dash'}, hovertemplate: '%{x}<br>RMSE: %{y:.3f}<extra></extra>'},
@@ -296,7 +300,7 @@ function drawLgdErrorTrend(observations, snapshotQuarter) {
   ], {
     height: 360, margin: {t: 18, r: 78, b: 52, l: 62}, paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
     hovermode: 'x unified', legend: {orientation: 'h', x: 0, y: 1.14},
-    xaxis: {title: 'Portfolio Quarter', type: 'category', gridcolor: '#e5e7eb'},
+    xaxis: buildMonitoringTimeSeriesXAxis(quarters, {title: 'Portfolio Quarter', gridcolor: '#e5e7eb'}, {chart}),
     yaxis: {title: 'Error', gridcolor: '#e5e7eb'},
     yaxis2: {title: "Kendall's Tau", overlaying: 'y', side: 'right'},
   }, {responsive: true, displayModeBar: false});

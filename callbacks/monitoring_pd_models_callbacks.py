@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import hashlib
 import logging
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -791,6 +793,84 @@ def _build_rating_migration_observations(
     )
 
 
+def _load_pd_mev_catalog() -> dict[str, Any]:
+    """Load the dummy MEV time-series catalog used by the PD MEV range section."""
+    path = Path(__file__).resolve().parents[1] / "mev_dummy_data.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        log.warning("PD MEV dummy data file not found: %s", path)
+        return {}
+    except json.JSONDecodeError as exc:
+        log.warning("PD MEV dummy data file could not be parsed: %s", exc)
+        return {}
+
+    if not isinstance(payload, dict):
+        log.warning("PD MEV dummy data must be a model-keyed JSON object.")
+        return {}
+
+    catalog: dict[str, Any] = {}
+    for raw_model_name, raw_model_payload in payload.items():
+        if not isinstance(raw_model_payload, dict):
+            continue
+
+        model_name = _normalize_model_name(raw_model_name)
+        if not model_name:
+            continue
+
+        raw_mevs = raw_model_payload.get("mevs", {})
+        if not isinstance(raw_mevs, dict):
+            raw_mevs = {}
+
+        mevs: dict[str, Any] = {}
+        for raw_mev_name, raw_mev_payload in raw_mevs.items():
+            if not isinstance(raw_mev_payload, dict):
+                continue
+
+            dev_range = raw_mev_payload.get("dev_range", {})
+            time_series = raw_mev_payload.get("time_series", {})
+            if not isinstance(dev_range, dict):
+                dev_range = {}
+            if not isinstance(time_series, dict):
+                time_series = {}
+
+            clean_range = {
+                "min": pd.to_numeric(dev_range.get("min"), errors="coerce"),
+                "max": pd.to_numeric(dev_range.get("max"), errors="coerce"),
+                "mean": pd.to_numeric(dev_range.get("mean"), errors="coerce"),
+                "2std_lower": pd.to_numeric(dev_range.get("2std_lower"), errors="coerce"),
+                "2std_upper": pd.to_numeric(dev_range.get("2std_upper"), errors="coerce"),
+                "development_date": str(dev_range.get("development_date") or ""),
+            }
+            clean_range = {
+                key: (round(float(value), 6) if pd.notna(value) else None)
+                for key, value in clean_range.items()
+                if key != "development_date"
+            } | {"development_date": clean_range["development_date"]}
+
+            clean_series = {
+                str(period): round(float(value), 6)
+                for period, value in time_series.items()
+                if pd.notna(pd.to_numeric(value, errors="coerce"))
+            }
+            mevs[str(raw_mev_name).strip()] = {
+                "dev_range": clean_range,
+                "time_series": clean_series,
+            }
+
+        catalog[model_name] = {
+            "segments": [
+                str(segment).strip()
+                for segment in raw_model_payload.get("segments", [])
+                if str(segment).strip()
+            ],
+            "severe_scenario_date": str(raw_model_payload.get("severe_scenario_date") or ""),
+            "mevs": mevs,
+        }
+
+    return catalog
+
+
 def build_monitoring_pd_models(
     df: pd.DataFrame,
     thresholds: dict[str, pd.DataFrame],
@@ -814,6 +894,7 @@ def build_monitoring_pd_models(
     rating_values, rating_migration_observations = _build_rating_migration_observations(
         df, model_column, segment_column, cfg
     )
+    mev_catalog = _load_pd_mev_catalog()
 
     return {
         "model_column": model_column,
@@ -831,4 +912,6 @@ def build_monitoring_pd_models(
         "performance_observations": performance_observations,
         "rating_values": rating_values,
         "rating_migration_observations": rating_migration_observations,
+        "mev_source_file": "mev_dummy_data.json",
+        "mev_catalog": mev_catalog,
     }

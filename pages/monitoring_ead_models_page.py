@@ -283,6 +283,8 @@ function closeEadExpandedPanel(restoreFocus = true) {
 function drawEadCalibrationTrend(observations, snapshotQuarter) {
   const trend = filterEadTrend('calibration', buildEadTrend(observations, snapshotQuarter));
   const quarters = trend.map(row => row.quarter);
+  const chart = document.getElementById('ead-calibration-trend-chart');
+  if (!chart) return;
   Plotly.react('ead-calibration-trend-chart', [
     {x: quarters, y: trend.map(row => row.observed_ead), type: 'scatter', mode: 'lines+markers', name: 'Observed Balance', line: {color: '#dc2626', width: 2.5}, hovertemplate: '%{x}<br>Observed Balance: $%{y:,.0f}<extra></extra>'},
     {x: quarters, y: trend.map(row => row.predicted_ead), type: 'scatter', mode: 'lines+markers', name: 'Predicted EAD', line: {color: '#2563eb', width: 2.5, dash: 'dash'}, hovertemplate: '%{x}<br>Predicted EAD: $%{y:,.0f}<extra></extra>'},
@@ -290,7 +292,7 @@ function drawEadCalibrationTrend(observations, snapshotQuarter) {
   ], {
     height: 390, margin: {t: 18, r: 64, b: 52, l: 62}, paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
     hovermode: 'x unified', legend: {orientation: 'h', x: 0, y: 1.14},
-    xaxis: {title: 'Portfolio Quarter', type: 'category', gridcolor: '#e5e7eb'},
+    xaxis: buildMonitoringTimeSeriesXAxis(quarters, {title: 'Portfolio Quarter', gridcolor: '#e5e7eb'}, {chart}),
     yaxis: {title: 'Exposure Amount', tickprefix: '$', tickformat: '~s', rangemode: 'tozero', gridcolor: '#e5e7eb'},
     yaxis2: {title: 'A / E', overlaying: 'y', side: 'right', rangemode: 'tozero'},
   }, {responsive: true, displayModeBar: false});
@@ -299,6 +301,8 @@ function drawEadCalibrationTrend(observations, snapshotQuarter) {
 function drawEadErrorTrend(observations, snapshotQuarter) {
   const trend = filterEadTrend('error', buildEadTrend(observations, snapshotQuarter));
   const quarters = trend.map(row => row.quarter);
+  const chart = document.getElementById('ead-error-trend-chart');
+  if (!chart) return;
   Plotly.react('ead-error-trend-chart', [
     {x: quarters, y: trend.map(row => row.mean_error), type: 'scatter', mode: 'lines+markers', name: 'Mean Error', line: {color: '#0891b2', width: 2.5}, hovertemplate: '%{x}<br>Mean Error: %{y:.3f}<extra></extra>'},
     {x: quarters, y: trend.map(row => row.rmse), type: 'scatter', mode: 'lines+markers', name: 'RMSE', line: {color: '#ea580c', width: 2.5, dash: 'dash'}, hovertemplate: '%{x}<br>RMSE: %{y:.3f}<extra></extra>'},
@@ -306,7 +310,7 @@ function drawEadErrorTrend(observations, snapshotQuarter) {
   ], {
     height: 360, margin: {t: 18, r: 78, b: 52, l: 62}, paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
     hovermode: 'x unified', legend: {orientation: 'h', x: 0, y: 1.14},
-    xaxis: {title: 'Portfolio Quarter', type: 'category', gridcolor: '#e5e7eb'},
+    xaxis: buildMonitoringTimeSeriesXAxis(quarters, {title: 'Portfolio Quarter', gridcolor: '#e5e7eb'}, {chart}),
     yaxis: {title: 'Error', gridcolor: '#e5e7eb'},
     yaxis2: {title: "Kendall's Tau", overlaying: 'y', side: 'right'},
   }, {responsive: true, displayModeBar: false});

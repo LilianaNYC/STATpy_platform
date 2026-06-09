@@ -46,6 +46,28 @@ TOP_BAR_CONTROLS_HTML = (
     '</div>'
     '</div>'
     '<div class="monitoring-filter-help" id="monitoring-filter-help"></div>'
+    '<div class="monitoring-section-subnav" id="monitoring-pd-subnav" hidden>'
+    '<div class="monitoring-section-subnav-group">'
+    '<div class="monitoring-section-subnav-label">RAG Assignment</div>'
+    '<div class="monitoring-section-subnav-links">'
+    '<button type="button" data-monitoring-target="pd-analysis-scope" onclick="jumpToMonitoringSection(\'pd-analysis-scope\')">Overview</button>'
+    '<button type="button" data-monitoring-target="pd-calibration-rag" onclick="jumpToMonitoringSection(\'pd-calibration-rag\')">ECL PIT PD - Calibration Conservatism</button>'
+    '<button type="button" data-monitoring-target="pd-discrimination-rag" onclick="jumpToMonitoringSection(\'pd-discrimination-rag\')">ECL PIT PD - Discriminatory Power</button>'
+    '<button type="button" data-monitoring-target="pd-balance-sheet-calibration" onclick="jumpToMonitoringSection(\'pd-balance-sheet-calibration\')">Balance Sheet PD - Calibration Conservatism</button>'
+    '</div>'
+    '</div>'
+    '<div class="monitoring-section-subnav-group monitoring-section-subnav-group-secondary">'
+    '<div class="monitoring-section-subnav-label">Post Subjective Review Analysis</div>'
+    '<div class="monitoring-section-subnav-links">'
+    '<button type="button" data-monitoring-target="pd-post-subjective-overview" onclick="jumpToMonitoringSection(\'pd-post-subjective-overview\')">Overview</button>'
+    '<button type="button" data-monitoring-target="pd-transition-matrix-distance" onclick="jumpToMonitoringSection(\'pd-transition-matrix-distance\')">Transition Matrix</button>'
+    '<button type="button" data-monitoring-target="pd-population-stability-index" onclick="jumpToMonitoringSection(\'pd-population-stability-index\')">PSI</button>'
+    '<button type="button" data-monitoring-target="pd-rank-ordering" onclick="jumpToMonitoringSection(\'pd-rank-ordering\')">Scenario Rank Ordering</button>'
+    '<button type="button" data-monitoring-target="pd-sensitivity-analysis" onclick="jumpToMonitoringSection(\'pd-sensitivity-analysis\')">Sensitivity Analysis</button>'
+    '<button type="button" data-monitoring-target="pd-mev-range" onclick="jumpToMonitoringSection(\'pd-mev-range\')">MEV Range</button>'
+    '</div>'
+    '</div>'
+    '</div>'
     '</div>\n'
 )
 
@@ -104,6 +126,20 @@ let MONITORING_TIME_HORIZON = '1y';
 let MONITORING_PD_INPUT = 'time_horizon';
 let MONITORING_POINT = DASH_DATA.latest_quarter || '';
 const MONITORING_POINT_OPTIONS = (DASH_DATA.quarters || []).slice().sort().reverse();
+const MONITORING_PD_SECTION_IDS = [
+  'pd-analysis-scope',
+  'pd-calibration-rag',
+  'pd-discrimination-rag',
+  'pd-balance-sheet-calibration',
+  'pd-post-subjective-overview',
+  'pd-transition-matrix-distance',
+  'pd-population-stability-index',
+  'pd-rank-ordering',
+  'pd-sensitivity-analysis',
+  'pd-mev-range',
+];
+let MONITORING_SCROLL_SYNC_BOUND = false;
+let MONITORING_SECTION_SCROLL_FRAME = null;
 
 function getMonitoringFilterPayload() {
   const monitoring = DASH_DATA.monitoring || {};
@@ -131,7 +167,51 @@ function initSelectors() {
   }
   buildMonitoringModelMenu();
   buildMonitoringSegmentOptions();
+  initMonitoringSectionSync();
   syncMonitoringFilterControls();
+}
+function initMonitoringSectionSync() {
+  if (MONITORING_SCROLL_SYNC_BOUND) return;
+  const content = document.querySelector('.content');
+  if (!content) return;
+  content.addEventListener('scroll', function() {
+    if (MONITORING_SECTION_SCROLL_FRAME !== null) return;
+    MONITORING_SECTION_SCROLL_FRAME = window.requestAnimationFrame(function() {
+      MONITORING_SECTION_SCROLL_FRAME = null;
+      updateMonitoringPdSubnavActiveState();
+    });
+  }, {passive: true});
+  MONITORING_SCROLL_SYNC_BOUND = true;
+}
+function setMonitoringPdSubnavActive(sectionId) {
+  document.querySelectorAll('#monitoring-pd-subnav [data-monitoring-target]').forEach(button => {
+    const isActive = button.getAttribute('data-monitoring-target') === sectionId;
+    button.classList.toggle('active', isActive);
+    button.setAttribute('aria-current', isActive ? 'location' : 'false');
+  });
+  document.querySelectorAll('#monitoring-pd-subnav .monitoring-section-subnav-group').forEach(group => {
+    const hasActiveButton = !!group.querySelector('[data-monitoring-target].active');
+    group.classList.toggle('active', hasActiveButton);
+  });
+}
+function updateMonitoringPdSubnavActiveState() {
+  const pdSubnav = document.getElementById('monitoring-pd-subnav');
+  if (!pdSubnav || pdSubnav.hidden || activeTab !== 'pd_models') return;
+  const content = document.querySelector('.content');
+  if (!content) return;
+  const contentRect = content.getBoundingClientRect();
+  const anchorLine = contentRect.top + 36;
+  let activeSectionId = MONITORING_PD_SECTION_IDS[0];
+  for (const sectionId of MONITORING_PD_SECTION_IDS) {
+    const section = document.getElementById(sectionId);
+    if (!section) continue;
+    if (section.getBoundingClientRect().top <= anchorLine) {
+      activeSectionId = sectionId;
+    } else {
+      break;
+    }
+  }
+  setMonitoringPdSubnavActive(activeSectionId);
 }
 function buildMonitoringSegmentOptions() {
   const sel = document.getElementById('monitoring-portfolio-segment-select');
@@ -224,6 +304,7 @@ function setMonitoringModels(changedInput) {
 }
 function syncMonitoringFilterControls() {
   const isPerformanceTab = activeTab === 'pd_models' || activeTab === 'lgd_models' || activeTab === 'ead_models';
+  const isPdTab = activeTab === 'pd_models';
   const groupMode = !isPerformanceTab && MONITORING_FILTER_MODE === 'group';
   const modelMode = isPerformanceTab || MONITORING_FILTER_MODE === 'models';
   const metricSelect = document.getElementById('monitoring-metric-segment-select');
@@ -236,6 +317,7 @@ function syncMonitoringFilterControls() {
   const groupButton = document.getElementById('monitoring-mode-group');
   const modelsButton = document.getElementById('monitoring-mode-models');
   const help = document.getElementById('monitoring-filter-help');
+  const pdSubnav = document.getElementById('monitoring-pd-subnav');
   const modelNames = getMonitoringModelNames();
   const hasSpecificModelSelection = (
     MONITORING_MODELS.length > 0
@@ -295,6 +377,24 @@ function syncMonitoringFilterControls() {
         : 'Results include any selected model. Model Group and Segment are disabled in this mode.';
     }
   }
+  if (pdSubnav) {
+    pdSubnav.hidden = !isPdTab;
+  }
+  if (isPdTab) updateMonitoringPdSubnavActiveState();
+}
+function jumpToMonitoringSection(sectionId) {
+  const target = document.getElementById(sectionId);
+  if (!target) return;
+  setMonitoringPdSubnavActive(sectionId);
+  const content = document.querySelector('.content');
+  if (!content) {
+    target.scrollIntoView({behavior: 'smooth', block: 'start'});
+    return;
+  }
+  const contentRect = content.getBoundingClientRect();
+  const targetRect = target.getBoundingClientRect();
+  const top = Math.max(0, content.scrollTop + targetRect.top - contentRect.top - 10);
+  content.scrollTo({top, behavior: 'smooth'});
 }
 function toggleMonitoringModelMenu(e) {
   if (e) e.stopPropagation();
@@ -411,7 +511,7 @@ function _pdfStyles() {
     .pdf-content > .section-card {
       max-width: none;
     }
-    .pd-section-nav,
+    .monitoring-section-subnav,
     .pd-chart-actions,
     .pd-section-actions,
     .pd-expand-button,
