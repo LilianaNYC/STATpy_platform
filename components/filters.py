@@ -1,0 +1,400 @@
+"""Filter controls for the PD Performance dashboard.
+
+Ports the global monitoring filter bar (``components/monitoring_layout.py``'s
+``MONITORING_POINT`` / ``MONITORING_PORTFOLIO_SEGMENT`` / ``MONITORING_MODELS``
+selectors) and the per-chart range controls (``buildPdRangeControls`` /
+``buildPdCalibrationTrendHorizonControl`` /
+``buildPdDiscriminationTrendHorizonControl`` /
+``buildPdFrozenOneYearHorizonControl``) from
+``pages/monitoring_pd_models_page.py``.
+
+The JS versions mutated module-level globals and re-rendered the page on
+every change. In Dash, the equivalent state lives in ``dcc.Store``/component
+``value`` props and is read by callbacks in ``callbacks.py``.
+"""
+
+from __future__ import annotations
+
+from dash import dcc, html
+
+from ..data.transformations import get_pd_range_preset, get_pd_range_selection
+
+# ---------------------------------------------------------------------------
+# Component ids
+# ---------------------------------------------------------------------------
+
+MONITORING_POINT_ID = "pd-monitoring-point"
+PORTFOLIO_SEGMENT_ID = "pd-portfolio-segment"
+MONITORING_POINT_TOGGLE_ID = "pd-monitoring-point-toggle"
+MONITORING_POINT_MENU_ID = "pd-monitoring-point-menu"
+PORTFOLIO_SEGMENT_TOGGLE_ID = "pd-portfolio-segment-toggle"
+PORTFOLIO_SEGMENT_MENU_ID = "pd-portfolio-segment-menu"
+MODELS_ID = "pd-models"
+MODELS_SELECT_ALL_ID = "pd-models-select-all"
+MODELS_TOGGLE_ID = "pd-models-toggle"
+MODELS_MENU_ID = "pd-models-menu"
+FILTER_HELP_ID = "pd-filter-help"
+SINGLE_SELECT_OPTION_ID = "pd-single-select-option"
+
+# Per-chart range controls use pattern-matching ids so a single set of
+# callbacks in callbacks.py can serve every chart's range selector.
+RANGE_WINDOW_ID = "pd-range-window"
+RANGE_FROM_ID = "pd-range-from"
+RANGE_TO_ID = "pd-range-to"
+TREND_HORIZON_ID = "pd-trend-horizon"
+
+# MEV Range chart-filter controls (port of buildPdMevFilterRow's PD model
+# select, MEV checkbox-dropdown, and "Reset chart filters" button).
+MEV_MODEL_FILTER_ID = "pd-mev-model-filter"
+MEV_NAME_FILTER_ID = "pd-mev-name-filter"
+MEV_RESET_ID = "pd-mev-filter-reset"
+
+# Section sub-navigation (port of `#monitoring-pd-subnav`).
+SUBNAV_ID = "pd-subnav"
+
+# Section ids in scroll order, used by assets/pd_subnav.js to highlight the
+# sub-nav link for whichever section is currently at the top of the viewport
+# (port of MONITORING_PD_SECTION_IDS / updateMonitoringPdSubnavActiveState).
+RAG_ASSIGNMENT_LINKS = [
+    ("pd-analysis-scope", "Overview"),
+    ("pd-calibration-rag", "ECL PIT PD - Calibration Conservatism"),
+    ("pd-discrimination-rag", "ECL PIT PD - Discriminatory Power"),
+    ("pd-balance-sheet-calibration", "Balance Sheet PD - Calibration Conservatism"),
+]
+POST_SUBJECTIVE_REVIEW_LINKS = [
+    ("pd-post-subjective-overview", "Overview"),
+    ("pd-transition-matrix-distance", "Transition Matrix"),
+    ("pd-population-stability-index", "PSI"),
+    ("pd-rank-ordering", "Scenario Rank Ordering"),
+    ("pd-sensitivity-analysis", "Sensitivity Analysis"),
+    ("pd-mev-range", "MEV Range"),
+]
+
+
+# ---------------------------------------------------------------------------
+# Global filter bar
+# ---------------------------------------------------------------------------
+
+
+def _build_single_select_dropdown(
+    *,
+    value_id: str,
+    toggle_id: str,
+    menu_id: str,
+    filter_key: str,
+    options: list[dict],
+    value: str,
+) -> html.Div:
+    selected_label = next((option["label"] for option in options if option["value"] == value), value)
+
+    return html.Div(
+        className="checkbox-dropdown single-select-dropdown",
+        children=[
+            dcc.Dropdown(
+                id=value_id,
+                options=options,
+                value=value,
+                clearable=False,
+                searchable=False,
+                style={"display": "none"},
+            ),
+            html.Button(
+                selected_label,
+                id=toggle_id,
+                type="button",
+                n_clicks=0,
+                className="checkbox-dropdown-toggle",
+            ),
+            html.Div(
+                id=menu_id,
+                className="checkbox-dropdown-menu single-select-menu",
+                children=[
+                    html.Button(
+                        [
+                            html.Span(option["label"], className="single-select-option-label"),
+                            html.Span("✓", className="single-select-option-check", **{"aria-hidden": "true"}),
+                        ],
+                        id={"type": SINGLE_SELECT_OPTION_ID, "filter": filter_key, "value": option["value"]},
+                        type="button",
+                        n_clicks=0,
+                        className="single-select-option is-selected" if option["value"] == value else "single-select-option",
+                    )
+                    for option in options
+                ],
+            ),
+        ],
+    )
+
+
+def build_global_filters(data: dict) -> html.Div:
+    """The top filter bar: monitoring point, segment, models."""
+    quarters_desc = sorted(data["quarters"], reverse=True)
+    latest_quarter = quarters_desc[0] if quarters_desc else ""
+    model_names = data["model_names"]
+    segment_values = data["segment_values"]
+    monitoring_point_options = [{"label": q, "value": q} for q in quarters_desc]
+    segment_options = [{"label": "All", "value": "all"}] + [{"label": value, "value": value} for value in segment_values]
+
+    return html.Div(
+        className="monitoring-controls",
+        children=[
+            html.Div(
+                className="monitoring-filter",
+                children=[
+                    html.Label("Monitoring Point", htmlFor=MONITORING_POINT_TOGGLE_ID),
+                    _build_single_select_dropdown(
+                        value_id=MONITORING_POINT_ID,
+                        toggle_id=MONITORING_POINT_TOGGLE_ID,
+                        menu_id=MONITORING_POINT_MENU_ID,
+                        filter_key="monitoring-point",
+                        options=monitoring_point_options,
+                        value=latest_quarter,
+                    ),
+                ],
+            ),
+            html.Div(
+                className="monitoring-filter",
+                children=[
+                    html.Label("Segment", htmlFor=PORTFOLIO_SEGMENT_TOGGLE_ID),
+                    _build_single_select_dropdown(
+                        value_id=PORTFOLIO_SEGMENT_ID,
+                        toggle_id=PORTFOLIO_SEGMENT_TOGGLE_ID,
+                        menu_id=PORTFOLIO_SEGMENT_MENU_ID,
+                        filter_key="portfolio-segment",
+                        options=segment_options,
+                        value="all",
+                    ),
+                ],
+            ),
+            html.Div(
+                className="monitoring-filter monitoring-model-filter",
+                children=[
+                    html.Label("Specific Models", htmlFor=MODELS_TOGGLE_ID),
+                    html.Div(
+                        className="checkbox-dropdown",
+                        children=[
+                            html.Button(
+                                "All models",
+                                id=MODELS_TOGGLE_ID,
+                                type="button",
+                                n_clicks=0,
+                                className="checkbox-dropdown-toggle",
+                            ),
+                            html.Div(
+                                id=MODELS_MENU_ID,
+                                className="checkbox-dropdown-menu",
+                                children=[
+                                    dcc.Checklist(
+                                        id=MODELS_SELECT_ALL_ID,
+                                        options=[{"label": "All", "value": "all"}],
+                                        value=["all"],
+                                        className="pd-models-select-all",
+                                    ),
+                                    dcc.Checklist(
+                                        id=MODELS_ID,
+                                        options=[{"label": name, "value": name} for name in model_names],
+                                        value=list(model_names),
+                                        className="pd-models-checklist",
+                                    ),
+                                ],
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+            html.Div(
+                "Choose a portfolio segment or specific models. These filters cannot be combined.",
+                id=FILTER_HELP_ID,
+                className="monitoring-filter-help",
+            ),
+            build_section_subnav(),
+        ],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Section sub-navigation (port of `#monitoring-pd-subnav`)
+# ---------------------------------------------------------------------------
+
+
+def _subnav_link(section_id: str, label: str, active: bool) -> html.Button:
+    return html.Button(
+        label,
+        type="button",
+        className="active" if active else "",
+        **{"data-pd-subnav-target": section_id, "aria-current": "location" if active else "false"},
+    )
+
+
+def build_section_subnav() -> html.Div:
+    """RAG Assignment / Post Subjective Review Analysis jump links.
+
+    Port of the `#monitoring-pd-subnav` markup. Clicking a link scrolls to
+    the corresponding section; the active link/group is kept in sync with
+    scroll position by ``assets/pd_subnav.js`` (port of
+    ``setMonitoringPdSubnavActive`` / ``updateMonitoringPdSubnavActiveState``).
+    """
+    return html.Div(
+        id=SUBNAV_ID,
+        className="monitoring-section-subnav",
+        children=[
+            html.Div(
+                className="monitoring-section-subnav-group pd-subnav-group active",
+                children=[
+                    html.Div("RAG Assignment", className="monitoring-section-subnav-label"),
+                    html.Div(
+                        className="monitoring-section-subnav-links",
+                        children=[
+                            _subnav_link(section_id, label, active=index == 0)
+                            for index, (section_id, label) in enumerate(RAG_ASSIGNMENT_LINKS)
+                        ],
+                    ),
+                ],
+            ),
+            html.Div(
+                className="monitoring-section-subnav-group monitoring-section-subnav-group-secondary pd-subnav-group",
+                children=[
+                    html.Div("Post Subjective Review Analysis", className="monitoring-section-subnav-label"),
+                    html.Div(
+                        className="monitoring-section-subnav-links",
+                        children=[
+                            _subnav_link(section_id, label, active=False)
+                            for section_id, label in POST_SUBJECTIVE_REVIEW_LINKS
+                        ],
+                    ),
+                ],
+            ),
+        ],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Per-chart range controls (buildPdRangeControls / buildPdPeriodOptions)
+# ---------------------------------------------------------------------------
+
+
+def build_pd_period_options(periods: list[str], all_label: str) -> list[dict]:
+    return [{"label": all_label, "value": ""}] + [{"label": period, "value": period} for period in periods]
+
+
+def build_range_controls(range_key: str, periods: list[str], range_value: dict | None = None) -> html.Div:
+    """Window / From / To controls for a chart's visible time range.
+
+    ``range_value`` is ``{"from": "...", "to": "..."}`` (empty strings mean
+    unbounded), normally read from a ``dcc.Store``.
+    """
+    selection = get_pd_range_selection(range_value, periods)
+    preset = get_pd_range_preset(range_value, periods)
+
+    return html.Div(
+        className="pd-range-controls",
+        **{"aria-label": "Visible time range"},
+        children=[
+            html.Label([
+                html.Span("Window"),
+                dcc.Dropdown(
+                    id={"type": RANGE_WINDOW_ID, "key": range_key},
+                    options=[
+                        {"label": "All periods", "value": "all"},
+                        {"label": "Last 4 quarters", "value": "last-4"},
+                        {"label": "Last 8 quarters", "value": "last-8"},
+                        {"label": "Last 12 quarters", "value": "last-12"},
+                        {"label": "Custom range", "value": "custom", "disabled": True},
+                    ],
+                    value=preset,
+                    clearable=False,
+                ),
+            ]),
+            html.Label([
+                html.Span("From"),
+                dcc.Dropdown(
+                    id={"type": RANGE_FROM_ID, "key": range_key},
+                    options=build_pd_period_options(periods, "Earliest"),
+                    value=selection["from"],
+                    clearable=False,
+                ),
+            ]),
+            html.Label([
+                html.Span("To"),
+                dcc.Dropdown(
+                    id={"type": RANGE_TO_ID, "key": range_key},
+                    options=build_pd_period_options(periods, "Latest"),
+                    value=selection["to"],
+                    clearable=False,
+                ),
+            ]),
+        ],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Trend PD-horizon controls (buildPdCalibrationTrendHorizonControl / ...)
+# ---------------------------------------------------------------------------
+
+
+def build_trend_horizon_control(control_key: str, value: str = "1y") -> html.Div:
+    """Selectable 1y/2y PD-horizon control for the calibration/discrimination trend charts."""
+    return html.Div(
+        className="pd-range-controls",
+        **{"aria-label": "PD Horizon"},
+        children=[
+            html.Label([
+                html.Span("PD Horizon"),
+                dcc.Dropdown(
+                    id={"type": TREND_HORIZON_ID, "key": control_key},
+                    options=[
+                        {"label": "1 year", "value": "1y"},
+                        {"label": "2 years", "value": "2y"},
+                    ],
+                    value=value,
+                    clearable=False,
+                ),
+            ]),
+        ],
+    )
+
+
+def build_frozen_horizon_control(label: str = "PD Horizon") -> html.Div:
+    """Disabled "1 year" control (port of ``buildPdFrozenOneYearHorizonControl``)."""
+    return html.Div(
+        className="pd-range-controls",
+        **{"aria-label": label},
+        children=[
+            html.Label([
+                html.Span("PD Horizon"),
+                dcc.Dropdown(
+                    options=[{"label": "1 year", "value": "1y"}],
+                    value="1y",
+                    clearable=False,
+                    disabled=True,
+                ),
+            ]),
+        ],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Chart header (buildPdChartHeader)
+# ---------------------------------------------------------------------------
+
+
+def build_chart_header(title: str, subtitle: str, range_key: str | None = None, periods: list[str] | None = None, range_value: dict | None = None, extra_controls=None) -> html.Div:
+    actions = []
+    if extra_controls is not None:
+        actions.append(extra_controls)
+    if range_key:
+        actions.append(build_range_controls(range_key, periods or [], range_value))
+
+    return html.Div(
+        className="pd-chart-heading",
+        children=[
+            html.Div(
+                className="pd-chart-heading-copy",
+                children=[
+                    html.Div(title, className="section-title"),
+                    html.Div(subtitle, className="pd-section-subtitle"),
+                ],
+            ),
+            html.Div(className="pd-chart-actions", children=actions),
+        ],
+    )
