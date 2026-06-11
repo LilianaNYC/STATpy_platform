@@ -12,6 +12,10 @@ const LGD_TIME_RANGES = {
   calibration: 'all',
   error: 'all',
   rag: 'all',
+  me: 'all',
+  rmse: 'all',
+  kendall: 'all',
+  predicted_actual: 'all',
 };
 let LGD_EXPANDED_PANEL = null;
 let LGD_EXPANDED_PLACEHOLDER = null;
@@ -168,6 +172,38 @@ function formatLgdChange(current, previous, format = 'ratio') {
   const movement = current - previous;
   if (format === 'percent') return `${movement >= 0 ? '+' : ''}${(movement * 100).toFixed(2)} pp`;
   return `${movement >= 0 ? '+' : ''}${movement.toFixed(3)}`;
+}
+
+function escapeLgdHtml(value) {
+  return String(value == null ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function lgdStatusLabel(rag) {
+  if (rag === 'Green') return 'Within threshold';
+  if (rag === 'Amber') return 'Monitor closely';
+  if (rag === 'Red') return 'Action required';
+  return 'Insufficient data';
+}
+
+function getLgdSelectedModelLabel() {
+  if (!MONITORING_MODELS.length) return 'No LGD models selected';
+  if (MONITORING_MODELS.length === 1) return MONITORING_MODELS[0];
+  return `${MONITORING_MODELS.length} LGD models`;
+}
+
+function getLgdDimensionRags(thresholds, values) {
+  const calibration = getWorstLgdRag(['Actual / Expected LGD', 'ME', 'RMSE'].map(metric => (
+    calculateLgdMetricRag(thresholds, metric, values[metric])
+  )));
+  const discriminatory = calculateLgdMetricRag(thresholds, "Kendall's Tau", values["Kendall's Tau"]);
+  const recovery = calculateLgdMetricRag(thresholds, 'Recovery Rate', values['Recovery Rate']);
+  const performance = getWorstLgdRag([calibration, discriminatory, recovery]);
+  return {calibration, discriminatory, recovery, performance};
 }
 
 function buildLgdTrend(observations, snapshotQuarter) {
@@ -357,6 +393,487 @@ function buildLgdRagHistory(lgd, context) {
   </div>`;
 }
 
+function buildLgdOverviewFlowConnectorSpans(options = {}) {
+  return `
+    ${options.incoming ? '<span class="pd-overview-flow-connector pd-overview-flow-connector-in" aria-hidden="true"></span>' : ''}
+    ${options.outgoing ? '<span class="pd-overview-flow-connector pd-overview-flow-connector-out" aria-hidden="true"></span>' : ''}`;
+}
+
+function buildLgdOverviewFlowStage(number, title, subtitle = '') {
+  return `
+    <div class="pd-overview-flow-stage">
+      <span>${escapeLgdHtml([number, title, subtitle].filter(Boolean).join(' '))}</span>
+    </div>`;
+}
+
+function buildLgdOverviewFlowInput(label, options = {}) {
+  return `
+    <div class="pd-overview-flow-input ${options.extraClass || ''}">
+      <strong>${escapeLgdHtml(label)}</strong>
+      ${options.note ? `<span>${escapeLgdHtml(options.note)}</span>` : ''}
+    </div>`;
+}
+
+function buildLgdOverviewFlowMetric(label, value, format, rag, options = {}) {
+  const tone = lgdToneClass(options.ragOverride || rag);
+  const valueMarkup = options.isRag
+    ? `${lgdRagDot(value)} ${escapeLgdHtml(value)}`
+    : escapeLgdHtml(formatLgdMetric(value, format));
+  const body = `
+      ${buildLgdOverviewFlowConnectorSpans(options)}
+      <span class="pd-overview-flow-node-label">
+        ${escapeLgdHtml(label)}
+        ${options.tooltip ? `<span class="pd-info-chip" role="img" aria-label="${escapeLgdHtml(options.tooltip)}" title="${escapeLgdHtml(options.tooltip)}">i</span>` : ''}
+      </span>
+      <span class="pd-overview-flow-node-value ${options.isRag ? 'pd-overview-flow-node-value-rag' : ''}">${valueMarkup}</span>
+      ${options.note ? `<span class="pd-overview-flow-node-note">${escapeLgdHtml(options.note)}</span>` : ''}`;
+  return `
+    <article class="pd-overview-flow-node pd-overview-flow-node-${tone} ${options.extraClass || ''}">
+      ${options.href
+        ? `<a class="pd-overview-flow-link" href="${options.href}" aria-label="Jump to ${escapeLgdHtml(label)} section">${body}</a>`
+        : body}
+    </article>`;
+}
+
+function buildLgdOverviewFlowTestStack(metrics, options = {}) {
+  return `
+    <div class="pd-overview-flow-test-stack ${options.extraClass || ''}">
+      ${buildLgdOverviewFlowConnectorSpans(options)}
+      ${metrics.join('')}
+    </div>`;
+}
+
+function buildLgdOverviewFlowPerformance(dimensions) {
+  const tone = lgdToneClass(dimensions.performance);
+  const tooltip = `Performance LGD RAG is the worst available monitoring dimension RAG. Current inputs: Calibration Conservatism = ${dimensions.calibration}, Discriminatory Power = ${dimensions.discriminatory}, Recovery Outcome = ${dimensions.recovery}.`;
+  return `
+    <article class="pd-overview-flow-performance pd-overview-flow-performance-${tone}">
+      <span class="pd-overview-flow-performance-title">
+        Performance<br>LGD RAG
+        <span class="pd-info-chip" role="img" aria-label="${escapeLgdHtml(tooltip)}" title="${escapeLgdHtml(tooltip)}">i</span>
+      </span>
+      <strong>${lgdRagDot(dimensions.performance)} ${escapeLgdHtml(dimensions.performance)}</strong>
+    </article>`;
+}
+
+function buildLgdRagAssignmentOverview(values, thresholds, dimensions) {
+  const calibrationRag = dimensions.calibration;
+  const discriminatoryRag = dimensions.discriminatory;
+  const recoveryRag = dimensions.recovery;
+  return `
+    <div class="pd-overview-flow-wrap">
+      <div class="lgd-overview-flow" aria-label="LGD monitoring overview process flow">
+        <div class="lgd-flow-stage-input">${buildLgdOverviewFlowStage('1.', 'Components')}</div>
+        <div class="lgd-flow-stage-tests">${buildLgdOverviewFlowStage('2.', 'Tests')}</div>
+        <div class="lgd-flow-stage-assignment">${buildLgdOverviewFlowStage('3.', 'RAG Assignment')}</div>
+        <div class="lgd-flow-stage-dimension">${buildLgdOverviewFlowStage('4.', 'Monitoring Dimension RAG')}</div>
+        <div class="lgd-flow-stage-performance">${buildLgdOverviewFlowStage('5.', 'Performance', 'LGD RAG')}</div>
+
+        <div class="lgd-flow-input">
+          ${buildLgdOverviewFlowInput('LGD Model Output', {note: 'Predicted and realized loss severity'})}
+        </div>
+
+        ${buildLgdOverviewFlowTestStack([
+          buildLgdOverviewFlowMetric('Actual / Expected LGD', values['Actual / Expected LGD'], 'ratio', calculateLgdMetricRag(thresholds, 'Actual / Expected LGD', values['Actual / Expected LGD']), {href: '#lgd-predicted-actual'}),
+          buildLgdOverviewFlowMetric('Mean Error', values.ME, 'ratio', calculateLgdMetricRag(thresholds, 'ME', values.ME), {href: '#lgd-threshold-trends'}),
+          buildLgdOverviewFlowMetric('RMSE', values.RMSE, 'ratio', calculateLgdMetricRag(thresholds, 'RMSE', values.RMSE), {href: '#lgd-threshold-trends'}),
+        ], {incoming: true, extraClass: 'lgd-flow-tests-calibration'})}
+
+        ${buildLgdOverviewFlowMetric('Calibration RAG Assignment', calibrationRag, 'rag', calibrationRag, {
+          isRag: true,
+          href: '#lgd-threshold-trends',
+          tooltip: 'Worst RAG across Actual / Expected LGD, ME, and RMSE.',
+          incoming: true,
+          outgoing: true,
+          extraClass: 'lgd-flow-assignment-calibration',
+        })}
+
+        ${buildLgdOverviewFlowMetric('Calibration Conservatism RAG', calibrationRag, 'rag', calibrationRag, {
+          isRag: true,
+          href: '#lgd-threshold-trends',
+          tooltip: 'Monitoring dimension for LGD calibration conservatism.',
+          incoming: true,
+          outgoing: true,
+          extraClass: 'lgd-flow-dimension-calibration',
+        })}
+
+        ${buildLgdOverviewFlowTestStack([
+          buildLgdOverviewFlowMetric("Kendall's Tau", values["Kendall's Tau"], 'ratio', calculateLgdMetricRag(thresholds, "Kendall's Tau", values["Kendall's Tau"]), {href: '#lgd-threshold-trends'}),
+        ], {incoming: true, extraClass: 'lgd-flow-tests-discrimination'})}
+
+        ${buildLgdOverviewFlowMetric('Discriminatory RAG Assignment', discriminatoryRag, 'rag', discriminatoryRag, {
+          isRag: true,
+          href: '#lgd-threshold-trends',
+          tooltip: "Based on Kendall's Tau for LGD rank ordering.",
+          incoming: true,
+          outgoing: true,
+          extraClass: 'lgd-flow-assignment-discrimination',
+        })}
+
+        ${buildLgdOverviewFlowMetric('Discriminatory Power RAG', discriminatoryRag, 'rag', discriminatoryRag, {
+          isRag: true,
+          href: '#lgd-threshold-trends',
+          tooltip: 'Monitoring dimension for LGD rank-ordering performance.',
+          incoming: true,
+          outgoing: true,
+          extraClass: 'lgd-flow-dimension-discrimination',
+        })}
+
+        ${buildLgdOverviewFlowTestStack([
+          buildLgdOverviewFlowMetric('Recovery Rate', values['Recovery Rate'], 'percent', calculateLgdMetricRag(thresholds, 'Recovery Rate', values['Recovery Rate']), {href: '#lgd-rag'}),
+        ], {incoming: true, extraClass: 'lgd-flow-tests-recovery'})}
+
+        ${buildLgdOverviewFlowMetric('Recovery RAG Assignment', recoveryRag, 'rag', recoveryRag, {
+          isRag: true,
+          href: '#lgd-rag',
+          tooltip: 'Based on realized recovery rate implied by actual LGD.',
+          incoming: true,
+          outgoing: true,
+          extraClass: 'lgd-flow-assignment-recovery',
+        })}
+
+        ${buildLgdOverviewFlowMetric('Recovery Outcome RAG', recoveryRag, 'rag', recoveryRag, {
+          isRag: true,
+          href: '#lgd-rag',
+          tooltip: 'Monitoring dimension for observed recovery outcome.',
+          incoming: true,
+          outgoing: true,
+          extraClass: 'lgd-flow-dimension-recovery',
+        })}
+
+        <div class="lgd-flow-performance">
+          ${buildLgdOverviewFlowPerformance(dimensions)}
+        </div>
+      </div>
+    </div>`;
+}
+
+function buildLgdRagAssignmentSection(thresholds, values, previousValues, context) {
+  const dimensions = getLgdDimensionRags(thresholds, values);
+  const previousDimensions = getLgdDimensionRags(thresholds, previousValues);
+  const metricRows = [
+    {metric: 'Actual / Expected LGD', dimension: 'Calibration Conservatism', rag: calculateLgdMetricRag(thresholds, 'Actual / Expected LGD', values['Actual / Expected LGD']), previous: calculateLgdMetricRag(thresholds, 'Actual / Expected LGD', previousValues['Actual / Expected LGD'])},
+    {metric: 'ME', dimension: 'Calibration Conservatism', rag: calculateLgdMetricRag(thresholds, 'ME', values.ME), previous: calculateLgdMetricRag(thresholds, 'ME', previousValues.ME)},
+    {metric: 'RMSE', dimension: 'Calibration Conservatism', rag: calculateLgdMetricRag(thresholds, 'RMSE', values.RMSE), previous: calculateLgdMetricRag(thresholds, 'RMSE', previousValues.RMSE)},
+    {metric: "Kendall's Tau", dimension: 'Discriminatory Power', rag: calculateLgdMetricRag(thresholds, "Kendall's Tau", values["Kendall's Tau"]), previous: calculateLgdMetricRag(thresholds, "Kendall's Tau", previousValues["Kendall's Tau"])},
+    {metric: 'Recovery Rate', dimension: 'Recovery Outcome', rag: calculateLgdMetricRag(thresholds, 'Recovery Rate', values['Recovery Rate']), previous: calculateLgdMetricRag(thresholds, 'Recovery Rate', previousValues['Recovery Rate'])},
+  ];
+  const rows = metricRows.map(row => `<tr>
+    <td>${escapeLgdHtml(row.metric)}</td>
+    <td>${lgdRagDot(row.rag)} ${escapeLgdHtml(row.rag)}</td>
+    <td>${escapeLgdHtml(row.dimension)}</td>
+    <td>${lgdRagDot(row.dimension === 'Calibration Conservatism' ? dimensions.calibration : row.dimension === 'Discriminatory Power' ? dimensions.discriminatory : dimensions.recovery)} ${escapeLgdHtml(row.dimension === 'Calibration Conservatism' ? dimensions.calibration : row.dimension === 'Discriminatory Power' ? dimensions.discriminatory : dimensions.recovery)}</td>
+    <td>${lgdRagDot(dimensions.performance)} ${escapeLgdHtml(dimensions.performance)}</td>
+    <td>${lgdRagDot(row.previous)} ${escapeLgdHtml(row.previous)}</td>
+  </tr>`).join('');
+  return `<section id="lgd-rag-assignment" class="pd-content-section">
+    <div class="pd-content-heading"><div class="pd-content-kicker">RAG Assignment</div><h3>RAG Assignment Overview</h3><p>At-a-glance summary of LGD components, metric tests, RAG assignment, monitoring dimension RAGs, and final Performance LGD RAG.</p></div>
+    ${buildLgdRagAssignmentOverview(values, thresholds, dimensions)}
+    <div class="pd-content-heading pd-metric-heading"><div class="pd-content-kicker">Dimension Detail</div><h3>Calibration, Discriminatory Power, and Recovery Outcome</h3></div>
+    <div class="pd-test-grid pd-test-grid-3">
+      <article class="pd-test-card"><div class="pd-test-card-heading"><div><span>Dimension</span><h4>Calibration Conservatism</h4></div><div class="pd-test-status pd-test-status-${lgdToneClass(dimensions.calibration)}">${escapeLgdHtml(dimensions.calibration)}</div></div><div class="pd-test-value">${lgdRagDot(dimensions.calibration)} ${escapeLgdHtml(dimensions.calibration)}</div><div class="pd-test-meta">Inputs: Actual / Expected LGD, ME, and RMSE</div><div class="pd-performance-comparison"><div><span>Previous (${escapeLgdHtml(context.previousQuarter)})</span><strong>${escapeLgdHtml(previousDimensions.calibration)}</strong></div><div><span>Status</span><strong>${escapeLgdHtml(lgdStatusLabel(dimensions.calibration))}</strong></div></div></article>
+      <article class="pd-test-card"><div class="pd-test-card-heading"><div><span>Dimension</span><h4>Discriminatory Power</h4></div><div class="pd-test-status pd-test-status-${lgdToneClass(dimensions.discriminatory)}">${escapeLgdHtml(dimensions.discriminatory)}</div></div><div class="pd-test-value">${lgdRagDot(dimensions.discriminatory)} ${escapeLgdHtml(dimensions.discriminatory)}</div><div class="pd-test-meta">Input: Kendall's Tau</div><div class="pd-performance-comparison"><div><span>Previous (${escapeLgdHtml(context.previousQuarter)})</span><strong>${escapeLgdHtml(previousDimensions.discriminatory)}</strong></div><div><span>Status</span><strong>${escapeLgdHtml(lgdStatusLabel(dimensions.discriminatory))}</strong></div></div></article>
+      <article class="pd-test-card"><div class="pd-test-card-heading"><div><span>Dimension</span><h4>Recovery Outcome</h4></div><div class="pd-test-status pd-test-status-${lgdToneClass(dimensions.recovery)}">${escapeLgdHtml(dimensions.recovery)}</div></div><div class="pd-test-value">${lgdRagDot(dimensions.recovery)} ${escapeLgdHtml(dimensions.recovery)}</div><div class="pd-test-meta">Input: Recovery Rate</div><div class="pd-performance-comparison"><div><span>Previous (${escapeLgdHtml(context.previousQuarter)})</span><strong>${escapeLgdHtml(previousDimensions.recovery)}</strong></div><div><span>Status</span><strong>${escapeLgdHtml(lgdStatusLabel(dimensions.recovery))}</strong></div></div></article>
+    </div>
+    <div class="pd-test-grid pd-test-grid-3">
+      <article class="pd-test-card"><div class="pd-test-card-heading"><div><span>Final</span><h4>Performance LGD RAG</h4></div><div class="pd-test-status pd-test-status-${lgdToneClass(dimensions.performance)}">${escapeLgdHtml(dimensions.performance)}</div></div><div class="pd-test-value">${lgdRagDot(dimensions.performance)} ${escapeLgdHtml(dimensions.performance)}</div><div class="pd-test-meta">Worst of calibration, discriminatory power, and recovery outcome</div><div class="pd-performance-comparison"><div><span>Previous (${escapeLgdHtml(context.previousQuarter)})</span><strong>${escapeLgdHtml(previousDimensions.performance)}</strong></div><div><span>Snapshot</span><strong>${escapeLgdHtml(context.snapshotQuarter)}</strong></div></div></article>
+    </div>
+    <div class="section-card pd-rag-section">
+      <div class="pd-rag-table-wrap"><table class="pd-rag-table"><thead><tr><th>Metric</th><th>Metric RAG</th><th>Dimension</th><th>Dimension RAG</th><th>Performance RAG</th><th>Previous Metric RAG</th></tr></thead><tbody>${rows}</tbody></table></div>
+    </div>
+  </section>`;
+}
+
+function getLgdMetricSeriesValue(row, metric) {
+  return getLgdMetricValues(row)[metric];
+}
+
+function getLgdMetricThreshold(thresholds, metric) {
+  return thresholds.find(row => row.metric === metric) || null;
+}
+
+function getFiniteLgdValues(values) {
+  return values.filter(value => value != null && Number.isFinite(value));
+}
+
+function buildLgdThresholdShapes(threshold, yValues) {
+  const finiteValues = getFiniteLgdValues(yValues);
+  if (!threshold || !finiteValues.length) return {shapes: [], range: null};
+  const candidates = finiteValues.slice();
+  ['green_min', 'green_max', 'amber_min', 'amber_max'].forEach(key => {
+    const value = Number(threshold[key]);
+    if (Number.isFinite(value)) candidates.push(value);
+  });
+  if (threshold.red_condition === 'abs above amber_max') {
+    candidates.push(-Math.abs(Number(threshold.amber_max) || 0), Math.abs(Number(threshold.amber_max) || 0));
+  }
+  const low = Math.min(...candidates);
+  const high = Math.max(...candidates);
+  const pad = Math.max((high - low) * 0.12, Math.abs(high || 1) * 0.05, 0.02);
+  const yMin = low - pad;
+  const yMax = high + pad;
+  const rect = (y0, y1, color) => ({
+    type: 'rect', xref: 'paper', x0: 0, x1: 1, yref: 'y',
+    y0: Math.max(Math.min(y0, y1), yMin), y1: Math.min(Math.max(y0, y1), yMax),
+    fillcolor: color, line: {width: 0}, layer: 'below',
+  });
+  const line = (y, color, dash = 'solid') => ({
+    type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: y, y1: y,
+    line: {color, width: 1.5, dash},
+  });
+  const green = 'rgba(22,163,74,0.14)';
+  const amber = 'rgba(217,119,6,0.18)';
+  const red = 'rgba(220,38,38,0.12)';
+  const shapes = [];
+  const greenMin = Number(threshold.green_min);
+  const greenMax = Number(threshold.green_max);
+  const amberMin = Number(threshold.amber_min);
+  const amberMax = Number(threshold.amber_max);
+  if (threshold.red_condition === 'abs above amber_max') {
+    const g = Math.abs(greenMax);
+    const a = Math.abs(amberMax);
+    shapes.push(rect(yMin, -a, red), rect(-a, -g, amber), rect(-g, g, green), rect(g, a, amber), rect(a, yMax, red));
+    shapes.push(line(-g, 'rgba(22,163,74,.85)'), line(g, 'rgba(22,163,74,.85)'), line(-a, 'rgba(217,119,6,.82)', 'dash'), line(a, 'rgba(217,119,6,.82)', 'dash'));
+  } else if (threshold.red_condition === 'below amber_min') {
+    shapes.push(rect(yMin, amberMin, red), rect(amberMin, greenMin, amber), rect(greenMin, yMax, green));
+    shapes.push(line(amberMin, 'rgba(217,119,6,.82)', 'dash'), line(greenMin, 'rgba(22,163,74,.85)'));
+  } else if (threshold.red_condition === 'above amber_max') {
+    shapes.push(rect(yMin, greenMax, green), rect(greenMax, amberMax, amber), rect(amberMax, yMax, red));
+    shapes.push(line(greenMax, 'rgba(22,163,74,.85)'), line(amberMax, 'rgba(217,119,6,.82)', 'dash'));
+  } else {
+    shapes.push(rect(yMin, amberMin, red), rect(amberMin, greenMin, amber), rect(greenMin, greenMax, green), rect(greenMax, amberMax, amber), rect(amberMax, yMax, red));
+    shapes.push(line(greenMin, 'rgba(22,163,74,.85)'), line(greenMax, 'rgba(22,163,74,.85)'), line(amberMin, 'rgba(217,119,6,.82)', 'dash'), line(amberMax, 'rgba(217,119,6,.82)', 'dash'));
+  }
+  return {shapes, range: [yMin, yMax]};
+}
+
+function drawLgdThresholdMetricChart(chartId, observations, snapshotQuarter, thresholds, metric, rangeKey) {
+  const chart = document.getElementById(chartId);
+  if (!chart) return;
+  const trend = filterLgdTrend(rangeKey, buildLgdTrend(observations, snapshotQuarter));
+  const quarters = trend.map(row => row.quarter);
+  const values = trend.map(row => getLgdMetricSeriesValue(row, metric));
+  const threshold = getLgdMetricThreshold(thresholds, metric);
+  const bands = buildLgdThresholdShapes(threshold, values);
+  const markerColors = values.map(value => {
+    const rag = calculateLgdMetricRag(thresholds, metric, value);
+    return rag === 'Green' ? '#16a34a' : rag === 'Amber' ? '#d97706' : rag === 'Red' ? '#dc2626' : '#94a3b8';
+  });
+  Plotly.react(chartId, [{
+    x: quarters,
+    y: values,
+    type: 'scatter',
+    mode: 'lines+markers',
+    name: metric,
+    line: {color: '#0f1d35', width: 2.4},
+    marker: {size: 8, color: markerColors, line: {color: '#ffffff', width: 1.5}},
+    hovertemplate: `%{x}<br>${metric}: %{y:.3f}<extra></extra>`,
+  }], {
+    height: 318,
+    margin: {t: 12, r: 18, b: 52, l: 62},
+    paper_bgcolor: 'rgba(0,0,0,0)',
+    plot_bgcolor: 'rgba(0,0,0,0)',
+    hovermode: 'x unified',
+    showlegend: false,
+    shapes: bands.shapes,
+    xaxis: buildMonitoringTimeSeriesXAxis(quarters, {title: 'Portfolio Quarter', gridcolor: '#e5e7eb'}, {chart}),
+    yaxis: {title: metric, range: bands.range || undefined, gridcolor: '#e5e7eb', zerolinecolor: '#cbd5e1'},
+  }, {responsive: true, displayModeBar: false});
+}
+
+function drawLgdPredictedActualStandalone(observations, snapshotQuarter) {
+  const chart = document.getElementById('lgd-predicted-actual-chart');
+  if (!chart) return;
+  const trend = filterLgdTrend('predicted_actual', buildLgdTrend(observations, snapshotQuarter));
+  const quarters = trend.map(row => row.quarter);
+  Plotly.react('lgd-predicted-actual-chart', [
+    {x: quarters, y: trend.map(row => row.actual_lgd), type: 'scatter', mode: 'lines+markers', name: 'Actual LGD', line: {color: '#dc2626', width: 2.7}, hovertemplate: '%{x}<br>Actual LGD: %{y:.2%}<extra></extra>'},
+    {x: quarters, y: trend.map(row => row.predicted_lgd), type: 'scatter', mode: 'lines+markers', name: 'Predicted LGD', line: {color: '#2563eb', width: 2.7, dash: 'dash'}, hovertemplate: '%{x}<br>Predicted LGD: %{y:.2%}<extra></extra>'},
+  ], {
+    height: 360,
+    margin: {t: 14, r: 24, b: 54, l: 62},
+    paper_bgcolor: 'rgba(0,0,0,0)',
+    plot_bgcolor: 'rgba(0,0,0,0)',
+    hovermode: 'x unified',
+    legend: {orientation: 'h', x: 0, y: 1.14},
+    xaxis: buildMonitoringTimeSeriesXAxis(quarters, {title: 'Portfolio Quarter', gridcolor: '#e5e7eb'}, {chart}),
+    yaxis: {title: 'LGD', tickformat: '.1%', rangemode: 'tozero', gridcolor: '#e5e7eb'},
+  }, {responsive: true, displayModeBar: false});
+}
+
+function getLgdMevData() {
+  return [
+    {name: 'Unemployment Rate', unit: '%', devMin: 3.5, devMax: 8.6, lower2sd: 1.1, upper2sd: 9.1, values: {'2023Q1': 5.2, '2023Q2': 5.5, '2023Q3': 5.7, '2023Q4': 5.3, '2024Q1': 5.4, '2024Q2': 6.2, '2024Q3': 7.1, '2024Q4': 7.4, '2025Q1': 8.2, '2025Q2': 9.8, '2025Q3': 10.2, '2025Q4': 9.7}},
+    {name: 'GDP Growth', unit: '%', devMin: -4.2, devMax: 5.1, lower2sd: -2.5, upper2sd: 6.7, values: {'2023Q1': 2.6, '2023Q2': 2.3, '2023Q3': 2.1, '2023Q4': 2.4, '2024Q1': 1.8, '2024Q2': .6, '2024Q3': -.9, '2024Q4': -1.6, '2025Q1': -2.4, '2025Q2': -3.1, '2025Q3': -1.8, '2025Q4': -.7}},
+    {name: 'House Price Index Growth', unit: '%', devMin: -8.5, devMax: 12.2, lower2sd: -6.0, upper2sd: 12.0, values: {'2023Q1': 4.9, '2023Q2': 5.1, '2023Q3': 4.5, '2023Q4': 3.9, '2024Q1': 2.8, '2024Q2': .7, '2024Q3': -1.5, '2024Q4': -3.3, '2025Q1': -5.7, '2025Q2': -4.8, '2025Q3': -2.6, '2025Q4': .4}},
+    {name: 'Interest Rate 3M', unit: '%', devMin: .1, devMax: 8.7, lower2sd: -.3, upper2sd: 7.9, values: {'2023Q1': 3.9, '2023Q2': 4.2, '2023Q3': 4.8, '2023Q4': 5.2, '2024Q1': 5.8, '2024Q2': 6.1, '2024Q3': 6.4, '2024Q4': 6.9, '2025Q1': 7.1, '2025Q2': 6.7, '2025Q3': 6.0, '2025Q4': 5.4}},
+  ];
+}
+
+function getLgdMevRag(mev) {
+  const values = Object.values(mev.values).map(Number).filter(Number.isFinite);
+  const latest = values[values.length - 1];
+  if (latest < mev.lower2sd || latest > mev.upper2sd) return 'Red';
+  if (latest < mev.devMin || latest > mev.devMax) return 'Amber';
+  return 'Green';
+}
+
+function buildLgdMevRangeSection() {
+  const mevs = getLgdMevData();
+  const rows = mevs.map(mev => {
+    const values = Object.values(mev.values).map(Number).filter(Number.isFinite);
+    const latest = values[values.length - 1];
+    const rag = getLgdMevRag(mev);
+    return `<tr><td>${escapeLgdHtml(mev.name)}</td><td>${latest.toFixed(1)}${escapeLgdHtml(mev.unit)}</td><td>${mev.devMin.toFixed(1)}${escapeLgdHtml(mev.unit)} to ${mev.devMax.toFixed(1)}${escapeLgdHtml(mev.unit)}</td><td>${mev.lower2sd.toFixed(1)}${escapeLgdHtml(mev.unit)} to ${mev.upper2sd.toFixed(1)}${escapeLgdHtml(mev.unit)}</td><td>${lgdRagDot(rag)} ${escapeLgdHtml(rag)}</td></tr>`;
+  }).join('');
+  return `<section id="lgd-mev-range" class="pd-content-section">
+    <div class="pd-content-heading"><div class="pd-content-kicker">Post Subjective Review</div><h3>MEV Range Analysis</h3><p>Economic variables are compared with development green ranges and two-standard-deviation amber buffers, mirroring the Modular LGD review workflow.</p></div>
+    <div class="pd-primary-analysis-grid">
+      <div id="lgd-mev-panel" class="section-card" data-lgd-expand-title="LGD MEV Range Analysis">${buildLgdChartHeader('MEV Range Analysis','Historical and severe-scenario path against development and 2SD bands.','lgd-mev-panel')}<div id="lgd-mev-range-chart" class="pd-mev-chart"></div></div>
+    </div>
+    <div class="section-card pd-rag-section"><div class="pd-rag-table-wrap"><table class="pd-rag-table"><thead><tr><th>MEV Variable</th><th>Latest</th><th>Development Range</th><th>2SD Range</th><th>RAG</th></tr></thead><tbody>${rows}</tbody></table></div></div>
+  </section>`;
+}
+
+function drawLgdMevRangeChart() {
+  const chart = document.getElementById('lgd-mev-range-chart');
+  if (!chart) return;
+  const mev = getLgdMevData()[0];
+  const points = Object.entries(mev.values).sort(([left], [right]) => left.localeCompare(right));
+  const quarters = points.map(([quarter]) => quarter);
+  const values = points.map(([, value]) => value);
+  const yMin = Math.min(...values, mev.lower2sd, mev.devMin) - .6;
+  const yMax = Math.max(...values, mev.upper2sd, mev.devMax) + .6;
+  Plotly.react('lgd-mev-range-chart', [{
+    x: quarters,
+    y: values,
+    type: 'scatter',
+    mode: 'lines+markers',
+    name: mev.name,
+    line: {color: '#0f1d35', width: 2.6},
+    marker: {size: 7, color: '#ffffff', line: {color: '#0f1d35', width: 2}},
+    hovertemplate: `%{x}<br>${mev.name}: %{y:.1f}%<extra></extra>`,
+  }], {
+    height: 360,
+    margin: {t: 18, r: 24, b: 54, l: 62},
+    paper_bgcolor: 'rgba(0,0,0,0)',
+    plot_bgcolor: 'rgba(0,0,0,0)',
+    shapes: [
+      {type: 'rect', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: yMin, y1: mev.lower2sd, fillcolor: 'rgba(220,38,38,.12)', line: {width: 0}, layer: 'below'},
+      {type: 'rect', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: mev.lower2sd, y1: mev.devMin, fillcolor: 'rgba(217,119,6,.18)', line: {width: 0}, layer: 'below'},
+      {type: 'rect', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: mev.devMin, y1: mev.devMax, fillcolor: 'rgba(22,163,74,.14)', line: {width: 0}, layer: 'below'},
+      {type: 'rect', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: mev.devMax, y1: mev.upper2sd, fillcolor: 'rgba(217,119,6,.18)', line: {width: 0}, layer: 'below'},
+      {type: 'rect', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: mev.upper2sd, y1: yMax, fillcolor: 'rgba(220,38,38,.12)', line: {width: 0}, layer: 'below'},
+    ],
+    hovermode: 'x unified',
+    showlegend: false,
+    xaxis: buildMonitoringTimeSeriesXAxis(quarters, {title: 'Quarter', gridcolor: '#e5e7eb'}, {chart}),
+    yaxis: {title: `${mev.name} (${mev.unit})`, range: [yMin, yMax], gridcolor: '#e5e7eb'},
+  }, {responsive: true, displayModeBar: false});
+}
+
+function buildLgdScenarioData(current) {
+  const base = Number.isFinite(current.predicted_lgd) ? Math.max(current.predicted_lgd, 0.000001) : 0.42;
+  const scenarioRows = [
+    {scenario: 'Upward', rank: 1, output: base * 0.85},
+    {scenario: 'Base', rank: 2, output: base},
+    {scenario: 'Severe', rank: 3, output: Math.min(base * 1.35, 1)},
+  ];
+  const sorted = scenarioRows.slice().sort((a, b) => a.output - b.output);
+  scenarioRows.forEach(row => {
+    row.observedRank = sorted.findIndex(item => item.scenario === row.scenario) + 1;
+    row.pass = row.observedRank === row.rank;
+    row.rag = row.pass ? 'Green' : 'Red';
+  });
+  const sensitivityRows = [
+    {shock: '-2SD', output: base * 0.89},
+    {shock: 'Base', output: base},
+    {shock: '+2SD', output: Math.min(base * 1.12, 1)},
+  ].map(row => {
+    const diff = (row.output - base) / base;
+    return {...row, diff, threshold: 0.15, pass: Math.abs(diff) <= 0.15, rag: Math.abs(diff) <= 0.15 ? 'Green' : 'Red'};
+  });
+  return {scenarioRows, sensitivityRows};
+}
+
+function buildLgdScenarioTestsSection(current) {
+  const data = buildLgdScenarioData(current);
+  const rankPass = data.scenarioRows.every(row => row.pass);
+  const sensitivityPass = data.sensitivityRows.every(row => row.pass);
+  const maxSensitivity = Math.max(...data.sensitivityRows.map(row => Math.abs(row.diff)));
+  const rankRag = rankPass ? 'Green' : 'Red';
+  const sensitivityRag = sensitivityPass ? 'Green' : 'Red';
+  const modelLabel = getLgdSelectedModelLabel();
+  return `<section id="lgd-scenario-tests" class="pd-content-section">
+    <div class="pd-content-heading"><div class="pd-content-kicker">Post Subjective Review</div><h3>Scenario Tests</h3><p>Checks whether LGD outputs increase with scenario severity and remain within the configured sensitivity tolerance.</p></div>
+    <div class="pd-test-grid pd-test-grid-4">
+      <article class="pd-test-card"><div class="pd-test-card-heading"><div><span>Scenario Rank</span><h4>Rank Ordering Result</h4></div><div class="pd-test-status pd-test-status-${lgdToneClass(rankRag)}">${rankRag}</div></div><div class="pd-test-value">${rankPass ? 'Pass' : 'Fail'}</div><div class="pd-test-meta">Expected: Upward &lt; Base &lt; Severe</div></article>
+      <article class="pd-test-card"><div class="pd-test-card-heading"><div><span>Sensitivity</span><h4>+/- 2SD Result</h4></div><div class="pd-test-status pd-test-status-${lgdToneClass(sensitivityRag)}">${sensitivityRag}</div></div><div class="pd-test-value">${sensitivityPass ? 'Pass' : 'Fail'}</div><div class="pd-test-meta">Threshold: 15% from base</div></article>
+      <article class="pd-test-card"><div class="pd-test-card-heading"><div><span>Sensitivity</span><h4>Maximum Difference</h4></div><div class="pd-test-status pd-test-status-${lgdToneClass(sensitivityRag)}">${sensitivityRag}</div></div><div class="pd-test-value">${(maxSensitivity * 100).toFixed(1)}%</div><div class="pd-test-meta">Absolute difference vs base</div></article>
+      <article class="pd-test-card"><div class="pd-test-card-heading"><div><span>Scope</span><h4>Selected Model</h4></div></div><div class="pd-test-value">${escapeLgdHtml(modelLabel)}</div><div class="pd-test-meta">Model type: LGD</div></article>
+    </div>
+    <div class="pd-trend-detail-grid">
+      <div id="lgd-scenario-rank-panel" class="section-card" data-lgd-expand-title="LGD Scenario Rank Ordering">${buildLgdChartHeader('Scenario Rank Ordering','LGD output should increase as scenario severity increases.','lgd-scenario-rank-panel')}<div id="lgd-scenario-rank-chart" class="pd-rating-default-rate-chart"></div></div>
+      <div id="lgd-sensitivity-panel" class="section-card" data-lgd-expand-title="LGD Sensitivity Analysis">${buildLgdChartHeader('Sensitivity Analysis','Base LGD output compared with +/- 2SD shocks.','lgd-sensitivity-panel')}<div id="lgd-sensitivity-chart" class="pd-rating-default-rate-chart"></div></div>
+    </div>
+  </section>`;
+}
+
+function drawLgdScenarioCharts(current) {
+  const data = buildLgdScenarioData(current);
+  const rankChart = document.getElementById('lgd-scenario-rank-chart');
+  if (rankChart) {
+    Plotly.react('lgd-scenario-rank-chart', [{
+      x: data.scenarioRows.map(row => row.scenario),
+      y: data.scenarioRows.map(row => row.output),
+      type: 'bar',
+      marker: {color: data.scenarioRows.map(row => row.rag === 'Green' ? '#16a34a' : '#dc2626')},
+      text: data.scenarioRows.map(row => `${(row.output * 100).toFixed(2)}%`),
+      textposition: 'outside',
+      hovertemplate: '%{x}<br>Output: %{y:.2%}<extra></extra>',
+    }], {
+      height: 310, margin: {t: 12, r: 18, b: 48, l: 62}, paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+      xaxis: {title: 'Scenario'}, yaxis: {title: 'LGD Output', tickformat: '.1%', rangemode: 'tozero', gridcolor: '#e5e7eb'}, showlegend: false,
+    }, {responsive: true, displayModeBar: false});
+  }
+  const sensChart = document.getElementById('lgd-sensitivity-chart');
+  if (sensChart) {
+    Plotly.react('lgd-sensitivity-chart', [{
+      x: data.sensitivityRows.map(row => row.shock),
+      y: data.sensitivityRows.map(row => row.output),
+      type: 'bar',
+      marker: {color: data.sensitivityRows.map(row => row.rag === 'Green' ? '#16a34a' : '#dc2626')},
+      text: data.sensitivityRows.map(row => `${(row.output * 100).toFixed(2)}%`),
+      textposition: 'outside',
+      hovertemplate: '%{x}<br>Output: %{y:.2%}<br>Diff vs Base: %{customdata:.1%}<extra></extra>',
+      customdata: data.sensitivityRows.map(row => row.diff),
+    }], {
+      height: 310, margin: {t: 12, r: 18, b: 48, l: 62}, paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+      xaxis: {title: 'Shock'}, yaxis: {title: 'LGD Output', tickformat: '.1%', rangemode: 'tozero', gridcolor: '#e5e7eb'}, showlegend: false,
+    }, {responsive: true, displayModeBar: false});
+  }
+}
+
+function buildLgdPostSubjectiveReviewSection(dimensions) {
+  const modelLabel = getLgdSelectedModelLabel();
+  const scenarioRag = 'Green';
+  const mevRag = getWorstLgdRag(getLgdMevData().map(getLgdMevRag));
+  const modelPostReview = getWorstLgdRag([dimensions.performance, scenarioRag, mevRag]);
+  const rows = [
+    ['Performance RAG', `${lgdRagDot(dimensions.performance)} ${escapeLgdHtml(dimensions.performance)}`],
+    ['MEV Range Comments', `MEV range review completed for selected LGD scope. Worst MEV status: ${lgdRagDot(mevRag)} ${escapeLgdHtml(mevRag)}.`],
+    ['Scenario Tests Comments', `Scenario rank ordering and sensitivity checks completed. Scenario status: ${lgdRagDot(scenarioRag)} ${escapeLgdHtml(scenarioRag)}.`],
+    ['Model RAG Post-Subjective Review', `${lgdRagDot(modelPostReview)} ${escapeLgdHtml(modelPostReview)}`],
+    ['Pre-Mitigation RAG', `${lgdRagDot(modelPostReview)} ${escapeLgdHtml(modelPostReview)} - aligned to post-subjective review.`],
+    ['Compensating Controls Comments', `Controls for ${escapeLgdHtml(modelLabel)} should document overlays, manual adjustments, monitoring governance, and business review outcomes.`],
+    ['Post-Mitigation RAG', `${lgdRagDot(modelPostReview)} ${escapeLgdHtml(modelPostReview)}`],
+  ].map(([label, value]) => `<tr><td>${escapeLgdHtml(label)}</td><td>${value}</td></tr>`).join('');
+  return `<section id="lgd-post-review" class="pd-content-section">
+    <div class="pd-content-heading"><div class="pd-content-kicker">Post Subjective Review</div><h3>Review Summary</h3><p>Consolidates quantitative performance, MEV range review, scenario testing, and mitigation status into a model-level outcome.</p></div>
+    <div class="section-card pd-rag-section"><div class="pd-rag-table-wrap"><table class="pd-rag-table"><thead><tr><th>Review Area</th><th>Assessment</th></tr></thead><tbody>${rows}</tbody></table></div></div>
+  </section>`;
+}
+
 function renderLgdModels() {
   closeLgdExpandedPanel(false);
   const lgd = (DASH_DATA.monitoring || {}).lgd_models || {};
@@ -368,7 +885,9 @@ function renderLgdModels() {
   const previous = calculateLgdMetrics(previousRows);
   const thresholds = ((DASH_DATA.monitoring_thresholds || {}).lgd_thresholds || []);
   const values = getLgdMetricValues(current);
+  const previousValues = getLgdMetricValues(previous);
   const overallRag = getWorstLgdRag(LGD_RAG_METRICS.map(metric => calculateLgdMetricRag(thresholds, metric, values[metric])));
+  const dimensionRags = getLgdDimensionRags(thresholds, values);
   const segmentLabel = MONITORING_PORTFOLIO_SEGMENT === 'all' ? 'All segments' : MONITORING_PORTFOLIO_SEGMENT;
   const metricCards = [
     ['actual_lgd', 'Actual LGD', 'percent', 'calibration'],
@@ -390,7 +909,7 @@ function renderLgdModels() {
       <div><h2>LGD Performance Summary — ${monitoringPointLabel()}</h2><p>Monitor realized loss severity, calibration, predictive error, rank ordering, and recovery outcomes.</p></div>
       <div class="pd-overall-status pd-overall-${lgdToneClass(overallRag)}"><span>Overall RAG Status</span><strong>${lgdRagDot(overallRag)} ${overallRag}</strong></div>
     </div>
-    <nav class="pd-section-nav" aria-label="LGD performance sections"><a href="#lgd-overview">Overview</a><a href="#lgd-trends">Trends</a><a href="#lgd-rag">RAG History</a></nav>
+    <nav class="pd-section-nav" aria-label="LGD performance sections"><a href="#lgd-overview">Overview</a><a href="#lgd-rag-assignment">RAG Assignment</a><a href="#lgd-trends">Trends</a><a href="#lgd-threshold-trends">Threshold Bands</a><a href="#lgd-predicted-actual">Predicted vs Actual</a><a href="#lgd-mev-range">MEV Range</a><a href="#lgd-scenario-tests">Scenario Tests</a><a href="#lgd-post-review">Post Review</a></nav>
     <section id="lgd-overview" class="pd-content-section pd-overview-section">
       <div class="pd-content-heading"><div class="pd-content-kicker">Executive Overview</div><h3>LGD Analysis Scope</h3><p>Start with loss severity and error metrics, then inspect trends and threshold history.</p></div>
       <div class="pd-scope-bar">
@@ -402,6 +921,7 @@ function renderLgdModels() {
       <div class="pd-content-heading pd-metric-heading"><div class="pd-content-kicker">Core Metrics</div><h3>Snapshot Date vs. Previous Quarter</h3></div>
       <div class="pd-performance-grid lgd-kpi-grid">${metricCards}</div>
     </section>
+    ${buildLgdRagAssignmentSection(thresholds, values, previousValues, context)}
     <section id="lgd-trends" class="pd-content-section">
       <div class="pd-content-heading"><div class="pd-content-kicker">Trends</div><h3>Performance Through the Snapshot Date</h3><p>Use trend windows to focus the analysis on the period that matters.</p></div>
       <div class="pd-primary-analysis-grid">
@@ -413,7 +933,22 @@ function renderLgdModels() {
         <div id="lgd-distribution-panel" class="section-card" data-lgd-expand-title="Predicted LGD Distribution Shift">${buildLgdChartHeader('Predicted LGD Distribution Shift',`Portfolio comparison for ${context.previousQuarter} and ${context.snapshotQuarter}.`,'lgd-distribution-panel')}<div id="lgd-distribution-chart" class="pd-distribution-shift-chart"></div></div>
       </div>
     </section>
+    <section id="lgd-threshold-trends" class="pd-content-section">
+      <div class="pd-content-heading"><div class="pd-content-kicker">Threshold Bands</div><h3>Metric Trends with RAG Backgrounds</h3><p>Replicates the Modular LGD threshold-band view using the monitoring workbook thresholds.</p></div>
+      <div class="pd-trend-detail-grid">
+        <div id="lgd-me-threshold-panel" class="section-card" data-lgd-expand-title="LGD ME Trend with RAG Threshold Bands">${buildLgdChartHeader('ME Trend with RAG Threshold Bands','Mean Error colored by threshold status.','lgd-me-threshold-panel','me')}<div id="lgd-me-threshold-chart" class="pd-stability-trend-chart"></div></div>
+        <div id="lgd-rmse-threshold-panel" class="section-card" data-lgd-expand-title="LGD RMSE Trend with RAG Threshold Bands">${buildLgdChartHeader('RMSE Trend with RAG Threshold Bands','RMSE colored by threshold status.','lgd-rmse-threshold-panel','rmse')}<div id="lgd-rmse-threshold-chart" class="pd-stability-trend-chart"></div></div>
+        <div id="lgd-kendall-threshold-panel" class="section-card pd-trend-wide-card" data-lgd-expand-title="LGD Kendall's Tau Trend with RAG Threshold Bands">${buildLgdChartHeader("Kendall's Tau Trend with RAG Threshold Bands","Rank-ordering metric colored by threshold status.",'lgd-kendall-threshold-panel','kendall')}<div id="lgd-kendall-threshold-chart" class="pd-stability-trend-chart"></div></div>
+      </div>
+    </section>
+    <section id="lgd-predicted-actual" class="pd-content-section">
+      <div class="pd-content-heading"><div class="pd-content-kicker">Calibration Detail</div><h3>Predicted vs Actual LGD</h3><p>Standalone view of expected and realized loss severity over time.</p></div>
+      <div id="lgd-predicted-actual-panel" class="section-card" data-lgd-expand-title="Predicted vs Actual LGD">${buildLgdChartHeader('Predicted vs Actual LGD','Actual realized LGD compared with predicted model output.','lgd-predicted-actual-panel','predicted_actual')}<div id="lgd-predicted-actual-chart" class="pd-default-rate-trend-chart-medium"></div></div>
+    </section>
     <section id="lgd-rag" class="pd-content-section"><div class="pd-content-heading"><div class="pd-content-kicker">RAG History</div><h3>Threshold Monitoring by Metric</h3></div>${buildLgdRagHistory(lgd, context)}</section>
+    ${buildLgdMevRangeSection()}
+    ${buildLgdScenarioTestsSection(current)}
+    ${buildLgdPostSubjectiveReviewSection(dimensionRags)}
     <div id="lgd-expanded-modal" class="pd-expanded-modal" aria-hidden="true" onclick="if(event.target===this) closeLgdExpandedPanel()" onkeydown="if(event.key==='Escape') closeLgdExpandedPanel()">
       <div class="pd-expanded-dialog" role="dialog" aria-modal="true" aria-labelledby="lgd-expanded-modal-title"><div class="pd-expanded-modal-header"><div><span>Expanded Analysis</span><strong id="lgd-expanded-modal-title">LGD Analysis</strong></div><button type="button" id="lgd-expanded-modal-close" class="pd-expanded-close" onclick="closeLgdExpandedPanel()">Close</button></div><div id="lgd-expanded-modal-body" class="pd-expanded-modal-body"></div></div>
     </div>`;
@@ -422,5 +957,11 @@ function renderLgdModels() {
   drawLgdErrorTrend(observations, context.snapshotQuarter);
   drawLgdByRating(observations, context.snapshotQuarter);
   drawLgdDistributionShift(observations, context.snapshotQuarter, context.previousQuarter);
+  drawLgdThresholdMetricChart('lgd-me-threshold-chart', observations, context.snapshotQuarter, thresholds, 'ME', 'me');
+  drawLgdThresholdMetricChart('lgd-rmse-threshold-chart', observations, context.snapshotQuarter, thresholds, 'RMSE', 'rmse');
+  drawLgdThresholdMetricChart('lgd-kendall-threshold-chart', observations, context.snapshotQuarter, thresholds, "Kendall's Tau", 'kendall');
+  drawLgdPredictedActualStandalone(observations, context.snapshotQuarter);
+  drawLgdMevRangeChart();
+  drawLgdScenarioCharts(current);
 }
 """
