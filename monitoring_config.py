@@ -29,6 +29,12 @@ CRR_MASTER_SCALE_SHEET_NAME = "CRR_Master_Scale"
 RAG_ASSIGNMENT_PD_SHEET_NAME = "RAG_Assignment_PD"
 
 MEV_DUMMY_DATA_FILE = SOURCE_DATA_DIR / "mev_dummy_data.json"
+DUMMY_MEV_DATA_FILE = SOURCE_DATA_DIR / "dummy_mev_data.xlsx"
+DUMMY_MEV_TRANSFORMED_DESCRIPTION_SHEET_NAME = "transformed_mevs_description"
+DUMMY_MEV_RAW_DESCRIPTION_SHEET_NAME = "raw_mevs_description"
+DUMMY_MEV_TIME_SERIES_SHEET_NAME = "mev_data"
+DUMMY_MEV_MODEL_CHARACTERISTIC_SHEET_NAME = "model_characteristic"
+DUMMY_MEV_MODEL_NAME_COLUMN = "Model Name"
 FACILITIES_DUMMY_DATA_FILE = SOURCE_DATA_DIR / "facilities_dummy_data.json"
 
 # ---------------------------------------------------------------------------

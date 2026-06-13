@@ -15,6 +15,7 @@ from . import data_store, shell
 from .callbacks import monitoring_ead_performance_callbacks as ead_performance_callbacks
 from .callbacks import monitoring_lgd_performance_callbacks as lgd_performance_callbacks
 from .callbacks import monitoring_pd_performance_callbacks as pd_performance_callbacks
+from .callbacks import saas_callbacks
 
 logging.basicConfig(level=logging.INFO)
 
@@ -30,6 +31,7 @@ def create_app() -> dash.Dash:
     pd_performance_callbacks.register_callbacks(app, data_store.PD_PERFORMANCE_DATA)
     lgd_performance_callbacks.register_callbacks(app)
     ead_performance_callbacks.register_callbacks(app)
+    saas_callbacks.register_callbacks(app)
     shell.register_callbacks(app)
 
     return app

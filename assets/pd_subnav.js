@@ -87,11 +87,7 @@
 
   function bind() {
     var subnav = document.getElementById("pd-subnav");
-    if (!subnav) {
-      window.requestAnimationFrame(bind);
-      return;
-    }
-    if (subnav.dataset.pdSubnavBound) return;
+    if (!subnav || subnav.dataset.pdSubnavBound) return;
     subnav.dataset.pdSubnavBound = "true";
     subnav.addEventListener("click", onClick);
     var scrollContainer = getScrollContainer();
@@ -103,9 +99,23 @@
     updateActiveFromScroll();
   }
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", bind);
-  } else {
+  // `#pd-subnav` is rebuilt whenever Dash re-renders `#page-content` (which
+  // also happens once right after the initial page load, since the router
+  // callback fires on initial call too). Watch for that and (re)bind to
+  // whichever `#pd-subnav` instance is currently live.
+  function observePageContent() {
+    var pageContent = document.getElementById("page-content");
+    if (!pageContent) {
+      window.requestAnimationFrame(observePageContent);
+      return;
+    }
+    new MutationObserver(bind).observe(pageContent, { childList: true, subtree: true });
     bind();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", observePageContent);
+  } else {
+    observePageContent();
   }
 })();

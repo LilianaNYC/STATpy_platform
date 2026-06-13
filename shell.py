@@ -19,6 +19,7 @@ from .data_store import PD_PERFORMANCE_DATA
 from .pages import monitoring_ead_performance_layout as ead_performance_layout
 from .pages import monitoring_lgd_performance_layout as lgd_performance_layout
 from .pages import monitoring_pd_performance_layout as pd_performance_layout
+from .pages import saas_layout
 
 URL_ID = "app-url"
 PAGE_CONTENT_ID = "page-content"
@@ -28,6 +29,7 @@ NAV_LINKS = [
     ("🧠", "PD Performance", "/"),
     ("📉", "LGD Performance", "/lgd-performance"),
     ("📈", "EAD Performance", "/ead-performance"),
+    ("🗂️", "SAAS", "/saas"),
 ]
 
 # Maps a URL path to the function that builds that page's content.
@@ -35,6 +37,7 @@ PAGE_BUILDERS = {
     "/": lambda: pd_performance_layout.page_layout(PD_PERFORMANCE_DATA),
     "/lgd-performance": lgd_performance_layout.page_layout,
     "/ead-performance": ead_performance_layout.page_layout,
+    "/saas": saas_layout.page_layout,
 }
 
 
