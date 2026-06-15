@@ -22,6 +22,7 @@ same message, so callbacks can always set ``dcc.Graph(figure=...)``.
 
 from __future__ import annotations
 
+import calendar
 from datetime import date, datetime, timedelta
 import math
 import statistics
@@ -139,6 +140,15 @@ def _build_tick_values(categories: list[str], max_ticks: int) -> list[str]:
     return deduped
 
 
+def _format_saas_quarter_value(quarter_value) -> str:
+    if quarter_value is None:
+        return ""
+    try:
+        return str(int(round(quarter_value)))
+    except (TypeError, ValueError):
+        return str(quarter_value)
+
+
 def _format_saas_quarter_label(date_value) -> str:
     parsed_date = _coerce_saas_date(date_value)
     if parsed_date is None:
@@ -231,9 +241,9 @@ def _format_saas_legend_label(
     *,
     model_label: str,
     scenario_label: str,
-    run_for: str,
     multiple_models: bool,
-    multiple_run_fors: bool,
+    run_for: str | None = None,
+    multiple_run_fors: bool = False,
     compact: bool = False,
 ) -> str:
     compact_scenario_label = {
@@ -242,23 +252,23 @@ def _format_saas_legend_label(
         "Other": "Other",
     }.get(scenario_label, scenario_label)
 
-    compact_run_for_label = run_for
-    for token in reversed(str(run_for or "").split()):
-        if token.isdigit() and len(token) == 4:
-            compact_run_for_label = token
-            break
-
-    if multiple_run_fors:
-        base_label = (
-            f"{compact_scenario_label} {compact_run_for_label}"
-            if compact
-            else f"{scenario_label} / {run_for}"
-        )
-    else:
-        base_label = compact_scenario_label if compact else scenario_label
+    base_label = compact_scenario_label if compact else scenario_label
     if multiple_models:
-        return f"{model_label} · {base_label}" if compact else f"{model_label}: {base_label}"
-    return base_label
+        label = f"{model_label} · {base_label}" if compact else f"{model_label}: {base_label}"
+    else:
+        label = base_label
+
+    if multiple_run_fors and run_for:
+        label = f"{run_for} {label}"
+
+    return label
+
+
+def _compact_run_for_label(run_for: str) -> str:
+    tokens = run_for.strip().split()
+    if tokens and tokens[-1].isdigit() and len(tokens[-1]) == 4:
+        return f"'{tokens[-1][-2:]}"
+    return run_for
 
 
 def _format_projection_quarter_label(quarter_value) -> str:
@@ -280,16 +290,6 @@ def _saas_quarter_for_date(records, target_date):
         if row_date == target and _finite(quarter_value):
             return float(quarter_value)
     return None
-
-
-def _saas_color_with_alpha(color: str, alpha: float) -> str:
-    normalized = str(color or "").strip()
-    if normalized.startswith("#") and len(normalized) == 7:
-        red = int(normalized[1:3], 16)
-        green = int(normalized[3:5], 16)
-        blue = int(normalized[5:7], 16)
-        return f"rgba({red},{green},{blue},{alpha})"
-    return normalized
 
 
 def _saas_monitoring_axis_range(visible_values: list[float], band_spec: dict | None) -> tuple[float | None, float | None]:
@@ -349,56 +349,6 @@ def _saas_monitoring_x_range(axis_values, *, is_projection_only: bool, developme
     span_days = (end_date - start_date).days
     pad_days = max(int(span_days * 0.05), 45) if span_days > 0 else 45
     return [start_date - timedelta(days=pad_days), end_date + timedelta(days=pad_days)]
-
-
-def _saas_compare_cycle_guide(*, note_y: float = -0.09) -> tuple[list[dict], list[dict]]:
-    shapes = [
-        dict(
-            type="line",
-            xref="paper",
-            yref="paper",
-            x0=0.01,
-            x1=0.065,
-            y0=note_y,
-            y1=note_y,
-            line=dict(color="#334155", width=2.1, dash="solid"),
-        ),
-        dict(
-            type="line",
-            xref="paper",
-            yref="paper",
-            x0=0.29,
-            x1=0.345,
-            y0=note_y,
-            y1=note_y,
-            line=dict(color="#94a3b8", width=1.95, dash="dot"),
-        ),
-    ]
-    annotations = [
-        dict(
-            xref="paper",
-            yref="paper",
-            x=0.072,
-            y=note_y,
-            text="Selected cycle",
-            showarrow=False,
-            xanchor="left",
-            yanchor="middle",
-            font=dict(size=10, color="#475569"),
-        ),
-        dict(
-            xref="paper",
-            yref="paper",
-            x=0.352,
-            y=note_y,
-            text="Compare cycle",
-            showarrow=False,
-            xanchor="left",
-            yanchor="middle",
-            font=dict(size=10, color="#64748b"),
-        ),
-    ]
-    return shapes, annotations
 
 
 def build_pd_time_series_xaxis(labels, base=None, density="normal", tick_text_map=None):
@@ -1071,6 +1021,23 @@ def _saas_quarter_zero_date(records) -> object | None:
     return min(quarter_zero_dates) if quarter_zero_dates else None
 
 
+def _saas_add_months(date_value, months: int):
+    if date_value is None:
+        return None
+    total_month = date_value.month - 1 + months
+    year = date_value.year + total_month // 12
+    month = total_month % 12 + 1
+    day = min(date_value.day, calendar.monthrange(year, month)[1])
+    return date_value.replace(year=year, month=month, day=day)
+
+
+def _saas_projection_x_date(projection_start_date, quarter_value):
+    """Map a projection Quarter offset onto the primary Reporting Cycle's date axis."""
+    if projection_start_date is None or quarter_value is None:
+        return None
+    return _saas_add_months(projection_start_date, round(quarter_value * 3))
+
+
 def _saas_historical_values(records) -> list[float]:
     return [
         float(row.get("MEV Value"))
@@ -1134,6 +1101,7 @@ def build_saas_mev_time_series_figure(
     primary_run_for: str | None = None,
     development_date=None,
     current_date=None,
+    projection_start_date=None,
 ) -> go.Figure:
     """Plot quarterly MEV time series for the selected SAAS model(s)."""
     mev_label_map = mev_label_map or {}
@@ -1141,6 +1109,8 @@ def build_saas_mev_time_series_figure(
     resolved_y_axis_title = str(y_axis_title or "").strip() or "MEV Value"
     is_history_only = snapshot_period == "history"
     is_projection_only = snapshot_period == "projection"
+    if projection_start_date is None:
+        projection_start_date = _saas_quarter_zero_date(records)
 
     grouped: dict[tuple[str, str, str, str], list[tuple[object, float | None, float]]] = {}
     selected_models: set[str] = set()
@@ -1168,10 +1138,8 @@ def build_saas_mev_time_series_figure(
     multiple_models = len(selected_models) > 1
     multiple_run_fors = len(selected_run_fors) > 1
     legend_item_count = len(grouped)
-    compact_legend = (
-        legend_item_count >= 5
-        or (multiple_run_fors and any(len(str(run_for_value or "")) > 9 for run_for_value in selected_run_fors))
-    )
+    compact_legend = legend_item_count >= 5
+    ultra_compact_legend = legend_item_count >= 9
     scenario_colors: dict[str, str] = {}
     ordered_run_fors = sorted(selected_run_fors, key=lambda value: (value != (primary_run_for or ""), value))
     run_for_rank_map = {run_for: index for index, run_for in enumerate(ordered_run_fors)}
@@ -1181,6 +1149,14 @@ def build_saas_mev_time_series_figure(
     }
     fig = go.Figure()
     all_axis_values = []
+
+    def _is_historical_point(point):
+        date_value, quarter_value, _ = point
+        if quarter_value is not None and quarter_value > 0:
+            return False
+        if projection_start_date is not None and date_value > projection_start_date:
+            return False
+        return True
 
     ordered_group_keys = sorted(
         grouped,
@@ -1199,10 +1175,6 @@ def build_saas_mev_time_series_figure(
             grouped[(model_name, mev_name, scenario, run_for)],
             key=lambda item: item[1] if is_projection_only and item[1] is not None else item[0],
         )
-        point_dates = [point[0] for point in points]
-        point_quarters = [point[1] for point in points]
-        x_values = point_quarters if is_projection_only else point_dates
-        all_axis_values.extend([value for value in x_values if value is not None])
         is_primary_run_for = bool(primary_run_for and run_for == primary_run_for)
         run_for_dash = run_for_dash_map.get(run_for, "solid")
         if reference_lines == "monitoring":
@@ -1214,8 +1186,8 @@ def build_saas_mev_time_series_figure(
         trace_name = _format_saas_legend_label(
             model_label=model_label,
             scenario_label=scenario_label,
-            run_for=run_for,
             multiple_models=multiple_models,
+            run_for=_compact_run_for_label(run_for) if ultra_compact_legend else run_for,
             multiple_run_fors=multiple_run_fors,
             compact=compact_legend,
         )
@@ -1237,7 +1209,7 @@ def build_saas_mev_time_series_figure(
             + ("Calendar Quarter: %{customdata}<br>" if is_projection_only else "Quarter: %{customdata}<br>")
             + "Value: %{y:,.2f}<extra></extra>"
         )
-        legend_group = f"{model_name}|{mev_name}|{run_for}|{scenario}"
+        legend_group = f"{model_name}|{mev_name}|{scenario}|{run_for}"
         history_projection_mode = snapshot_period == "history_projection" and not is_projection_only and not is_history_only
 
         def add_trace(
@@ -1249,18 +1221,27 @@ def build_saas_mev_time_series_figure(
             opacity,
             showlegend,
             mode,
-            marker_size_override=None,
-            marker_line_width_override=None,
-            marker_size_sequence=None,
             line_width_override=None,
-            dash_override=None,
             hovertemplate_override=None,
+            quarter_aligned=False,
+            customdata_override=None,
         ):
             if not segment_points:
                 return
             segment_dates = [point[0] for point in segment_points]
             segment_quarters = [point[1] for point in segment_points]
-            segment_x_values = segment_quarters if is_projection_only else segment_dates
+            if is_projection_only:
+                segment_x_values = segment_quarters
+            elif quarter_aligned and projection_start_date is not None:
+                segment_x_values = [
+                    _saas_projection_x_date(projection_start_date, quarter_value)
+                    if quarter_value is not None
+                    else date_value
+                    for date_value, quarter_value in zip(segment_dates, segment_quarters)
+                ]
+            else:
+                segment_x_values = segment_dates
+            all_axis_values.extend(value for value in segment_x_values if value is not None)
             fig.add_trace(
                 go.Scatter(
                     x=segment_x_values,
@@ -1276,19 +1257,17 @@ def build_saas_mev_time_series_figure(
                             if line_width_override is not None
                             else 2.1 if is_primary_run_for and is_history_only else 1.7 if is_history_only else 2.35 if is_primary_run_for else 1.95
                         ),
-                        dash=dash_override or run_for_dash,
+                        dash=run_for_dash,
                         shape="linear",
                     ),
                     marker=dict(
-                        size=(
-                            marker_size_sequence
-                            if marker_size_sequence is not None
-                            else marker_size if marker_size_override is None else marker_size_override
-                        ),
+                        size=marker_size,
                         color=marker_color,
-                        line=dict(color=marker_border_color, width=marker_line_width if marker_line_width_override is None else marker_line_width_override),
+                        line=dict(color=marker_border_color, width=marker_line_width),
                     ),
-                    customdata=[_format_saas_quarter_label(point_date) for point_date in segment_dates],
+                    customdata=customdata_override
+                    if customdata_override is not None
+                    else [_format_saas_quarter_label(point_date) for point_date in segment_dates],
                     showlegend=showlegend,
                     opacity=opacity,
                     hovertemplate=hovertemplate_override or hovertemplate,
@@ -1296,8 +1275,8 @@ def build_saas_mev_time_series_figure(
             )
 
         if history_projection_mode:
-            history_points = [point for point in points if point[1] is None or point[1] < 0]
-            projection_points = [point for point in points if point[1] is not None and point[1] >= 0]
+            history_points = [point for point in points if _is_historical_point(point)]
+            projection_points = [point for point in points if not _is_historical_point(point)]
             projection_trace_points = list(projection_points)
             if history_points and projection_points:
                 projection_trace_points = [history_points[-1], *projection_points]
@@ -1318,24 +1297,19 @@ def build_saas_mev_time_series_figure(
             )
             add_trace(
                 projection_trace_points,
-                line_color=_saas_color_with_alpha(color, 0.24),
-                marker_color=_saas_color_with_alpha(color, 0.08),
-                marker_border_color=_saas_color_with_alpha(color, 0.34),
-                opacity=1,
+                line_color=color,
+                marker_color=marker_fill_color,
+                marker_border_color=color,
+                opacity=0.35 if is_primary_run_for or not multiple_run_fors else 0.3,
                 showlegend=not history_points,
-                mode="lines+markers",
-                marker_size_sequence=(
-                    [0, *([3.8] * (len(projection_trace_points) - 1))]
-                    if history_points and projection_trace_points
-                    else [3.8] * len(projection_trace_points)
-                ),
-                marker_line_width_override=0.95,
-                line_width_override=1.8 if is_primary_run_for else 1.65,
-                dash_override="dot",
+                mode="lines",
+                line_width_override=2.2 if is_primary_run_for else 1.85,
                 hovertemplate_override=hovertemplate.replace(
                     f"MEV: {mev_label}<br>",
                     f"MEV: {mev_label}<br>Segment: Projection<br>",
                 ),
+                quarter_aligned=True,
+                customdata_override=[_format_saas_quarter_value(point[1]) for point in projection_trace_points],
             )
         else:
             add_trace(
@@ -1348,18 +1322,11 @@ def build_saas_mev_time_series_figure(
                 mode=trace_mode,
             )
 
-    show_compare_cycle_guide = multiple_run_fors and reference_lines != "monitoring"
-    history_projection_note_y = -0.15 if show_compare_cycle_guide else -0.13
-    legend_y = -0.29 if show_compare_cycle_guide and compact_legend else -0.27 if show_compare_cycle_guide else -0.24 if compact_legend else -0.26
-    bottom_margin = 160 if show_compare_cycle_guide and snapshot_period == "history_projection" else 148 if show_compare_cycle_guide else 142 if compact_legend else 148
+    legend_y = -0.38 if ultra_compact_legend else -0.22 if compact_legend else -0.21
+    bottom_margin = 198 if ultra_compact_legend else 136 if compact_legend else 130
 
     shapes: list[dict] = [] if is_projection_only else _saas_history_year_band_shapes(all_axis_values)
     annotations: list[dict] = []
-    if show_compare_cycle_guide:
-        compare_guide_shapes, compare_guide_annotations = _saas_compare_cycle_guide(note_y=-0.09)
-        shapes.extend(compare_guide_shapes)
-        annotations.extend(compare_guide_annotations)
-    projection_start_date = _saas_quarter_zero_date(records)
     min_max_reference_records = historical_reference_records if historical_reference_records is not None else records
     if primary_run_for:
         min_max_reference_records = [
@@ -1404,19 +1371,6 @@ def build_saas_mev_time_series_figure(
                 yanchor="bottom",
                 font=dict(size=10, color="#64748b"),
                 bgcolor="rgba(255,255,255,0.82)",
-            )
-        )
-        annotations.append(
-            dict(
-                xref="paper",
-                yref="paper",
-                x=0,
-                y=history_projection_note_y,
-                text="History = stronger line | Projection = lighter dashed line",
-                showarrow=False,
-                xanchor="left",
-                yanchor="top",
-                font=dict(size=10, color="#64748b"),
             )
         )
 
@@ -1574,20 +1528,14 @@ def build_saas_mev_time_series_figure(
         else None
     )
 
-    legend_title_text = (
-        "Scenario / Cycle"
-        if compact_legend and multiple_run_fors
-        else "Scenario / Reporting Cycle"
-        if multiple_run_fors
-        else "Scenario"
-    )
+    legend_title_text = "Scenario"
     show_bottom_legend = reference_lines != "monitoring"
     fig.update_layout(
         height=438,
         margin=dict(t=52, r=18, b=88 if reference_lines == "monitoring" else bottom_margin, l=72),
         hovermode="x unified",
         showlegend=show_bottom_legend,
-        hoverdistance=18,
+        hoverdistance=2,
         hoverlabel=dict(
             bgcolor="rgba(15,23,42,0.95)",
             bordercolor="rgba(255,255,255,0)",
@@ -1603,16 +1551,16 @@ def build_saas_mev_time_series_figure(
             xanchor="left",
             y=legend_y,
             yanchor="top",
-            entrywidthmode="pixels" if compact_legend else "fraction",
-            entrywidth=0 if compact_legend else 0.22 if multiple_run_fors else 0.16,
+            entrywidthmode="pixels",
+            entrywidth=125 if ultra_compact_legend else 110 if compact_legend else 100,
             bgcolor="rgba(255,255,255,0.92)",
             bordercolor="rgba(203,213,225,0.92)",
             borderwidth=1,
-            font=dict(size=10 if compact_legend else 10.5, color="#334155"),
+            font=dict(size=9 if ultra_compact_legend else 10 if compact_legend else 10.5, color="#334155"),
             itemsizing="constant",
-            itemwidth=34 if compact_legend else 30,
+            itemwidth=30,
             traceorder="normal",
-            maxheight=0.22,
+            maxheight=0.4 if ultra_compact_legend else 0.22,
             groupclick="togglegroup",
         ),
         shapes=shapes,

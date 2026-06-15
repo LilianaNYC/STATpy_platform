@@ -55,6 +55,23 @@ body{background:#f8fafc;overflow:hidden}
 .main{flex:1;min-width:0;height:100vh;display:flex;flex-direction:column;overflow:hidden}
 .page-shell{display:flex;flex-direction:column;flex:1;min-height:0}
 .top-bar{background:#fff;border-bottom:1px solid var(--border);padding:14px 24px 16px;display:flex;align-items:flex-start;gap:16px;flex-shrink:0;box-shadow:0 8px 24px rgba(15,23,42,.04);z-index:20}
+.saas-download-report-button{display:inline-flex;align-items:center;gap:6px;flex-shrink:0;white-space:nowrap}
+.saas-download-report-icon{font-size:13px;line-height:1}
+.saas-download-actions{display:flex;flex-direction:column;gap:8px;flex-shrink:0}
+.saas-download-action-row{display:flex;align-items:center;gap:6px}
+.saas-download-action-row .saas-download-report-button{flex:1 1 auto;justify-content:center}
+.saas-download-info{cursor:help}
+.saas-download-excel-button{background:#ecfdf5;border-color:#a7f3d0;color:#047857}
+.saas-download-excel-button:hover,.saas-download-excel-button:focus{background:#d1fae5;border-color:#6ee7b7;color:#065f46}
+.saas-modal-overlay{position:fixed;inset:0;background:rgba(15,23,42,.45);display:none;align-items:center;justify-content:center;z-index:1000}
+.saas-modal-overlay.is-open{display:flex}
+.saas-modal{background:#fff;border-radius:12px;padding:22px 24px;width:380px;max-width:92vw;box-shadow:0 18px 48px rgba(15,23,42,.28)}
+.saas-modal-title{font-size:16px;font-weight:800;color:var(--text);margin-bottom:6px}
+.saas-modal-subtitle{font-size:12px;color:var(--text-muted);margin:0 0 16px;line-height:1.5}
+.saas-modal-label{display:block;font-size:11px;font-weight:700;color:#475569;margin-bottom:6px}
+.saas-modal-dropdown{margin-bottom:20px}
+.saas-modal-actions{display:flex;justify-content:flex-end;gap:10px}
+.saas-modal-cancel{background:#fff}
 .monitoring-dashboard-title{font-size:15px;font-weight:700;color:#111;letter-spacing:.01em}
 .content{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:14px 24px 26px;scrollbar-gutter:stable}
 .tab-panel{display:none}
@@ -68,15 +85,9 @@ body{background:#f8fafc;overflow:hidden}
 .monitoring-controls{display:flex;align-items:flex-end;gap:12px 10px;flex-wrap:wrap;margin-top:10px}
 .monitoring-filter{display:flex;flex-direction:column;gap:5px;position:relative}
 .monitoring-filter>label{font-size:10px;color:#64748b;font-weight:800;letter-spacing:.35px;text-transform:uppercase}
-.saas-filter-group-heading{display:flex;align-items:baseline;gap:10px;margin-top:12px}
-.saas-filter-group-kicker{font-size:11px;font-weight:800;color:var(--navy);letter-spacing:.7px;text-transform:uppercase}
-.saas-filter-group-note{font-size:11.5px;line-height:1.4;color:var(--text-muted)}
-.saas-filter-group-heading-secondary{margin-top:14px}
-.saas-filter-group-heading-secondary .saas-filter-group-kicker{color:#475569}
-.saas-filter-group-heading-secondary .saas-filter-group-note{color:rgba(100,116,139,.82)}
 .saas-top-filter-row{display:grid;column-gap:14px;row-gap:12px;align-items:end;justify-content:flex-start}
-.saas-primary-filter-row{grid-template-columns:repeat(auto-fit,minmax(190px,232px))}
-.saas-secondary-filter-row{grid-template-columns:repeat(auto-fit,minmax(176px,208px));margin-top:14px;padding-top:12px;border-top:1px solid #e8eef6}
+.saas-primary-filter-row{grid-template-columns:repeat(3,minmax(127px,155px)) repeat(auto-fit,minmax(95px,116px))}
+.saas-secondary-filter-row{grid-template-columns:repeat(auto-fit,minmax(127px,155px));margin-top:14px;padding-top:12px;border-top:1px solid #e8eef6}
 .saas-top-filter-row .monitoring-filter{width:100%;min-width:0 !important;max-width:none !important}
 .saas-top-filter-row .monitoring-top-select,
 .saas-top-filter-row .single-select-dropdown,
@@ -84,8 +95,12 @@ body{background:#f8fafc;overflow:hidden}
 .saas-top-filter-row .checkbox-dropdown-menu{min-width:100%;max-width:none}
 .saas-top-filter-row .pd-mev-filter-actions{width:100%;min-width:0;justify-content:flex-start}
 .saas-top-filter-row .monitoring-model-filter{grid-column:span 2}
-.saas-top-filter-action{justify-content:flex-end;padding-top:19px}
+.saas-top-filter-action{justify-content:flex-end;padding-top:19px;grid-column:span 2}
 .saas-top-filter-reset{width:100%;min-height:32px;justify-content:center}
+.saas-top-filter-action .pd-mev-filter-actions{width:100%;gap:8px}
+.saas-top-filter-action .pd-mev-filter-reset{flex:0 0 auto;width:auto;min-width:0;padding-left:20px;padding-right:20px}
+.saas-top-filter-apply{background:var(--blue);border-color:var(--blue);color:#fff;box-shadow:none}
+.saas-top-filter-apply:hover,.saas-top-filter-apply:focus{background:#1d4ed8;border-color:#1d4ed8;color:#fff;transform:translateY(-1px)}
 .saas-secondary-filter-row .monitoring-filter>label{color:#7b8799}
 .saas-secondary-filter-row .monitoring-top-select,
 .saas-secondary-filter-row .checkbox-dropdown-toggle{background:#fbfcfe}
@@ -159,7 +174,7 @@ body{background:#f8fafc;overflow:hidden}
    Section sub-navigation
    --------------------------------------------------------------------- */
 #pd-subnav.monitoring-section-subnav,#saas-subnav.monitoring-section-subnav{flex-basis:100%;display:flex;flex-direction:column;gap:8px;margin-top:2px;padding:10px 12px;border:1px solid #dbe4f0;border-radius:12px;background:linear-gradient(135deg,#f8fbff 0%,#ffffff 42%,#f8fafc 100%);box-shadow:0 6px 18px rgba(15,23,42,.045)}
-#saas-subnav.monitoring-section-subnav{margin-top:12px}
+#saas-subnav.monitoring-section-subnav{margin-top:12px;padding:6px 12px}
 .monitoring-section-subnav-group{display:flex;align-items:flex-start;gap:12px}
 .monitoring-section-subnav-group+.monitoring-section-subnav-group{padding-top:8px;border-top:1px solid #e2e8f0}
 .monitoring-section-subnav-group.active{position:relative}
@@ -177,7 +192,6 @@ body{background:#f8fafc;overflow:hidden}
 .saas-subnav-models{display:flex;flex:1;flex-direction:column;gap:8px;min-width:0}
 .saas-subnav-group{flex-direction:column;gap:6px}
 .saas-subnav-group .monitoring-section-subnav-label{min-width:0}
-.saas-subnav-model-summary{color:#475569;font-size:11px;line-height:1.45}
 .saas-subnav-model-list{display:flex;flex-wrap:wrap;gap:6px}
 .saas-subnav-model-chip{display:inline-flex;align-items:center;min-height:28px;padding:5px 10px;border:1px solid #dbe4f0;border-radius:999px;background:rgba(255,255,255,.96);color:#475569;font-size:10px;font-weight:700;line-height:1.25;box-shadow:0 1px 0 rgba(255,255,255,.95) inset;cursor:pointer;transition:background .15s,border-color .15s,color .15s,transform .15s}
 .saas-subnav-model-chip:hover,.saas-subnav-model-chip:focus{background:#eff6ff;border-color:#bfdbfe;color:var(--navy);outline:none;transform:translateY(-1px)}
@@ -343,7 +357,7 @@ tr:last-child td{border-bottom:none}
 .pd-mev-filter-select .Select-control{font-size:12px}
 .pd-mev-filter-dropdown .checkbox-dropdown-toggle{min-width:220px;max-width:280px;height:32px;padding:6px 10px}
 .pd-mev-filter-dropdown .checkbox-dropdown-menu{min-width:220px;max-width:300px;max-height:280px;overflow:auto}
-.pd-mev-filter-actions{display:flex;align-items:flex-end}
+.pd-mev-filter-actions{display:flex;align-items:flex-end;gap:8px}
 .pd-mev-filter-reset{min-height:32px;padding:6px 12px;border-radius:999px;border-color:#cbd5e1;background:rgba(255,255,255,.98);color:#334155;font-size:11px;font-weight:700;box-shadow:0 1px 0 rgba(255,255,255,.96) inset;transition:background .15s,border-color .15s,color .15s,transform .15s}
 .pd-mev-filter-reset:hover,.pd-mev-filter-reset:focus{background:#eff6ff;border-color:#bfdbfe;color:var(--navy);outline:none;transform:translateY(-1px)}
 .pd-mev-filter-reset:disabled{background:#f8fafc;border-color:#e2e8f0;color:#94a3b8;cursor:not-allowed;box-shadow:none;transform:none}
@@ -400,6 +414,11 @@ tr:last-child td{border-bottom:none}
 .pd-mev-marker-legend-date{font-size:10px;font-weight:700;color:var(--text);line-height:1.15}
 .pd-mev-chart{min-height:308px}
 .pd-mev-empty-state{padding:18px 18px 8px;border-style:dashed;background:linear-gradient(135deg,#ffffff 0%,#f8fafc 70%,#f1f5f9 100%)}
+.pd-mev-empty-state .pd-section-subtitle{margin-top:14px}
+.saas-getting-started{padding-bottom:18px}
+.saas-getting-started-steps{margin:14px 0 0;padding-left:22px;display:flex;flex-direction:column;gap:9px;max-width:90ch}
+.saas-getting-started-steps li{font-size:12.5px;line-height:1.55;color:#334155}
+.saas-getting-started-steps li strong{color:var(--navy)}
 .pd-default-rate-trend-section{margin-top:0}
 .pd-default-rate-trend-chart{min-height:460px}
 .pd-calibration-trend-chart{min-height:320px}

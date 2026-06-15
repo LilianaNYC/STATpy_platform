@@ -6,8 +6,8 @@ from datetime import date
 
 from dash import dcc, html
 
-from .. import monitoring_config as config
 from ..components import filters as shared_filters
+from ..components.charts import SAAS_SCENARIO_LABEL_MAP
 from ..data.transformations import get_pd_range_preset, get_pd_range_selection
 from ..data_store import SAAS_PAGE_DATA
 
@@ -18,6 +18,7 @@ RUN_FOR_FILTER_KEY = "saas-run-for"
 COMPARE_AGAINST_ID = "saas-compare-against"
 COMPARE_AGAINST_TOGGLE_ID = "saas-compare-against-toggle"
 COMPARE_AGAINST_MENU_ID = "saas-compare-against-menu"
+COMPARE_AGAINST_PREV_STORE_ID = "saas-compare-against-prev-store"
 COMPARE_AGAINST_NONE_VALUE = "none"
 
 SEGMENT_NAME_ID = "saas-segment-name"
@@ -32,7 +33,16 @@ MODEL_NAME_MENU_ID = "saas-model-name-menu"
 
 MEV_MODEL_PANELS_ID = "saas-mev-model-panels"
 FILTER_HELP_ID = "saas-filter-help"
-RESET_FILTERS_ID = "saas-reset-filters"
+APPLY_FILTERS_ID = "saas-apply-filters"
+APPLIED_FILTERS_STORE_ID = "saas-applied-filters-store"
+DOWNLOAD_REPORT_ID = "saas-download-report"
+DOWNLOAD_DATA_ID = "saas-download-report-data"
+EXCEL_OPEN_ID = "saas-excel-open"
+EXCEL_MODAL_ID = "saas-excel-modal"
+EXCEL_SCENARIO_ID = "saas-excel-scenario"
+EXCEL_GENERATE_ID = "saas-excel-generate"
+EXCEL_CANCEL_ID = "saas-excel-cancel"
+EXCEL_DOWNLOAD_DATA_ID = "saas-excel-download-data"
 SUBNAV_ID = "saas-subnav"
 SUBNAV_MODELS_ID = "saas-subnav-models"
 MEV_TIME_SERIES_SECTION_ID = "saas-mev-time-series-section"
@@ -143,6 +153,26 @@ COMPARE_AGAINST_OPTIONS = [{"label": "None", "value": COMPARE_AGAINST_NONE_VALUE
 ]
 DEFAULT_COMPARE_AGAINST_VALUES = [COMPARE_AGAINST_NONE_VALUE]
 SEGMENT_NAME_OPTIONS = _build_segment_options()
+
+
+def _build_excel_scenario_options() -> list[dict]:
+    time_series_df = SAAS_PAGE_DATA.get("mev_time_series")
+    scenario_values: list[str] = []
+    if time_series_df is not None and not time_series_df.empty and "Scenario" in time_series_df.columns:
+        scenario_values = [str(value).strip().lower() for value in time_series_df["Scenario"].dropna().unique()]
+    order = {"baseline": 0, "intsevere": 1, "other": 2}
+    ordered = sorted({value for value in scenario_values if value}, key=lambda value: order.get(value, 99))
+    return [
+        {"label": SAAS_SCENARIO_LABEL_MAP.get(value, value.replace("_", " ").title()), "value": value}
+        for value in ordered
+    ]
+
+
+EXCEL_SCENARIO_OPTIONS = _build_excel_scenario_options()
+DEFAULT_EXCEL_SCENARIO = next(
+    (option["value"] for option in EXCEL_SCENARIO_OPTIONS if option["value"] == "intsevere"),
+    EXCEL_SCENARIO_OPTIONS[0]["value"] if EXCEL_SCENARIO_OPTIONS else "",
+)
 
 
 def _format_range_period_label(period: str) -> str:
@@ -390,16 +420,6 @@ def _build_top_bar() -> html.Div:
                 children=[
                     html.Div("Scenario Analysis as a Service (SAAS)", className="monitoring-dashboard-title"),
                     html.Div(
-                        className="saas-filter-group-heading",
-                        children=[
-                            html.Span("Scope", className="saas-filter-group-kicker"),
-                            html.Span(
-                                "Choose the cycle and model scope.",
-                                className="saas-filter-group-note",
-                            ),
-                        ],
-                    ),
-                    html.Div(
                         className="monitoring-controls saas-top-filter-row saas-primary-filter-row",
                         children=[
                             _build_single_select_filter(
@@ -449,12 +469,12 @@ def _build_top_bar() -> html.Div:
                                         className="pd-mev-filter-actions",
                                         children=[
                                             html.Button(
-                                                "Reset filters",
-                                                id=RESET_FILTERS_ID,
-                                                className="btn pd-mev-filter-reset saas-top-filter-reset",
+                                                "Apply filters",
+                                                id=APPLY_FILTERS_ID,
+                                                className="btn pd-mev-filter-reset saas-top-filter-reset saas-top-filter-apply",
                                                 n_clicks=0,
                                                 type="button",
-                                                title="Restore the SAAS filters to their default selections.",
+                                                title="Load the SAAS charts using the selected filters.",
                                             ),
                                         ],
                                     ),
@@ -463,19 +483,9 @@ def _build_top_bar() -> html.Div:
                         ],
                     ),
                     html.Div(
-                        "Choose a segment or specific models. These filters cannot be combined.",
+                        "",
                         id=FILTER_HELP_ID,
                         className="monitoring-filter-help",
-                    ),
-                    html.Div(
-                        className="saas-filter-group-heading saas-filter-group-heading-secondary",
-                        children=[
-                            html.Span("Display", className="saas-filter-group-kicker"),
-                            html.Span(
-                                "Adjust view, guides, and labels.",
-                                className="saas-filter-group-note",
-                            ),
-                        ],
                     ),
                     html.Div(
                         className="monitoring-controls saas-top-filter-row saas-secondary-filter-row",
@@ -525,6 +535,155 @@ def _build_top_bar() -> html.Div:
                     _build_section_subnav(),
                 ],
             ),
+            html.Div(
+                className="saas-download-actions",
+                children=[
+                    html.Div(
+                        className="saas-download-action-row",
+                        children=[
+                            html.Button(
+                                [
+                                    html.Span("⬇", className="saas-download-report-icon", **{"aria-hidden": "true"}),
+                                    "Export Charts (PDF/HTML)",
+                                ],
+                                id=DOWNLOAD_REPORT_ID,
+                                className="btn pd-mev-filter-reset saas-download-report-button",
+                                n_clicks=0,
+                                type="button",
+                            ),
+                            html.Span(
+                                "i",
+                                className="pd-info-chip saas-download-info",
+                                title=(
+                                    "Saves the current SAAS charts as a standalone HTML document. "
+                                    "Open it in a browser and use Print → Save as PDF to create a PDF."
+                                ),
+                                **{"aria-label": "Export Charts help"},
+                            ),
+                        ],
+                    ),
+                    html.Div(
+                        className="saas-download-action-row",
+                        children=[
+                            html.Button(
+                                [
+                                    html.Span("⬇", className="saas-download-report-icon", **{"aria-hidden": "true"}),
+                                    "Scenario Metrics (Excel)",
+                                ],
+                                id=EXCEL_OPEN_ID,
+                                className="btn pd-mev-filter-reset saas-download-report-button saas-download-excel-button",
+                                n_clicks=0,
+                                type="button",
+                            ),
+                            html.Span(
+                                "i",
+                                className="pd-info-chip saas-download-info",
+                                title=(
+                                    "Exports an Excel workbook for a chosen scenario with three tabs: "
+                                    "README (column definitions), Metrics, and Charts."
+                                ),
+                                **{"aria-label": "Scenario Metrics help"},
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+        ],
+    )
+
+
+def _build_excel_modal() -> html.Div:
+    return html.Div(
+        id=EXCEL_MODAL_ID,
+        className="saas-modal-overlay",
+        children=html.Div(
+            className="saas-modal",
+            children=[
+                html.Div("Download Excel report", className="saas-modal-title"),
+                html.P(
+                    "Choose the scenario to use for the Severely Adverse projection metrics. "
+                    "The workbook (README, Metrics and Charts) is built from your current filters.",
+                    className="saas-modal-subtitle",
+                ),
+                html.Label("Scenario", htmlFor=EXCEL_SCENARIO_ID, className="saas-modal-label"),
+                dcc.Dropdown(
+                    id=EXCEL_SCENARIO_ID,
+                    options=EXCEL_SCENARIO_OPTIONS,
+                    value=DEFAULT_EXCEL_SCENARIO,
+                    clearable=False,
+                    searchable=False,
+                    className="saas-modal-dropdown",
+                ),
+                html.Div(
+                    className="saas-modal-actions",
+                    children=[
+                        html.Button(
+                            "Cancel",
+                            id=EXCEL_CANCEL_ID,
+                            type="button",
+                            n_clicks=0,
+                            className="btn saas-modal-cancel",
+                        ),
+                        html.Button(
+                            "Generate Excel",
+                            id=EXCEL_GENERATE_ID,
+                            type="button",
+                            n_clicks=0,
+                            className="btn btn-primary saas-modal-generate",
+                        ),
+                    ],
+                ),
+            ],
+        ),
+    )
+
+
+def build_apply_prompt() -> html.Div:
+    """Placeholder + how-to guide shown until the user applies the filters."""
+    return html.Div(
+        className="section-card pd-mev-empty-state saas-getting-started",
+        children=[
+            html.Div("Getting started with the SAAS dashboard", className="pd-mev-chart-title"),
+            html.P(
+                "Set your filters in the top bar, then click “Apply filters” to render the charts. "
+                "Follow the steps below to use the dashboard properly.",
+                className="pd-section-subtitle",
+            ),
+            html.Ol(
+                className="saas-getting-started-steps",
+                children=[
+                    html.Li([
+                        html.Strong("Pick a Reporting Cycle. "),
+                        "Choose the cycle to review (e.g. CCAR 2026). This sets the primary “Projection starts” point for every chart.",
+                    ]),
+                    html.Li([
+                        html.Strong("(Optional) Compare To. "),
+                        "Add another reporting cycle to overlay it against the primary cycle for benchmarking.",
+                    ]),
+                    html.Li([
+                        html.Strong("Choose your model scope. "),
+                        "Select a Segment or a set of Specific Models — these two filters cannot be combined.",
+                    ]),
+                    html.Li([
+                        html.Strong("Set the view options. "),
+                        "Adjust Snapshot Period (History, Projection, or History & Projection), Reference Lines "
+                        "(None, Min-Max, or Monitoring), and the MEV Label convention.",
+                    ]),
+                    html.Li([
+                        html.Strong("Click “Apply filters”. "),
+                        "The charts load here, one card per model. Nothing renders until you apply.",
+                    ]),
+                    html.Li([
+                        html.Strong("Fine-tune each model card. "),
+                        "Within a card you can switch the scenario, MEV, and visible date range without re-applying the top filters.",
+                    ]),
+                    html.Li([
+                        html.Strong("Export your results. "),
+                        "Use “Export Charts (PDF/HTML)” for a shareable visual record, or “Scenario Metrics (Excel)” "
+                        "to download a scenario-specific workbook (README, metrics and charts).",
+                    ]),
+                ],
+            ),
         ],
     )
 
@@ -537,12 +696,15 @@ def _build_chart_canvas() -> html.Section:
             html.Div(
                 className="pd-performance-note",
                 children=[
-                    "Each selected segment or selected model scope is shown in its own card using the same presentation pattern as the PD MEV Range section. The charts update from the filters above and use source data from ",
-                    html.Strong(config.DUMMY_MEV_DATA_FILE.name),
-                    ".",
+                    html.Strong("Executive summary: "),
+                    "The Scenario Analysis as a Service (SAAS) dashboard is a self-service tool for reviewing how the macro-economic variables (MEVs) that drive our risk models behave under stress scenarios, across reporting cycles such as CCAR 2026 and CCAR 2025. It brings the model inputs, their history, and their forward projections into one place so reviewers can judge whether a scenario's projections are credible relative to what we've actually observed.",
                 ],
             ),
-            html.Div(id=MEV_MODEL_PANELS_ID, className="saas-model-panel-stack"),
+            html.Div(
+                id=MEV_MODEL_PANELS_ID,
+                className="saas-model-panel-stack",
+                children=build_apply_prompt(),
+            ),
         ],
     )
 
@@ -550,6 +712,11 @@ def _build_chart_canvas() -> html.Section:
 def page_layout() -> list:
     """Top bar + SAAS MEV chart canvas."""
     return [
+        dcc.Store(id=COMPARE_AGAINST_PREV_STORE_ID, data=list(DEFAULT_COMPARE_AGAINST_VALUES)),
+        dcc.Store(id=APPLIED_FILTERS_STORE_ID),
+        dcc.Download(id=DOWNLOAD_DATA_ID),
+        dcc.Download(id=EXCEL_DOWNLOAD_DATA_ID),
+        _build_excel_modal(),
         _build_top_bar(),
         html.Div(
             className="content",

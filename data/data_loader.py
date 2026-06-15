@@ -414,6 +414,7 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
         "model_names": load_saas_model_names(),
         "model_segments": {},
         "model_development_dates": {},
+        "run_for_quarter_zero_dates": {},
         "model_mev_family_map": {},
         "segment_values": [],
         "run_for_values": [],
@@ -506,6 +507,16 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
         time_series_df["MEV Name"].astype(bool) & time_series_df["Model Name"].astype(bool)
     ][["Date", "Quarter", "Run For", "Scenario", "MEV Name", "MEV Value", "Model Name"]].copy()
 
+    run_for_quarter_zero_dates: dict[str, Any] = {}
+    quarter_zero_df = time_series_df[time_series_df["Quarter"] == 0]
+    for row in quarter_zero_df.to_dict(orient="records"):
+        run_for = str(row.get("Run For") or "").strip()
+        date_value = row.get("Date")
+        if not run_for or date_value is None:
+            continue
+        if run_for not in run_for_quarter_zero_dates or date_value < run_for_quarter_zero_dates[run_for]:
+            run_for_quarter_zero_dates[run_for] = date_value
+
     model_characteristic_df["Run For"] = model_characteristic_df.get("Run For").map(
         lambda value: str(value).strip() if value is not None else ""
     )
@@ -556,6 +567,7 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
         "model_names": workbook_model_names or load_saas_model_names(),
         "model_segments": model_segments,
         "model_development_dates": model_development_dates,
+        "run_for_quarter_zero_dates": run_for_quarter_zero_dates,
         "model_mev_family_map": model_mev_family_map,
         "model_mev_map": {
             model_name: {

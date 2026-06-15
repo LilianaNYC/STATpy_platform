@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 from datetime import datetime
+from html import escape as html_escape
 import re
 import statistics
+
+from openpyxl import Workbook
+from openpyxl.chart import LineChart, Reference
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
 
 from dash import ALL, MATCH, Input, Output, State, ctx, dcc, html, no_update
 
@@ -24,7 +30,6 @@ _GRAPH_CONFIG = {"displayModeBar": False, "responsive": True}
 _RANGE_PRESET_COUNTS = {"last-4": 4, "last-8": 8, "last-12": 12}
 _RAW_MEV_NAMES = set(SAAS_PAGE_DATA.get("raw_mev_names") or set())
 _TRANSFORMED_MEV_NAMES = set(SAAS_PAGE_DATA.get("transformed_mev_names") or set())
-_MONITORING_SCENARIO_NONE_VALUE = "__none__"
 
 
 def _is_segment_active(segment: str | None) -> bool:
@@ -332,6 +337,14 @@ def _current_date_for_run_for(run_for) -> datetime | None:
     return datetime(int(match.group(1)) - 1, 12, 31)
 
 
+def _projection_start_date_for_run_for(run_for):
+    """Return the date where Quarter == 0 for the primary Reporting Cycle."""
+    primary_run_for = _primary_run_for_value(run_for)
+    if not primary_run_for:
+        return None
+    return SAAS_PAGE_DATA.get("run_for_quarter_zero_dates", {}).get(primary_run_for)
+
+
 def _format_monitoring_date(date_value) -> str:
     if date_value is None:
         return "—"
@@ -550,31 +563,13 @@ def _model_panel_id(model_name: str) -> str:
     return f"saas-model-panel-{slug}"
 
 
-def _build_subnav_models(segment: str | None, selected_models, segment_labels: dict[str, str]):
+def _build_subnav_models(segment: str | None, selected_models):
     effective_models = _effective_model_names(segment, selected_models)
-    segment_active = _is_segment_active(segment)
-    all_model_values = [option["value"] for option in _model_options_for_filters(None)]
 
     if not effective_models:
-        return [
-            html.Div(
-                "No models are currently in scope. Adjust Segment or Specific Models above.",
-                className="saas-subnav-model-summary",
-            )
-        ]
-
-    if segment_active:
-        segment_label = segment_labels.get(segment, segment or "Selected segment")
-        summary = f"{len(effective_models)} models are in scope for {segment_label}."
-    elif set(effective_models) == set(all_model_values):
-        summary = f"All {len(effective_models)} models are currently in scope."
-    elif len(effective_models) == 1:
-        summary = "1 specific model is currently in scope."
-    else:
-        summary = f"{len(effective_models)} specific models are currently in scope."
+        return []
 
     return [
-        html.Div(summary, className="saas-subnav-model-summary"),
         html.Div(
             [
                 html.Button(
@@ -964,17 +959,13 @@ def _build_model_scenario_dropdown(
     effective_scenarios = _normalize_selected_scenarios(selected_scenarios, scenario_options)
     all_values = [option["value"] for option in scenario_options if option.get("value")]
     if single_select:
-        single_select_options = [
-            {"label": "None", "value": _MONITORING_SCENARIO_NONE_VALUE},
-            *scenario_options,
-        ]
-        selected_value = _single_selected_scenario(selected_scenarios, single_select_options)
+        selected_value = _single_selected_scenario(selected_scenarios, scenario_options)
         return html.Div(
             className="checkbox-dropdown single-select-dropdown",
             children=[
                 dcc.Dropdown(
                     id={"type": layout.MODEL_SCENARIO_FILTER_TYPE, "model": model_name},
-                    options=single_select_options,
+                    options=scenario_options,
                     value=selected_value,
                     clearable=False,
                     searchable=False,
@@ -987,7 +978,7 @@ def _build_model_scenario_dropdown(
                     style={"display": "none"},
                 ),
                 html.Button(
-                    _scenario_toggle_label(selected_value, single_select_options),
+                    _scenario_toggle_label(selected_value, scenario_options),
                     id={"type": layout.MODEL_SCENARIO_TOGGLE_TYPE, "model": model_name},
                     type="button",
                     n_clicks=0,
@@ -1007,7 +998,7 @@ def _build_model_scenario_dropdown(
                             n_clicks=0,
                             className="single-select-option is-selected" if option["value"] == selected_value else "single-select-option",
                         )
-                        for option in single_select_options
+                        for option in scenario_options
                     ],
                 ),
             ],
@@ -1306,6 +1297,7 @@ def _build_model_figure(
         primary_run_for=primary_run_for,
         development_date=development_date,
         current_date=current_date,
+        projection_start_date=_projection_start_date_for_run_for(primary_run_for),
     )
 
 
@@ -1498,10 +1490,8 @@ def _build_model_panel(
     mev_type_options = list(layout.MEV_TYPE_OPTIONS)
     default_model_mev_mode = layout.DEFAULT_MEV_TYPE
     default_model_scenarios = (
-        _MONITORING_SCENARIO_NONE_VALUE
-        if reference_lines == "monitoring"
-        else [option["value"] for option in scenario_options if option.get("value")]
-    )
+        [scenario_options[0]["value"]] if scenario_options else []
+    ) if reference_lines == "monitoring" else [option["value"] for option in scenario_options if option.get("value")]
     family_mev_options = _build_model_mev_options(
         _filter_records_by_model_mevs(visible_records, model_name, "family"),
         mev_label_mode,
@@ -1642,6 +1632,534 @@ def _build_model_panel(
     )
 
 
+def _build_model_report_figures(
+    model_name: str,
+    records: list[dict],
+    reference_records: list[dict],
+    selected_mev_mode,
+    selected_scenarios,
+    snapshot_period: str | None,
+    mev_label_mode: str | None,
+    reference_lines: str | None,
+    selected_mevs,
+    primary_run_for: str | None = None,
+) -> list[tuple[str, object]]:
+    """Build (title, figure) pairs for a model using the default chart selections."""
+    normalized_mev_mode = _normalize_selected_mev_mode(selected_mev_mode)
+    scenario_options = _build_scenario_options(records)
+    visible_mev_names = {
+        str(row.get("MEV Name") or "").strip()
+        for row in records
+        if str(row.get("MEV Name") or "").strip()
+    }
+    effective_mev_values = [
+        value for value in _normalize_selected_mevs(selected_mevs)
+        if value in visible_mev_names
+    ]
+    effective_scenarios = _normalize_selected_scenarios(selected_scenarios, scenario_options)
+
+    if not effective_mev_values or not effective_scenarios:
+        return []
+    if reference_lines == "monitoring" and len(effective_scenarios) != 1:
+        return []
+
+    development_date = _model_development_date(model_name, primary_run_for)
+    current_date = _current_date_for_run_for(primary_run_for)
+
+    figures: list[tuple[str, object]] = []
+    for mev_name in effective_mev_values:
+        mev_records = [row for row in records if str(row.get("MEV Name") or "").strip() == mev_name]
+        mev_reference_records = [row for row in reference_records if str(row.get("MEV Name") or "").strip() == mev_name]
+        mev_label = _resolve_mev_label(mev_name, mev_label_mode)
+        fig = _build_model_figure(
+            model_name,
+            mev_records,
+            mev_reference_records,
+            normalized_mev_mode,
+            effective_scenarios,
+            snapshot_period,
+            mev_label_mode,
+            None,
+            reference_lines,
+            primary_run_for,
+            development_date,
+            current_date,
+            [mev_name],
+        )
+        figures.append((f"{model_name} — {mev_label}", fig))
+    return figures
+
+
+def _build_model_report_sections(
+    model_name: str,
+    records: list[dict],
+    run_for,
+    snapshot_period: str | None,
+    mev_label_mode: str | None,
+    reference_lines: str | None,
+) -> list[tuple[str, object]]:
+    """Build (title, figure) pairs for a model panel's default view."""
+    snapshot_period_value = _normalize_snapshot_period(snapshot_period)
+    visible_records = _filter_records_by_snapshot_period(records, snapshot_period_value)
+    scenario_options = _build_scenario_options(visible_records)
+    default_model_mev_mode = layout.DEFAULT_MEV_TYPE
+    default_model_scenarios = (
+        [scenario_options[0]["value"]] if scenario_options else []
+    ) if reference_lines == "monitoring" else [option["value"] for option in scenario_options if option.get("value")]
+    family_mev_options = _build_model_mev_options(
+        _filter_records_by_model_mevs(visible_records, model_name, "family"),
+        mev_label_mode,
+    )
+    transformed_mev_options = _build_model_mev_options(
+        _filter_records_by_model_mevs(visible_records, model_name, "transformed_only"),
+        mev_label_mode,
+    )
+    default_family_mev = family_mev_options[0]["value"] if family_mev_options else ""
+    default_model_mevs = [option["value"] for option in transformed_mev_options]
+    default_display_mevs = _active_selected_mevs(
+        model_name,
+        default_model_mev_mode,
+        default_family_mev,
+        default_model_mevs,
+        visible_records,
+    )
+    selected_run_fors = _normalize_selected_run_fors(run_for)
+    primary_run_for = selected_run_fors[0] if selected_run_fors else None
+
+    return _build_model_report_figures(
+        model_name,
+        visible_records,
+        records,
+        default_model_mev_mode,
+        default_model_scenarios,
+        snapshot_period_value,
+        mev_label_mode,
+        reference_lines,
+        default_display_mevs,
+        primary_run_for,
+    )
+
+
+def _build_report_figures(run_for, compare_against, segment, selected_models, snapshot_period, reference_lines, mev_label_mode) -> list[tuple[str, object]]:
+    selected_run_fors = _normalize_selected_run_fors(run_for)
+    scoped_run_fors = _scoped_run_for_values(run_for, compare_against)
+    effective_models = _effective_model_names(segment, selected_models)
+
+    if not selected_run_fors or not effective_models:
+        return []
+
+    time_series_df = SAAS_PAGE_DATA.get("mev_time_series")
+    if time_series_df is None or time_series_df.empty:
+        return []
+
+    filtered_df = time_series_df[time_series_df["Model Name"].isin(effective_models)]
+    filtered_df = filtered_df[filtered_df["Run For"].isin(scoped_run_fors)]
+    records = filtered_df.to_dict(orient="records")
+
+    sections: list[tuple[str, object]] = []
+    for model_name in effective_models:
+        model_records = [row for row in records if row.get("Model Name") == model_name]
+        sections.extend(
+            _build_model_report_sections(
+                model_name,
+                model_records,
+                run_for,
+                snapshot_period,
+                mev_label_mode,
+                reference_lines,
+            )
+        )
+    return sections
+
+
+def _build_saas_report_html(sections: list[tuple[str, object]], meta_lines: list[str]) -> str:
+    generated_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+    meta_items = "".join(f"<li>{html_escape(line)}</li>" for line in meta_lines)
+
+    if sections:
+        chart_blocks = []
+        for index, (title, fig) in enumerate(sections):
+            # Fixed pixel size keeps the chart from being laid out at the on-screen
+            # viewport width and then clipped when the browser paginates for print.
+            fig = fig.update_layout(autosize=False, width=900, height=420)
+            chart_html = fig.to_html(
+                full_html=False,
+                include_plotlyjs="cdn" if index == 0 else False,
+                config={"responsive": False},
+            )
+            chart_blocks.append(
+                f'<section class="saas-report-chart"><h2>{html_escape(title)}</h2>{chart_html}</section>'
+            )
+        body = "\n".join(chart_blocks)
+    else:
+        body = "<p>No charts match the current filters.</p>"
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SAAS MEV Report</title>
+<style>
+  body {{ font-family: -apple-system, Helvetica, Arial, sans-serif; margin: 24px; color: #1f2933; }}
+  h1 {{ font-size: 20px; margin-bottom: 4px; }}
+  .saas-report-meta {{ font-size: 13px; color: #52606d; margin-bottom: 24px; }}
+  .saas-report-meta ul {{ margin: 4px 0 0; padding-left: 18px; }}
+  .saas-report-chart {{ margin-bottom: 32px; page-break-inside: avoid; }}
+  .saas-report-chart h2 {{ font-size: 15px; margin-bottom: 8px; }}
+  .saas-report-chart .plotly-graph-div {{ margin: 0; }}
+  @media print {{
+    @page {{ size: landscape; margin: 12mm; }}
+    .saas-report-chart {{ page-break-after: always; }}
+  }}
+</style>
+</head>
+<body>
+  <h1>Scenario Analysis as a Service (SAAS) &mdash; MEV Report</h1>
+  <div class="saas-report-meta">
+    Generated {generated_at}
+    <ul>{meta_items}</ul>
+  </div>
+  {body}
+  <p class="saas-report-print-hint">To save this report as a PDF, open this file in a browser and use Print &rarr; Save as PDF.</p>
+</body>
+</html>"""
+
+
+# ---------------------------------------------------------------------------
+# Excel export (metrics workbook)
+# ---------------------------------------------------------------------------
+
+# (key, header, description). The README tab is generated from this list so the
+# column descriptions always match the Metrics tab.
+SAAS_METRIC_COLUMNS: list[tuple[str, str, str]] = [
+    ("model", "Model", "Model name."),
+    ("mev", "MEV", "MEV name, shown using the MEV Label mode selected on the dashboard."),
+    ("history_min", "History Min", "Minimum of the historical (Quarter <= 0) MEV values - the data behind the Min-Max lines."),
+    ("history_max", "History Max", "Maximum of the historical (Quarter <= 0) MEV values - the data behind the Min-Max lines."),
+    ("history_mean", "History Mean", "Mean of the historical (Quarter <= 0) MEV values."),
+    ("history_std", "History STD", "Population standard deviation (ddof=0) of the historical MEV values."),
+    ("sevadv_min", "Severely Adverse Min", "Minimum of the projection (Quarter > 0) MEV values for the chosen scenario."),
+    ("sevadv_max", "Severely Adverse Max", "Maximum of the projection (Quarter > 0) MEV values for the chosen scenario."),
+    ("is_min_beyond", "Is Severely Adverse Min Beyond?", "Yes if the projection min is lower than the historical min."),
+    ("is_max_beyond", "Is Severely Adverse Max Beyond?", "Yes if the projection max is greater than the historical max."),
+    ("minmax_interval", "Min-Max Interval", "Historical range: History Max - History Min."),
+    ("time_of_min", "time_of_min", "Date on which the historical minimum value occurs."),
+    ("time_of_max", "time_of_max", "Date on which the historical maximum value occurs."),
+    ("sd_min", "SD_MIN", "(History Mean - Severely Adverse Min) / History STD. Std-distance of the projection min below the historical mean."),
+    ("sd_max", "SD_MAX", "(Severely Adverse Max - History Mean) / History STD. Std-distance of the projection max above the historical mean."),
+    ("history_min_2std", "History_min-2STD", "History Min - 2 x History STD."),
+    ("history_max_2std", "History_max+2STD", "History Max + 2 x History STD."),
+    ("is_min_lt_2std", "is sev_adv min<History_min-2*STD?", "Yes if the projection min is less than History Min - 2 x History STD."),
+    ("is_max_gt_2std", "is sev_adv max>History_max+2*STD?", "Yes if the projection max is greater than History Max + 2 x History STD."),
+]
+
+_BOOLEAN_METRIC_KEYS = {"is_min_beyond", "is_max_beyond", "is_min_lt_2std", "is_max_gt_2std"}
+_DATE_METRIC_KEYS = {"time_of_min", "time_of_max"}
+_FLOAT_METRIC_KEYS = {
+    "history_min", "history_max", "history_mean", "history_std",
+    "sevadv_min", "sevadv_max", "minmax_interval", "sd_min", "sd_max",
+    "history_min_2std", "history_max_2std",
+}
+
+
+def _run_for_filename_prefix(run_for) -> str:
+    """Filesystem-safe prefix derived from the selected Reporting Cycle."""
+    primary_run_for = _primary_run_for_value(run_for)
+    slug = re.sub(r"[^A-Za-z0-9]+", "-", str(primary_run_for or "").strip()).strip("-")
+    return slug or "SAAS"
+
+
+def _excel_to_py_date(value):
+    if value is None:
+        return None
+    if hasattr(value, "to_pydatetime"):
+        try:
+            return value.to_pydatetime()
+        except (TypeError, ValueError):
+            return None
+    return value
+
+
+def _excel_quarter_label(value) -> str:
+    parsed = _excel_to_py_date(value)
+    if parsed is None:
+        return ""
+    quarter = ((parsed.month - 1) // 3) + 1
+    return f"{parsed.year}Q{quarter}"
+
+
+def _compute_saas_metric_record(model_name: str, mev_label: str, subset_rows: list[dict]) -> dict | None:
+    history = [
+        (row.get("Date"), float(row.get("MEV Value")))
+        for row in subset_rows
+        if _finite(row.get("MEV Value")) and _finite(row.get("Quarter")) and float(row.get("Quarter")) <= 0
+    ]
+    projection = [
+        float(row.get("MEV Value"))
+        for row in subset_rows
+        if _finite(row.get("MEV Value")) and _finite(row.get("Quarter")) and float(row.get("Quarter")) > 0
+    ]
+    if not history:
+        return None
+
+    history_values = [value for _, value in history]
+    history_min = min(history_values)
+    history_max = max(history_values)
+    history_mean = statistics.fmean(history_values)
+    history_std = statistics.pstdev(history_values) if len(history_values) > 1 else 0.0
+
+    def _extreme_date(target: float):
+        candidates = sorted(
+            (date_value for date_value, value in history if value == target and date_value is not None),
+            key=lambda value: (getattr(value, "year", 0), getattr(value, "month", 0), getattr(value, "day", 0)),
+        )
+        return _excel_to_py_date(candidates[0]) if candidates else None
+
+    sevadv_min = min(projection) if projection else None
+    sevadv_max = max(projection) if projection else None
+    history_min_2std = history_min - 2 * history_std
+    history_max_2std = history_max + 2 * history_std
+
+    return {
+        "model": model_name,
+        "mev": mev_label,
+        "history_min": history_min,
+        "history_max": history_max,
+        "history_mean": history_mean,
+        "history_std": history_std,
+        "sevadv_min": sevadv_min,
+        "sevadv_max": sevadv_max,
+        "is_min_beyond": sevadv_min is not None and sevadv_min < history_min,
+        "is_max_beyond": sevadv_max is not None and sevadv_max > history_max,
+        "minmax_interval": history_max - history_min,
+        "time_of_min": _extreme_date(history_min),
+        "time_of_max": _extreme_date(history_max),
+        "sd_min": (history_mean - sevadv_min) / history_std if (sevadv_min is not None and history_std) else None,
+        "sd_max": (sevadv_max - history_mean) / history_std if (sevadv_max is not None and history_std) else None,
+        "history_min_2std": history_min_2std,
+        "history_max_2std": history_max_2std,
+        "is_min_lt_2std": sevadv_min is not None and sevadv_min < history_min_2std,
+        "is_max_gt_2std": sevadv_max is not None and sevadv_max > history_max_2std,
+    }
+
+
+def _build_saas_chart_spec(model_name: str, mev_label: str, subset_rows: list[dict]) -> dict:
+    points = sorted(
+        (
+            (float(row.get("Quarter")), row.get("Date"), float(row.get("MEV Value")))
+            for row in subset_rows
+            if _finite(row.get("MEV Value")) and _finite(row.get("Quarter"))
+        ),
+        key=lambda item: item[0],
+    )
+    labels = [_excel_quarter_label(date_value) for _, date_value, _ in points]
+    history = [value if quarter <= 0 else None for quarter, _, value in points]
+    projection = [value if quarter > 0 else None for quarter, _, value in points]
+    history_values = [value for quarter, _, value in points if quarter <= 0]
+    return {
+        "title": f"{model_name} - {mev_label}",
+        "y_title": mev_label,
+        "labels": labels,
+        "history": history,
+        "projection": projection,
+        "hist_min": min(history_values) if history_values else None,
+        "hist_max": max(history_values) if history_values else None,
+    }
+
+
+def _compute_saas_metrics(run_for, segment, selected_models, mev_label_mode, scenario):
+    """Return (metric_rows, chart_specs, primary_run_for) for the chosen scenario."""
+    time_series_df = SAAS_PAGE_DATA.get("mev_time_series")
+    selected_run_fors = _normalize_selected_run_fors(run_for)
+    primary_run_for = selected_run_fors[0] if selected_run_fors else None
+    effective_models = _effective_model_names(segment, selected_models)
+    scenario_value = str(scenario or "").strip().lower()
+
+    if (
+        time_series_df is None
+        or time_series_df.empty
+        or not primary_run_for
+        or not effective_models
+        or not scenario_value
+    ):
+        return [], [], primary_run_for
+
+    scoped_df = time_series_df[
+        (time_series_df["Run For"] == primary_run_for)
+        & (time_series_df["Scenario"].astype(str).str.strip().str.lower() == scenario_value)
+        & (time_series_df["Model Name"].isin(effective_models))
+    ]
+    records = scoped_df.to_dict(orient="records")
+
+    records_by_model: dict[str, list[dict]] = {}
+    for row in records:
+        records_by_model.setdefault(row.get("Model Name"), []).append(row)
+
+    metric_rows: list[dict] = []
+    chart_specs: list[dict] = []
+    for model_name in effective_models:
+        model_records = records_by_model.get(model_name, [])
+        if not model_records:
+            continue
+        transformed_names = _allowed_mev_names_for_model(model_name, "transformed_only")
+        present_names = {str(row.get("MEV Name") or "").strip() for row in model_records if str(row.get("MEV Name") or "").strip()}
+        candidate_names = [name for name in present_names if name in transformed_names] or list(present_names)
+        mev_names = sorted(candidate_names, key=lambda name: _resolve_mev_label(name, mev_label_mode).lower())
+        for mev_name in mev_names:
+            subset = [row for row in model_records if str(row.get("MEV Name") or "").strip() == mev_name]
+            mev_label = _resolve_mev_label(mev_name, mev_label_mode)
+            record = _compute_saas_metric_record(model_name, mev_label, subset)
+            if record is None:
+                continue
+            metric_rows.append(record)
+            chart_specs.append(_build_saas_chart_spec(model_name, mev_label, subset))
+
+    return metric_rows, chart_specs, primary_run_for
+
+
+def _excel_format_bool(value) -> str:
+    if value is None:
+        return ""
+    return "Yes" if value else "No"
+
+
+def _write_saas_excel_readme(ws, meta_lines: list[str]) -> None:
+    title_font = Font(bold=True, size=14)
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor="1D4ED8")
+    wrap = Alignment(wrap_text=True, vertical="top")
+
+    ws["A1"] = "Scenario Analysis as a Service (SAAS) - MEV Metrics"
+    ws["A1"].font = title_font
+
+    row = 3
+    for line in meta_lines:
+        ws.cell(row=row, column=1, value=line)
+        row += 1
+
+    row += 1
+    ws.cell(row=row, column=1, value="Column").font = header_font
+    ws.cell(row=row, column=2, value="Description").font = header_font
+    ws.cell(row=row, column=1).fill = header_fill
+    ws.cell(row=row, column=2).fill = header_fill
+    row += 1
+    for _key, header, description in SAAS_METRIC_COLUMNS:
+        ws.cell(row=row, column=1, value=header)
+        cell = ws.cell(row=row, column=2, value=description)
+        cell.alignment = wrap
+        row += 1
+
+    ws.column_dimensions["A"].width = 34
+    ws.column_dimensions["B"].width = 90
+
+
+def _write_saas_excel_metrics(ws, metric_rows: list[dict]) -> None:
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor="1D4ED8")
+
+    if not metric_rows:
+        ws["A1"] = "No metrics match the current filters and scenario."
+        return
+
+    for col_index, (_key, header, _description) in enumerate(SAAS_METRIC_COLUMNS, start=1):
+        cell = ws.cell(row=1, column=col_index, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(wrap_text=True, vertical="center")
+
+    for row_index, record in enumerate(metric_rows, start=2):
+        for col_index, (key, _header, _description) in enumerate(SAAS_METRIC_COLUMNS, start=1):
+            value = record.get(key)
+            cell = ws.cell(row=row_index, column=col_index)
+            if key in _BOOLEAN_METRIC_KEYS:
+                cell.value = _excel_format_bool(value)
+            elif key in _DATE_METRIC_KEYS:
+                cell.value = value
+                if value is not None:
+                    cell.number_format = "yyyy-mm-dd"
+            elif key in _FLOAT_METRIC_KEYS:
+                cell.value = None if value is None else float(value)
+                cell.number_format = "0.0000"
+            else:
+                cell.value = value
+
+    ws.freeze_panes = "C2"
+    for col_index, (key, header, _description) in enumerate(SAAS_METRIC_COLUMNS, start=1):
+        width = 16
+        if key == "model":
+            width = 18
+        elif key == "mev":
+            width = 30
+        elif len(header) > 22:
+            width = min(34, len(header) + 2)
+        ws.column_dimensions[get_column_letter(col_index)].width = width
+
+
+def _write_saas_excel_charts(ws_charts, ws_data, chart_specs: list[dict], scenario_label: str) -> None:
+    if not chart_specs:
+        ws_charts["A1"] = "No charts match the current filters and scenario."
+        return
+
+    charts_per_row = 2
+    chart_block_cols = 9
+    chart_block_rows = 16
+    data_row = 1
+
+    for index, spec in enumerate(chart_specs):
+        headers = ["Period", "History", f"{scenario_label} (Projection)", "History Min", "History Max"]
+        for col_index, header in enumerate(headers, start=1):
+            ws_data.cell(row=data_row, column=col_index, value=header)
+        first_data_row = data_row + 1
+        for offset, label in enumerate(spec["labels"]):
+            current = first_data_row + offset
+            ws_data.cell(row=current, column=1, value=label)
+            ws_data.cell(row=current, column=2, value=spec["history"][offset])
+            ws_data.cell(row=current, column=3, value=spec["projection"][offset])
+            ws_data.cell(row=current, column=4, value=spec["hist_min"])
+            ws_data.cell(row=current, column=5, value=spec["hist_max"])
+        last_data_row = first_data_row + len(spec["labels"]) - 1
+
+        chart = LineChart()
+        chart.title = spec["title"]
+        chart.style = 2
+        chart.height = 8
+        chart.width = 15
+        chart.y_axis.title = spec.get("y_title") or "MEV Value"
+        chart.x_axis.title = "Period"
+        chart.x_axis.delete = False
+        chart.y_axis.delete = False
+
+        data_ref = Reference(ws_data, min_col=2, max_col=5, min_row=data_row, max_row=max(last_data_row, first_data_row))
+        cats_ref = Reference(ws_data, min_col=1, min_row=first_data_row, max_row=max(last_data_row, first_data_row))
+        chart.add_data(data_ref, titles_from_data=True)
+        chart.set_categories(cats_ref)
+
+        grid_row = index // charts_per_row
+        grid_col = index % charts_per_row
+        anchor_col = get_column_letter(1 + grid_col * chart_block_cols)
+        anchor_row = 1 + grid_row * chart_block_rows
+        ws_charts.add_chart(chart, f"{anchor_col}{anchor_row}")
+
+        data_row = last_data_row + 2
+
+
+def _build_saas_excel_workbook(metric_rows: list[dict], chart_specs: list[dict], meta_lines: list[str], scenario_label: str) -> Workbook:
+    workbook = Workbook()
+    readme_ws = workbook.active
+    readme_ws.title = "README"
+    _write_saas_excel_readme(readme_ws, meta_lines)
+
+    metrics_ws = workbook.create_sheet("Metrics")
+    _write_saas_excel_metrics(metrics_ws, metric_rows)
+
+    charts_ws = workbook.create_sheet("Charts")
+    chart_data_ws = workbook.create_sheet("Chart Data")
+    chart_data_ws.sheet_state = "hidden"
+    _write_saas_excel_charts(charts_ws, chart_data_ws, chart_specs, scenario_label)
+
+    return workbook
+
+
 def register_callbacks(app) -> None:
     """Register SAAS top-bar and chart callbacks."""
 
@@ -1680,17 +2198,12 @@ def register_callbacks(app) -> None:
         Output(layout.FILTER_HELP_ID, "children"),
         Input(layout.SEGMENT_NAME_ID, "value"),
         Input(layout.MODEL_NAME_ID, "value"),
-        Input(layout.RESET_FILTERS_ID, "n_clicks"),
     )
-    def sync_saas_filter_controls(segment, selected_models, _reset_clicks):
+    def sync_saas_filter_controls(segment, selected_models):
         segment_active = _is_segment_active(segment)
         all_options = _model_options_for_filters(None)
         all_option_values = [option["value"] for option in all_options]
         current_values = _normalize_selected_models(selected_models)
-
-        if ctx.triggered_id == layout.RESET_FILTERS_ID:
-            segment_active = False
-            current_values = list(all_option_values)
 
         option_values = set(all_option_values)
         current_values = [value for value in current_values if value in option_values]
@@ -1707,7 +2220,7 @@ def register_callbacks(app) -> None:
             if has_specific_model_selection:
                 help_text = "Specific Models filtering is active. Clear the model selection to use the Segment filter."
             else:
-                help_text = "Choose a segment or specific models. These filters cannot be combined."
+                help_text = ""
 
         return (
             has_specific_model_selection,
@@ -1829,16 +2342,41 @@ def register_callbacks(app) -> None:
     @app.callback(
         Output(layout.COMPARE_AGAINST_ID, "options"),
         Output(layout.COMPARE_AGAINST_ID, "value", allow_duplicate=True),
+        Output(layout.COMPARE_AGAINST_PREV_STORE_ID, "data"),
         Input(layout.RUN_FOR_ID, "value"),
         Input(layout.COMPARE_AGAINST_ID, "value"),
+        Input(layout.REFERENCE_LINES_ID, "value"),
+        State(layout.COMPARE_AGAINST_PREV_STORE_ID, "data"),
         prevent_initial_call=True,
     )
-    def sync_compare_against_selection(run_for_value, compare_against_values):
+    def sync_compare_against_selection(run_for_value, compare_against_values, reference_lines, prev_values):
         selected_run_fors = _normalize_selected_run_fors(run_for_value)
         selected_run_for = selected_run_fors[0] if selected_run_fors else None
         options = _build_compare_against_options(selected_run_for)
-        normalized_values = _normalize_compare_against_values(compare_against_values, selected_run_for)
-        return options, normalized_values
+        option_values = {option["value"] for option in options}
+        triggered_ids = {triggered["prop_id"].split(".")[0] for triggered in ctx.triggered}
+
+        if layout.REFERENCE_LINES_ID in triggered_ids and reference_lines == "monitoring":
+            result = [layout.COMPARE_AGAINST_NONE_VALUE]
+            return options, result, result
+
+        raw_values = [value for value in _normalize_multi_values(compare_against_values) if value in option_values]
+        prev_values = [value for value in _normalize_multi_values(prev_values) if value in option_values]
+
+        if layout.COMPARE_AGAINST_ID in triggered_ids:
+            # Selecting "None" or a reporting cycle should deselect the other -
+            # keep only whichever option was just checked.
+            added = [value for value in raw_values if value not in prev_values]
+            if added:
+                result = [added[-1]]
+            elif raw_values:
+                result = raw_values
+            else:
+                result = [layout.COMPARE_AGAINST_NONE_VALUE]
+        else:
+            result = prev_values if prev_values else [layout.COMPARE_AGAINST_NONE_VALUE]
+
+        return options, result, result
 
     @app.callback(
         Output(layout.COMPARE_AGAINST_TOGGLE_ID, "children"),
@@ -2171,47 +2709,157 @@ def register_callbacks(app) -> None:
         return base_class
 
     @app.callback(
-        Output(layout.RUN_FOR_ID, "value"),
-        Output(layout.COMPARE_AGAINST_ID, "value"),
-        Output(layout.SEGMENT_NAME_ID, "value"),
-        Output(layout.SUBNAV_VIEW_ID, "value"),
-        Output(layout.REFERENCE_LINES_ID, "value"),
-        Output(layout.MEV_LABEL_MODE_ID, "value"),
-        Output(layout.HISTORICAL_STATS_ID, "value"),
-        Input(layout.RESET_FILTERS_ID, "n_clicks"),
+        Output(layout.DOWNLOAD_DATA_ID, "data"),
+        Input(layout.DOWNLOAD_REPORT_ID, "n_clicks"),
+        State(layout.APPLIED_FILTERS_STORE_ID, "data"),
         prevent_initial_call=True,
     )
-    def reset_saas_filters(_reset_clicks):
-        return (
-            layout.DEFAULT_RUN_FOR_VALUE,
-            list(layout.DEFAULT_COMPARE_AGAINST_VALUES),
-            layout.DEFAULT_SEGMENT,
-            layout.DEFAULT_SUBNAV_VIEW,
-            layout.DEFAULT_REFERENCE_LINES,
-            layout.DEFAULT_MEV_LABEL_MODE,
-            layout.DEFAULT_HISTORICAL_STATS_VALUE,
+    def download_saas_report(_n_clicks, applied):
+        applied = applied or {}
+        run_for = applied.get("run_for")
+        compare_against = applied.get("compare_against")
+        segment = applied.get("segment")
+        selected_models = applied.get("selected_models")
+        snapshot_period = applied.get("snapshot_period")
+        reference_lines = applied.get("reference_lines")
+        mev_label_mode = applied.get("mev_label_mode")
+        sections = _build_report_figures(
+            run_for, compare_against, segment, selected_models,
+            snapshot_period, reference_lines, mev_label_mode,
         )
+
+        effective_models = _effective_model_names(segment, selected_models)
+        if _is_segment_active(segment):
+            scope_label = f"Segment: {layout.format_segment_label(segment)}"
+        elif effective_models:
+            scope_label = f"Models: {', '.join(effective_models)}"
+        else:
+            scope_label = "Models: None selected"
+
+        meta_lines = [
+            f"Reporting Cycle: {_run_for_meta_label(run_for)}",
+            f"Compare To: {_compare_against_toggle_label(compare_against, _primary_run_for_value(run_for))}",
+            scope_label,
+            f"Snapshot Period: {subnav_view_labels.get(_normalize_snapshot_period(snapshot_period), snapshot_period)}",
+            f"Reference Lines: {reference_line_labels.get(reference_lines or layout.DEFAULT_REFERENCE_LINES, reference_lines)}",
+            f"MEV Label: {mev_label_mode_labels.get(_normalize_mev_label_mode(mev_label_mode), mev_label_mode)}",
+        ]
+
+        html_doc = _build_saas_report_html(sections, meta_lines)
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        prefix = _run_for_filename_prefix(run_for)
+        return dcc.send_string(html_doc, filename=f"{prefix}-saas-charts-{timestamp}.html")
+
+    @app.callback(
+        Output(layout.EXCEL_MODAL_ID, "className"),
+        Input(layout.EXCEL_OPEN_ID, "n_clicks"),
+        Input(layout.EXCEL_CANCEL_ID, "n_clicks"),
+        Input(layout.EXCEL_GENERATE_ID, "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def toggle_excel_modal(_open_clicks, _cancel_clicks, _generate_clicks):
+        if ctx.triggered_id == layout.EXCEL_OPEN_ID:
+            return "saas-modal-overlay is-open"
+        return "saas-modal-overlay"
+
+    @app.callback(
+        Output(layout.EXCEL_DOWNLOAD_DATA_ID, "data"),
+        Input(layout.EXCEL_GENERATE_ID, "n_clicks"),
+        State(layout.EXCEL_SCENARIO_ID, "value"),
+        State(layout.RUN_FOR_ID, "value"),
+        State(layout.SEGMENT_NAME_ID, "value"),
+        State(layout.MODEL_NAME_ID, "value"),
+        State(layout.MEV_LABEL_MODE_ID, "value"),
+        prevent_initial_call=True,
+    )
+    def download_saas_excel(_n_clicks, scenario, run_for, segment, selected_models, mev_label_mode):
+        metric_rows, chart_specs, primary_run_for = _compute_saas_metrics(
+            run_for, segment, selected_models, mev_label_mode, scenario,
+        )
+        scenario_value = str(scenario or "").strip().lower()
+        scenario_label = SAAS_SCENARIO_LABEL_MAP.get(scenario_value, scenario_value.replace("_", " ").title() or "—")
+        effective_models = _effective_model_names(segment, selected_models)
+        if _is_segment_active(segment):
+            scope_label = f"Segment: {layout.format_segment_label(segment)}"
+        elif effective_models:
+            scope_label = f"Models: {', '.join(effective_models)}"
+        else:
+            scope_label = "Models: None selected"
+
+        meta_lines = [
+            f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+            f"Reporting Cycle: {primary_run_for or '—'}",
+            f"Scenario (Severely Adverse): {scenario_label}",
+            scope_label,
+            f"MEV Label: {mev_label_mode_labels.get(_normalize_mev_label_mode(mev_label_mode), mev_label_mode)}",
+            "History = Quarter <= 0; Projection = Quarter > 0. Metrics use the primary Reporting Cycle and the full history + projection (independent of the on-screen Snapshot Period). Standard deviation is population (ddof=0).",
+        ]
+
+        workbook = _build_saas_excel_workbook(metric_rows, chart_specs, meta_lines, scenario_label)
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        prefix = _run_for_filename_prefix(run_for)
+        return dcc.send_bytes(lambda buffer: workbook.save(buffer), filename=f"{prefix}-saas-metrics-{timestamp}.xlsx")
+
+    @app.callback(
+        Output(layout.APPLIED_FILTERS_STORE_ID, "data"),
+        Input(layout.APPLY_FILTERS_ID, "n_clicks"),
+        State(layout.RUN_FOR_ID, "value"),
+        State(layout.COMPARE_AGAINST_ID, "value"),
+        State(layout.SEGMENT_NAME_ID, "value"),
+        State(layout.MODEL_NAME_ID, "value"),
+        State(layout.SUBNAV_VIEW_ID, "value"),
+        State(layout.REFERENCE_LINES_ID, "value"),
+        State(layout.MEV_LABEL_MODE_ID, "value"),
+        State(layout.HISTORICAL_STATS_ID, "value"),
+        prevent_initial_call=True,
+    )
+    def apply_saas_filters(
+        _n_clicks,
+        run_for,
+        compare_against,
+        segment,
+        selected_models,
+        snapshot_period,
+        reference_lines,
+        mev_label_mode,
+        show_historical_statistics_values,
+    ):
+        """Snapshot the current top filters so the content renders only on Apply."""
+        return {
+            "run_for": run_for,
+            "compare_against": compare_against,
+            "segment": segment,
+            "selected_models": selected_models,
+            "snapshot_period": snapshot_period,
+            "reference_lines": reference_lines,
+            "mev_label_mode": mev_label_mode,
+            "historical_stats": show_historical_statistics_values,
+        }
 
     @app.callback(
         Output(layout.SUBNAV_MODELS_ID, "children"),
-        Input(layout.SEGMENT_NAME_ID, "value"),
-        Input(layout.MODEL_NAME_ID, "value"),
+        Input(layout.APPLIED_FILTERS_STORE_ID, "data"),
+        prevent_initial_call=True,
     )
-    def render_saas_subnav_models(segment, selected_models):
-        return _build_subnav_models(segment, selected_models, segment_labels)
+    def render_saas_subnav_models(applied):
+        applied = applied or {}
+        return _build_subnav_models(applied.get("segment"), applied.get("selected_models"))
 
     @app.callback(
         Output(layout.MEV_MODEL_PANELS_ID, "children"),
-        Input(layout.RUN_FOR_ID, "value"),
-        Input(layout.COMPARE_AGAINST_ID, "value"),
-        Input(layout.SEGMENT_NAME_ID, "value"),
-        Input(layout.MODEL_NAME_ID, "value"),
-        Input(layout.SUBNAV_VIEW_ID, "value"),
-        Input(layout.REFERENCE_LINES_ID, "value"),
-        Input(layout.MEV_LABEL_MODE_ID, "value"),
-        Input(layout.HISTORICAL_STATS_ID, "value"),
+        Input(layout.APPLIED_FILTERS_STORE_ID, "data"),
+        prevent_initial_call=True,
     )
-    def render_saas_mev_chart(run_for, compare_against, segment, selected_models, snapshot_period, reference_lines, mev_label_mode, show_historical_statistics_values):
+    def render_saas_mev_chart(applied):
+        applied = applied or {}
+        run_for = applied.get("run_for")
+        compare_against = applied.get("compare_against")
+        segment = applied.get("segment")
+        selected_models = applied.get("selected_models")
+        snapshot_period = applied.get("snapshot_period")
+        reference_lines = applied.get("reference_lines")
+        mev_label_mode = applied.get("mev_label_mode")
+        show_historical_statistics_values = applied.get("historical_stats")
         selected_run_fors = _normalize_selected_run_fors(run_for)
         scoped_run_fors = _scoped_run_for_values(run_for, compare_against)
         effective_models = _effective_model_names(segment, selected_models)
@@ -2275,19 +2923,22 @@ def register_callbacks(app) -> None:
         Input({"type": layout.MODEL_DATE_RANGE_WINDOW_TYPE, "model": MATCH}, "value"),
         Input({"type": layout.MODEL_DATE_RANGE_FROM_TYPE, "model": MATCH}, "value"),
         Input({"type": layout.MODEL_DATE_RANGE_TO_TYPE, "model": MATCH}, "value"),
-        State(layout.RUN_FOR_ID, "value"),
-        State(layout.COMPARE_AGAINST_ID, "value"),
-        State(layout.SUBNAV_VIEW_ID, "value"),
-        State(layout.REFERENCE_LINES_ID, "value"),
-        State(layout.MEV_LABEL_MODE_ID, "value"),
-        State(layout.HISTORICAL_STATS_ID, "value"),
+        State(layout.APPLIED_FILTERS_STORE_ID, "data"),
         prevent_initial_call=True,
     )
-    def update_model_mev_chart_controls(selected_mev_mode, selected_scenario, selected_mevs_multi, selected_mev_single, window_value, from_value, to_value, run_for, compare_against, snapshot_period, reference_lines, mev_label_mode, show_historical_statistics_values):
+    def update_model_mev_chart_controls(selected_mev_mode, selected_scenario, selected_mevs_multi, selected_mev_single, window_value, from_value, to_value, applied):
         model_name = ctx.triggered_id["model"]
         time_series_df = SAAS_PAGE_DATA.get("mev_time_series")
         if time_series_df is None or time_series_df.empty:
             return no_update, no_update
+
+        applied = applied or {}
+        run_for = applied.get("run_for")
+        compare_against = applied.get("compare_against")
+        snapshot_period = applied.get("snapshot_period")
+        reference_lines = applied.get("reference_lines")
+        mev_label_mode = applied.get("mev_label_mode")
+        show_historical_statistics_values = applied.get("historical_stats")
 
         selected_run_fors = _normalize_selected_run_fors(run_for)
         scoped_run_fors = _scoped_run_for_values(run_for, compare_against)
