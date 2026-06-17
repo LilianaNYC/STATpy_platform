@@ -419,6 +419,7 @@ tr:last-child td{border-bottom:none}
 .saas-getting-started-steps{margin:14px 0 0;padding-left:22px;display:flex;flex-direction:column;gap:9px;max-width:90ch}
 .saas-getting-started-steps li{font-size:12.5px;line-height:1.55;color:#334155}
 .saas-getting-started-steps li strong{color:var(--navy)}
+.saas-getting-started-note{display:block;margin-top:4px;font-size:11.5px;line-height:1.5;color:#92400e;background:#fffbeb;border-left:3px solid #f59e0b;border-radius:4px;padding:5px 9px}
 .pd-default-rate-trend-section{margin-top:0}
 .pd-default-rate-trend-chart{min-height:460px}
 .pd-calibration-trend-chart{min-height:320px}

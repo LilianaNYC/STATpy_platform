@@ -668,6 +668,12 @@ def build_apply_prompt() -> html.Div:
                         html.Strong("Set the view options. "),
                         "Adjust Snapshot Period (History, Projection, or History & Projection), Reference Lines "
                         "(None, Min-Max, or Monitoring), and the MEV Label convention.",
+                        html.Span(
+                            "Note: the Monitoring reference lines describe a single reporting cycle, so they "
+                            "can't be combined with Compare To. To use Monitoring, set Compare To back to "
+                            "“None”; to compare cycles, choose None or Min-Max reference lines instead.",
+                            className="saas-getting-started-note",
+                        ),
                     ]),
                     html.Li([
                         html.Strong("Click “Apply filters”. "),
@@ -681,6 +687,10 @@ def build_apply_prompt() -> html.Div:
                         html.Strong("Export your results. "),
                         "Use “Export Charts (PDF/HTML)” for a shareable visual record, or “Scenario Metrics (Excel)” "
                         "to download a scenario-specific workbook (README, metrics and charts).",
+                    ]),
+                    html.Li([
+                        html.Strong("Start over. "),
+                        "Refresh the page at any time to clear the charts and return to this starting view.",
                     ]),
                 ],
             ),
@@ -697,7 +707,7 @@ def _build_chart_canvas() -> html.Section:
                 className="pd-performance-note",
                 children=[
                     html.Strong("Executive summary: "),
-                    "The Scenario Analysis as a Service (SAAS) dashboard is a self-service tool for reviewing how the macro-economic variables (MEVs) that drive our risk models behave under stress scenarios, across reporting cycles such as CCAR 2026 and CCAR 2025. It brings the model inputs, their history, and their forward projections into one place so reviewers can judge whether a scenario's projections are credible relative to what we've actually observed.",
+                    "The Scenario Analysis as a Service (SAAS) dashboard is a self-service tool for reviewing the macro-economic variables (MEVs) that drive credit risk models under stress scenarios, across reporting cycles. By bringing each MEV's history and forward projections together, it helps users understand the drivers behind the models and sense-check the scenario projections.",
                 ],
             ),
             html.Div(

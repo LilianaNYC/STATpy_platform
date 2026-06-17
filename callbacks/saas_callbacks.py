@@ -4,11 +4,17 @@ from __future__ import annotations
 
 from datetime import datetime
 from html import escape as html_escape
+import math
 import re
 import statistics
 
 from openpyxl import Workbook
 from openpyxl.chart import LineChart, Reference
+from openpyxl.chart.layout import Layout, ManualLayout
+from openpyxl.chart.shapes import GraphicalProperties
+from openpyxl.chart.text import RichText
+from openpyxl.drawing.line import LineProperties
+from openpyxl.drawing.text import CharacterProperties, Paragraph, ParagraphProperties, RichTextProperties
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
@@ -266,16 +272,6 @@ def _effective_model_names(segment: str | None, selected_models) -> list[str]:
     return []
 
 
-def _multi_toggle_label(selected_values: list[str], all_values: list[str], *, empty_label: str, all_label: str, unit_label: str) -> str:
-    if not selected_values:
-        return empty_label
-    if all_values and set(selected_values) == set(all_values):
-        return all_label
-    if len(selected_values) == 1:
-        return selected_values[0]
-    return f"{len(selected_values)} {unit_label}"
-
-
 def _run_for_meta_label(selected_run_fors) -> str:
     normalized_values = _normalize_selected_run_fors(selected_run_fors)
     if not normalized_values:
@@ -286,13 +282,6 @@ def _run_for_meta_label(selected_run_fors) -> str:
     if len(normalized_values) == 1:
         return normalized_values[0]
     return ", ".join(normalized_values)
-
-
-def _run_for_toggle_label(selected_run_fors, all_run_for_values: list[str]) -> str:
-    normalized_values = _normalize_selected_run_fors(selected_run_fors)
-    if not normalized_values:
-        return "Select Reporting Cycle"
-    return normalized_values[0]
 
 
 def _build_compare_against_options(selected_run_for: str | None) -> list[dict]:
@@ -523,11 +512,6 @@ def _single_select_option_classes(value: str | None, option_ids: list[dict]) -> 
         "single-select-option is-selected" if option_id["value"] == value else "single-select-option"
         for option_id in option_ids
     ]
-
-
-def _single_select_label(value: str | None, options: list[dict], default_label: str = "Select") -> str:
-    labels = {option["value"]: option["label"] for option in options}
-    return labels.get(value, value or default_label)
 
 
 def _toggle_menu_class(current_class: str | None, *, base_class: str) -> str:
@@ -922,23 +906,6 @@ def _scenario_toggle_label(selected_scenarios, scenario_options: list[dict]) -> 
     if len(normalized_scenarios) == 1:
         return label_by_value.get(normalized_scenarios[0], normalized_scenarios[0])
     return f"{len(normalized_scenarios)} scenarios selected"
-
-
-def _scenario_meta_label(selected_scenarios, scenario_options: list[dict]) -> str:
-    normalized_scenarios = _normalize_selected_scenarios(selected_scenarios, scenario_options)
-    if not normalized_scenarios:
-        return "No scenarios selected"
-
-    all_values = [option["value"] for option in scenario_options if option.get("value")]
-    if all_values and set(normalized_scenarios) == set(all_values):
-        return "All"
-
-    selected_labels = [
-        option["label"]
-        for option in scenario_options
-        if option.get("value") in normalized_scenarios
-    ]
-    return ", ".join(selected_labels)
 
 
 def _single_selected_scenario(selected_scenarios, scenario_options: list[dict]) -> str:
@@ -1833,6 +1800,7 @@ def _build_saas_report_html(sections: list[tuple[str, object]], meta_lines: list
 # column descriptions always match the Metrics tab.
 SAAS_METRIC_COLUMNS: list[tuple[str, str, str]] = [
     ("model", "Model", "Model name."),
+    ("mev_type", "MEV Type", "Whether the MEV is a Raw or a Transformed variable."),
     ("mev", "MEV", "MEV name, shown using the MEV Label mode selected on the dashboard."),
     ("history_min", "History Min", "Minimum of the historical (Quarter <= 0) MEV values - the data behind the Min-Max lines."),
     ("history_max", "History Max", "Maximum of the historical (Quarter <= 0) MEV values - the data behind the Min-Max lines."),
@@ -1842,22 +1810,20 @@ SAAS_METRIC_COLUMNS: list[tuple[str, str, str]] = [
     ("sevadv_max", "Severely Adverse Max", "Maximum of the projection (Quarter > 0) MEV values for the chosen scenario."),
     ("is_min_beyond", "Is Severely Adverse Min Beyond?", "Yes if the projection min is lower than the historical min."),
     ("is_max_beyond", "Is Severely Adverse Max Beyond?", "Yes if the projection max is greater than the historical max."),
-    ("minmax_interval", "Min-Max Interval", "Historical range: History Max - History Min."),
-    ("time_of_min", "time_of_min", "Date on which the historical minimum value occurs."),
-    ("time_of_max", "time_of_max", "Date on which the historical maximum value occurs."),
-    ("sd_min", "SD_MIN", "(History Mean - Severely Adverse Min) / History STD. Std-distance of the projection min below the historical mean."),
-    ("sd_max", "SD_MAX", "(Severely Adverse Max - History Mean) / History STD. Std-distance of the projection max above the historical mean."),
-    ("history_min_2std", "History_min-2STD", "History Min - 2 x History STD."),
-    ("history_max_2std", "History_max+2STD", "History Max + 2 x History STD."),
-    ("is_min_lt_2std", "is sev_adv min<History_min-2*STD?", "Yes if the projection min is less than History Min - 2 x History STD."),
-    ("is_max_gt_2std", "is sev_adv max>History_max+2*STD?", "Yes if the projection max is greater than History Max + 2 x History STD."),
+    ("minmax_daterange", "Historical Min-Max Date Range", "Date range spanned by the historical (Quarter <= 0) data: earliest historical date to latest historical date."),
+    ("time_of_min", "Date of Min", "Date on which the historical minimum value occurs."),
+    ("time_of_max", "Date of Max", "Date on which the historical maximum value occurs."),
+    ("history_min_2std", "History Min - 2 STD", "History Min - 2 x History STD."),
+    ("history_max_2std", "History Max + 2 STD", "History Max + 2 x History STD."),
+    ("is_min_lt_2std", "Is Severely Adverse Min < History Min - 2 STD?", "Yes if the projection min is less than History Min - 2 x History STD."),
+    ("is_max_gt_2std", "Is Severely Adverse Max > History Max + 2 STD?", "Yes if the projection max is greater than History Max + 2 x History STD."),
 ]
 
 _BOOLEAN_METRIC_KEYS = {"is_min_beyond", "is_max_beyond", "is_min_lt_2std", "is_max_gt_2std"}
 _DATE_METRIC_KEYS = {"time_of_min", "time_of_max"}
 _FLOAT_METRIC_KEYS = {
     "history_min", "history_max", "history_mean", "history_std",
-    "sevadv_min", "sevadv_max", "minmax_interval", "sd_min", "sd_max",
+    "sevadv_min", "sevadv_max",
     "history_min_2std", "history_max_2std",
 }
 
@@ -1886,6 +1852,17 @@ def _excel_quarter_label(value) -> str:
         return ""
     quarter = ((parsed.month - 1) // 3) + 1
     return f"{parsed.year}Q{quarter}"
+
+
+def _excel_mev_type_label(mev_name: str) -> str:
+    mev_types = _mev_types_for_name(mev_name)
+    if mev_types == {"raw"}:
+        return "Raw"
+    if mev_types == {"transformed"}:
+        return "Transformed"
+    if mev_types:
+        return "Raw / Transformed"
+    return "—"
 
 
 def _compute_saas_metric_record(model_name: str, mev_label: str, subset_rows: list[dict]) -> dict | None:
@@ -1920,6 +1897,20 @@ def _compute_saas_metric_record(model_name: str, mev_label: str, subset_rows: li
     history_min_2std = history_min - 2 * history_std
     history_max_2std = history_max + 2 * history_std
 
+    time_of_min = _extreme_date(history_min)
+    time_of_max = _extreme_date(history_max)
+
+    # Full date span of the historical (Quarter <= 0) data: earliest to latest date.
+    history_dates = sorted(
+        _excel_to_py_date(date_value) for date_value, _ in history if date_value is not None
+    )
+    if len(history_dates) >= 2:
+        minmax_daterange = f"{history_dates[0]:%Y-%m-%d} to {history_dates[-1]:%Y-%m-%d}"
+    elif len(history_dates) == 1:
+        minmax_daterange = f"{history_dates[0]:%Y-%m-%d}"
+    else:
+        minmax_daterange = ""
+
     return {
         "model": model_name,
         "mev": mev_label,
@@ -1931,11 +1922,9 @@ def _compute_saas_metric_record(model_name: str, mev_label: str, subset_rows: li
         "sevadv_max": sevadv_max,
         "is_min_beyond": sevadv_min is not None and sevadv_min < history_min,
         "is_max_beyond": sevadv_max is not None and sevadv_max > history_max,
-        "minmax_interval": history_max - history_min,
-        "time_of_min": _extreme_date(history_min),
-        "time_of_max": _extreme_date(history_max),
-        "sd_min": (history_mean - sevadv_min) / history_std if (sevadv_min is not None and history_std) else None,
-        "sd_max": (sevadv_max - history_mean) / history_std if (sevadv_max is not None and history_std) else None,
+        "minmax_daterange": minmax_daterange,
+        "time_of_min": time_of_min,
+        "time_of_max": time_of_max,
         "history_min_2std": history_min_2std,
         "history_max_2std": history_max_2std,
         "is_min_lt_2std": sevadv_min is not None and sevadv_min < history_min_2std,
@@ -1943,7 +1932,7 @@ def _compute_saas_metric_record(model_name: str, mev_label: str, subset_rows: li
     }
 
 
-def _build_saas_chart_spec(model_name: str, mev_label: str, subset_rows: list[dict]) -> dict:
+def _build_saas_chart_spec(model_name: str, mev_label: str, subset_rows: list[dict], *, mev_type: str | None = None) -> dict:
     points = sorted(
         (
             (float(row.get("Quarter")), row.get("Date"), float(row.get("MEV Value")))
@@ -1956,8 +1945,11 @@ def _build_saas_chart_spec(model_name: str, mev_label: str, subset_rows: list[di
     history = [value if quarter <= 0 else None for quarter, _, value in points]
     projection = [value if quarter > 0 else None for quarter, _, value in points]
     history_values = [value for quarter, _, value in points if quarter <= 0]
+    type_suffix = f" [{mev_type}]" if mev_type and mev_type != "—" else ""
     return {
-        "title": f"{model_name} - {mev_label}",
+        "model": model_name,
+        "mev_type": mev_type or "",
+        "title": f"{mev_label}{type_suffix}",
         "y_title": mev_label,
         "labels": labels,
         "history": history,
@@ -2001,18 +1993,23 @@ def _compute_saas_metrics(run_for, segment, selected_models, mev_label_mode, sce
         model_records = records_by_model.get(model_name, [])
         if not model_records:
             continue
-        transformed_names = _allowed_mev_names_for_model(model_name, "transformed_only")
         present_names = {str(row.get("MEV Name") or "").strip() for row in model_records if str(row.get("MEV Name") or "").strip()}
-        candidate_names = [name for name in present_names if name in transformed_names] or list(present_names)
-        mev_names = sorted(candidate_names, key=lambda name: _resolve_mev_label(name, mev_label_mode).lower())
+        # Include every MEV available for the model (both Raw and Transformed),
+        # grouped by type then ordered by label.
+        mev_names = sorted(
+            present_names,
+            key=lambda name: (_excel_mev_type_label(name), _resolve_mev_label(name, mev_label_mode).lower()),
+        )
         for mev_name in mev_names:
             subset = [row for row in model_records if str(row.get("MEV Name") or "").strip() == mev_name]
             mev_label = _resolve_mev_label(mev_name, mev_label_mode)
+            mev_type = _excel_mev_type_label(mev_name)
             record = _compute_saas_metric_record(model_name, mev_label, subset)
             if record is None:
                 continue
+            record["mev_type"] = mev_type
             metric_rows.append(record)
-            chart_specs.append(_build_saas_chart_spec(model_name, mev_label, subset))
+            chart_specs.append(_build_saas_chart_spec(model_name, mev_label, subset, mev_type=mev_type))
 
     return metric_rows, chart_specs, primary_run_for
 
@@ -2083,56 +2080,195 @@ def _write_saas_excel_metrics(ws, metric_rows: list[dict]) -> None:
             else:
                 cell.value = value
 
-    ws.freeze_panes = "C2"
+    ws.freeze_panes = "D2"
     for col_index, (key, header, _description) in enumerate(SAAS_METRIC_COLUMNS, start=1):
         width = 16
         if key == "model":
             width = 18
+        elif key == "mev_type":
+            width = 16
         elif key == "mev":
             width = 30
+        elif key == "minmax_daterange":
+            width = 26
         elif len(header) > 22:
-            width = min(34, len(header) + 2)
+            width = min(46, len(header) + 2)
         ws.column_dimensions[get_column_letter(col_index)].width = width
 
 
-def _write_saas_excel_charts(ws_charts, ws_data, chart_specs: list[dict], scenario_label: str) -> None:
-    if not chart_specs:
-        ws_charts["A1"] = "No charts match the current filters and scenario."
-        return
+# Series styling to mirror the dashboard's "Min-Max lines" presentation:
+# History (solid navy), Projection (dashed faded blue), Historical Min / Max
+# (dashed teal). Order matches the data columns added to each chart.
+_SAAS_EXCEL_SERIES_STYLES = [
+    ("1E3A8A", 28575, None),      # History - solid navy, ~2.25pt
+    ("93C5FD", 22225, "dash"),    # Projection - dashed faded blue, ~1.75pt
+    ("0F766E", 19050, "dash"),    # Historical Min - dashed teal, ~1.5pt
+    ("0F766E", 19050, "dash"),    # Historical Max - dashed teal, ~1.5pt
+]
 
-    charts_per_row = 2
+_EXCEL_INVALID_SHEET_CHARS = set("[]:*?/\\")
+
+
+def _excel_safe_sheet_title(name: str, used: set[str]) -> str:
+    cleaned = "".join("_" if ch in _EXCEL_INVALID_SHEET_CHARS else ch for ch in str(name or "")).strip()
+    cleaned = cleaned[:31] or "Model"
+    candidate = cleaned
+    counter = 1
+    while candidate.lower() in used:
+        suffix = f"_{counter}"
+        candidate = cleaned[: 31 - len(suffix)] + suffix
+        counter += 1
+    used.add(candidate.lower())
+    return candidate
+
+
+def _style_saas_excel_chart(chart: LineChart) -> None:
+    for series, (color, width, dash) in zip(chart.series, _SAAS_EXCEL_SERIES_STYLES):
+        line = LineProperties(w=width, solidFill=color)
+        if dash:
+            line.prstDash = dash
+        graphical_properties = GraphicalProperties()
+        graphical_properties.line = line
+        series.graphicalProperties = graphical_properties
+        series.smooth = False
+
+
+def _saas_excel_axis_text(rotation: int = 0, size: int = 900) -> RichText:
+    """Axis text properties: small font, optional rotation (degrees)."""
+    return RichText(
+        bodyPr=RichTextProperties(rot=int(rotation * -60000), vert="horz"),
+        p=[Paragraph(pPr=ParagraphProperties(defRPr=CharacterProperties(sz=size)), endParaRPr=CharacterProperties(sz=size))],
+    )
+
+
+def _saas_excel_nice_step(value_range: float, target_ticks: int = 5) -> tuple[float, str]:
+    """Pick a clean y-axis major unit (~target_ticks intervals) and a matching
+    number format, using the 1/2/5 x 10^k "nice numbers" rule."""
+    if value_range is None or value_range <= 0:
+        return 1.0, "0.00"
+    raw = value_range / target_ticks
+    exponent = math.floor(math.log10(raw))
+    normalized = raw / (10 ** exponent)
+    if normalized < 1.5:
+        nice, step_exponent = 1, exponent
+    elif normalized < 3:
+        nice, step_exponent = 2, exponent
+    elif normalized < 7:
+        nice, step_exponent = 5, exponent
+    else:
+        nice, step_exponent = 1, exponent + 1  # 10 x 10^exponent
+    step = nice * (10 ** step_exponent)
+    decimals = max(0, -step_exponent)
+    number_format = "0" if decimals == 0 else "0." + "0" * decimals
+    return step, number_format
+
+
+def _write_saas_model_charts(ws_charts, ws_data, specs: list[dict], scenario_label: str, data_row: int) -> int:
+    # Three charts per row; block size leaves a gap so titles, legends and tick
+    # labels of adjacent charts never overlap.
+    charts_per_row = 3
     chart_block_cols = 9
-    chart_block_rows = 16
-    data_row = 1
+    chart_block_rows = 22
 
-    for index, spec in enumerate(chart_specs):
-        headers = ["Period", "History", f"{scenario_label} (Projection)", "History Min", "History Max"]
+    for index, spec in enumerate(specs):
+        history = spec["history"]
+        projection = spec["projection"]
+
+        mev_name = spec.get("y_title") or spec.get("title") or ""
+        headers = ["MEV", "Period", "History", f"{scenario_label} (Projection)", "History Min", "History Max"]
         for col_index, header in enumerate(headers, start=1):
             ws_data.cell(row=data_row, column=col_index, value=header)
         first_data_row = data_row + 1
         for offset, label in enumerate(spec["labels"]):
             current = first_data_row + offset
-            ws_data.cell(row=current, column=1, value=label)
-            ws_data.cell(row=current, column=2, value=spec["history"][offset])
-            ws_data.cell(row=current, column=3, value=spec["projection"][offset])
-            ws_data.cell(row=current, column=4, value=spec["hist_min"])
-            ws_data.cell(row=current, column=5, value=spec["hist_max"])
-        last_data_row = first_data_row + len(spec["labels"]) - 1
+            ws_data.cell(row=current, column=1, value=mev_name)
+            ws_data.cell(row=current, column=2, value=label)
+            ws_data.cell(row=current, column=3, value=history[offset])
+            ws_data.cell(row=current, column=4, value=projection[offset])
+            ws_data.cell(row=current, column=5, value=spec["hist_min"])
+            ws_data.cell(row=current, column=6, value=spec["hist_max"])
+        last_data_row = max(first_data_row, first_data_row + len(spec["labels"]) - 1)
 
         chart = LineChart()
         chart.title = spec["title"]
         chart.style = 2
-        chart.height = 8
+        chart.height = 9
         chart.width = 15
         chart.y_axis.title = spec.get("y_title") or "MEV Value"
-        chart.x_axis.title = "Period"
+        chart.x_axis.title = None  # quarter labels are self-explanatory; frees space for the bottom legend
         chart.x_axis.delete = False
         chart.y_axis.delete = False
+        chart.y_axis.majorGridlines = None  # remove horizontal gridlines
 
-        data_ref = Reference(ws_data, min_col=2, max_col=5, min_row=data_row, max_row=max(last_data_row, first_data_row))
-        cats_ref = Reference(ws_data, min_col=1, min_row=first_data_row, max_row=max(last_data_row, first_data_row))
+        # Scale the y-axis so the historical Min/Max band fills the central half of
+        # the plot: the Historical Min line sits at ~25% of the height and the
+        # Historical Max at ~75% (min - 0.5*band .. max + 0.5*band). The axis is
+        # widened to include any projection excursions so nothing is clipped; the
+        # baseline (x-axis) sits at the axis minimum.
+        plotted = [value for value in history if value is not None]
+        plotted += [value for value in projection if value is not None]
+        hist_low = spec.get("hist_min")
+        hist_high = spec.get("hist_max")
+        if hist_low is not None:
+            plotted.append(hist_low)
+        if hist_high is not None:
+            plotted.append(hist_high)
+        if plotted:
+            data_min = min(plotted)
+            data_max = max(plotted)
+            if hist_low is not None and hist_high is not None and hist_high > hist_low:
+                band = hist_high - hist_low
+                axis_min = min(hist_low - 0.5 * band, data_min)
+                axis_max = max(hist_high + 0.5 * band, data_max)
+            else:
+                pad = (data_max - data_min) * 0.1 or 1.0
+                axis_min = data_min - pad
+                axis_max = data_max + pad
+            chart.y_axis.scaling.min = axis_min
+            chart.y_axis.scaling.max = axis_max
+            chart.y_axis.crosses = "min"
+
+            # Clean tick frequency (~8 intervals) and matching rounding for labels.
+            major_unit, axis_number_format = _saas_excel_nice_step(axis_max - axis_min, target_ticks=8)
+            chart.y_axis.majorUnit = major_unit
+            chart.y_axis.numFmt = axis_number_format
+            chart.y_axis.txPr = _saas_excel_axis_text(rotation=0)
+
+        # Thin out and rotate the period labels so they don't crowd each other.
+        point_count = len(spec["labels"])
+        label_skip = max(1, round(point_count / 12))
+        chart.x_axis.tickLblSkip = label_skip
+        chart.x_axis.tickMarkSkip = label_skip
+        chart.x_axis.txPr = _saas_excel_axis_text(rotation=45)
+        # Keep the period labels at the bottom of the plot rather than at the y=0
+        # crossing (where they would sit in the middle of the data for MEVs that go
+        # negative).
+        chart.x_axis.tickLblPos = "low"
+
+        # Pin the plot to the upper area and the legend just below it, with only a
+        # small gap for the rotated x-axis labels. (chart.layout drives the inner
+        # plot area; openpyxl copies it onto plot_area on write.)
+        chart.layout = Layout(
+            manualLayout=ManualLayout(
+                layoutTarget="inner", xMode="edge", yMode="edge",
+                x=0.10, y=0.08, w=0.86, h=0.64,
+            )
+        )
+        if chart.legend is not None:
+            chart.legend.position = "b"
+            chart.legend.overlay = False
+            chart.legend.layout = Layout(
+                manualLayout=ManualLayout(
+                    xMode="edge", yMode="edge",
+                    x=0.10, y=0.84, w=0.86, h=0.10,
+                )
+            )
+
+        data_ref = Reference(ws_data, min_col=3, max_col=6, min_row=data_row, max_row=last_data_row)
+        cats_ref = Reference(ws_data, min_col=2, min_row=first_data_row, max_row=last_data_row)
         chart.add_data(data_ref, titles_from_data=True)
         chart.set_categories(cats_ref)
+        _style_saas_excel_chart(chart)
 
         grid_row = index // charts_per_row
         grid_col = index % charts_per_row
@@ -2142,20 +2278,52 @@ def _write_saas_excel_charts(ws_charts, ws_data, chart_specs: list[dict], scenar
 
         data_row = last_data_row + 2
 
+    return data_row
+
 
 def _build_saas_excel_workbook(metric_rows: list[dict], chart_specs: list[dict], meta_lines: list[str], scenario_label: str) -> Workbook:
     workbook = Workbook()
     readme_ws = workbook.active
     readme_ws.title = "README"
+    readme_ws.sheet_view.showGridLines = False
     _write_saas_excel_readme(readme_ws, meta_lines)
 
+    # Metrics keeps gridlines; every other tab hides them.
     metrics_ws = workbook.create_sheet("Metrics")
     _write_saas_excel_metrics(metrics_ws, metric_rows)
 
-    charts_ws = workbook.create_sheet("Charts")
+    # Group charts by model so each model gets its own worksheet (preserve order).
+    specs_by_model: dict[str, list[dict]] = {}
+    model_order: list[str] = []
+    for spec in chart_specs:
+        model_name = spec.get("model") or "Model"
+        if model_name not in specs_by_model:
+            specs_by_model[model_name] = []
+            model_order.append(model_name)
+        specs_by_model[model_name].append(spec)
+
+    if not model_order:
+        fallback_ws = workbook.create_sheet("Charts")
+        fallback_ws.sheet_view.showGridLines = False
+        fallback_ws["A1"] = "No charts match the current filters and scenario."
+        return workbook
+
+    used_titles = {"readme", "metrics", "chart data"}
+    model_sheets = {}
+    for model_name in model_order:
+        sheet = workbook.create_sheet(_excel_safe_sheet_title(model_name, used_titles))
+        sheet.sheet_view.showGridLines = False
+        model_sheets[model_name] = sheet
+
     chart_data_ws = workbook.create_sheet("Chart Data")
     chart_data_ws.sheet_state = "hidden"
-    _write_saas_excel_charts(charts_ws, chart_data_ws, chart_specs, scenario_label)
+    chart_data_ws.sheet_view.showGridLines = False
+
+    data_row = 1
+    for model_name in model_order:
+        data_row = _write_saas_model_charts(
+            model_sheets[model_name], chart_data_ws, specs_by_model[model_name], scenario_label, data_row,
+        )
 
     return workbook
 
