@@ -1,16 +1,16 @@
-"""Callbacks for the LGD Performance page."""
+"""Callbacks for the Loss Performance page."""
 
 from __future__ import annotations
 
 from dash import ALL, Input, Output, State, ctx, no_update
 
 from ..components import filters
-from ..data.lgd import (
-    get_lgd_monitoring_point_options,
-    get_lgd_segments_for_model,
-    resolve_lgd_segment,
+from ..data.loss import (
+    get_loss_monitoring_point_options,
+    get_loss_segments_for_model,
+    resolve_loss_segment,
 )
-from ..pages import monitoring_lgd_performance_layout as layout
+from ..pages import monitoring_loss_performance_layout as layout
 
 _RANGE_PRESET_COUNTS = {"last-4": 4, "last-8": 8, "last-12": 12}
 
@@ -20,7 +20,7 @@ def _dropdown_options(values: list[str]) -> list[dict[str, str]]:
 
 
 def register_callbacks(app, data: dict) -> None:
-    """Register LGD Performance callbacks against ``app`` for ``data``."""
+    """Register Loss Performance callbacks against ``app`` for ``data``."""
 
     @app.callback(
         Output(layout.RANGE_STORE_ID, "data"),
@@ -35,8 +35,15 @@ def register_callbacks(app, data: dict) -> None:
         prevent_initial_call=True,
         allow_duplicate=True,
     )
-    def update_lgd_range_store(
-        window_values, from_values, to_values, window_ids, from_ids, to_ids, from_options_list, range_store,
+    def update_loss_range_store(
+        window_values,
+        from_values,
+        to_values,
+        window_ids,
+        from_ids,
+        to_ids,
+        from_options_list,
+        range_store,
     ):
         triggered = ctx.triggered_id
         if not triggered:
@@ -86,9 +93,9 @@ def register_callbacks(app, data: dict) -> None:
         Input(layout.MODEL_DROPDOWN_ID, "value"),
         Input(layout.SEGMENT_DROPDOWN_ID, "value"),
     )
-    def sync_lgd_segment_dropdown(selected_model, selected_segment):
-        segments = get_lgd_segments_for_model(data, selected_model)
-        value = resolve_lgd_segment(data, selected_model, selected_segment)
+    def sync_loss_segment_dropdown(selected_model, selected_segment):
+        segments = get_loss_segments_for_model(data, selected_model)
+        value = resolve_loss_segment(data, selected_model, selected_segment)
         return _dropdown_options(segments), value
 
     @app.callback(
@@ -98,9 +105,9 @@ def register_callbacks(app, data: dict) -> None:
         Input(layout.SEGMENT_DROPDOWN_ID, "value"),
         Input(layout.MONITORING_POINT_DROPDOWN_ID, "value"),
     )
-    def sync_lgd_monitoring_point_dropdown(selected_model, selected_segment, selected_monitoring_point):
-        segment = resolve_lgd_segment(data, selected_model, selected_segment)
-        options = get_lgd_monitoring_point_options(data, selected_model, segment)
+    def sync_loss_monitoring_point_dropdown(selected_model, selected_segment, selected_monitoring_point):
+        segment = resolve_loss_segment(data, selected_model, selected_segment)
+        options = get_loss_monitoring_point_options(data, selected_model, segment)
         if selected_monitoring_point in options:
             value = selected_monitoring_point
         else:
@@ -114,8 +121,8 @@ def register_callbacks(app, data: dict) -> None:
         Input(layout.MONITORING_POINT_DROPDOWN_ID, "value"),
         Input(layout.RANGE_STORE_ID, "data"),
     )
-    def update_lgd_content(selected_model, selected_segment, selected_monitoring_point, range_store):
-        return layout.render_lgd_performance_content(
+    def update_loss_content(selected_model, selected_segment, selected_monitoring_point, range_store):
+        return layout.render_loss_performance_content(
             data,
             selected_model,
             selected_segment,

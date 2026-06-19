@@ -1,35 +1,26 @@
-/* Section sub-navigation behaviour for #pd-subnav.
+/* Section sub-navigation behaviour for monitoring pages.
 
-   Port of `setMonitoringPdSubnavActive` / `updateMonitoringPdSubnavActiveState`
-   / `jumpToMonitoringSection` from components/monitoring_layout.py: clicking a
-   link smooth-scrolls to its target section, and the link/group whose section
-   is currently at the top of the viewport is highlighted as "active" while
-   the page scrolls. Implemented as a plain client-side script (Dash
-   auto-loads any .js file placed in assets/) since this is purely
-   presentational and has no effect on chart data or callback state. */
+   Dash auto-loads this file from assets/. It handles both the PD page and the
+   Overview page by reading the section ids from each rendered subnav's
+   data-pd-subnav-target attributes. */
 (function () {
-  var SECTION_IDS = [
-    "pd-analysis-scope",
-    "pd-calibration-rag",
-    "pd-discrimination-rag",
-    "pd-balance-sheet-calibration",
-    "pd-post-subjective-overview",
-    "pd-transition-matrix-distance",
-    "pd-population-stability-index",
-    "pd-rank-ordering",
-    "pd-sensitivity-analysis",
-    "pd-mev-range",
-  ];
-
   var scrollFrame = null;
 
   function getScrollContainer() {
     return document.querySelector(".content");
   }
 
-  function setActive(sectionId) {
-    var subnav = document.getElementById("pd-subnav");
-    if (!subnav) return;
+  function getSubnavs() {
+    return Array.prototype.slice.call(document.querySelectorAll(".monitoring-section-subnav"));
+  }
+
+  function getSectionIds(subnav) {
+    return Array.prototype.slice.call(subnav.querySelectorAll("[data-pd-subnav-target]"))
+      .map(function (link) { return link.getAttribute("data-pd-subnav-target"); })
+      .filter(Boolean);
+  }
+
+  function setActive(subnav, sectionId) {
     subnav.querySelectorAll("[data-pd-subnav-target]").forEach(function (link) {
       var isActive = link.getAttribute("data-pd-subnav-target") === sectionId;
       link.classList.toggle("active", isActive);
@@ -40,21 +31,25 @@
     });
   }
 
-  function updateActiveFromScroll() {
-    var subnav = document.getElementById("pd-subnav");
-    if (!subnav) return;
+  function updateSubnavFromScroll(subnav) {
+    var sectionIds = getSectionIds(subnav);
+    if (!sectionIds.length) return;
     var anchorLine = subnav.getBoundingClientRect().bottom + 36;
-    var activeSectionId = SECTION_IDS[0];
-    for (var i = 0; i < SECTION_IDS.length; i++) {
-      var section = document.getElementById(SECTION_IDS[i]);
+    var activeSectionId = sectionIds[0];
+    for (var i = 0; i < sectionIds.length; i++) {
+      var section = document.getElementById(sectionIds[i]);
       if (!section) continue;
       if (section.getBoundingClientRect().top <= anchorLine) {
-        activeSectionId = SECTION_IDS[i];
+        activeSectionId = sectionIds[i];
       } else {
         break;
       }
     }
-    setActive(activeSectionId);
+    setActive(subnav, activeSectionId);
+  }
+
+  function updateActiveFromScroll() {
+    getSubnavs().forEach(updateSubnavFromScroll);
   }
 
   function onScroll() {
@@ -68,12 +63,12 @@
   function onClick(evt) {
     var link = evt.target.closest("[data-pd-subnav-target]");
     if (!link) return;
+    var subnav = link.closest(".monitoring-section-subnav");
     var target = document.getElementById(link.getAttribute("data-pd-subnav-target"));
-    var subnav = document.getElementById("pd-subnav");
     var scrollContainer = getScrollContainer();
     if (!target || !subnav) return;
     evt.preventDefault();
-    setActive(link.getAttribute("data-pd-subnav-target"));
+    setActive(subnav, link.getAttribute("data-pd-subnav-target"));
     if (scrollContainer) {
       var contentRect = scrollContainer.getBoundingClientRect();
       var targetRect = target.getBoundingClientRect();
@@ -85,22 +80,30 @@
     window.scrollTo({ top: Math.max(0, windowTop), behavior: "smooth" });
   }
 
-  function bind() {
-    var subnav = document.getElementById("pd-subnav");
-    if (!subnav) {
-      window.requestAnimationFrame(bind);
-      return;
-    }
-    if (subnav.dataset.pdSubnavBound) return;
-    subnav.dataset.pdSubnavBound = "true";
-    subnav.addEventListener("click", onClick);
+  function bindAvailableSubnavs() {
+    var subnavs = getSubnavs();
+    subnavs.forEach(function (subnav) {
+      if (subnav.dataset.monitoringSubnavBound) return;
+      subnav.dataset.monitoringSubnavBound = "true";
+      subnav.addEventListener("click", onClick);
+    });
     var scrollContainer = getScrollContainer();
-    if (scrollContainer) {
+    if (scrollContainer && !scrollContainer.dataset.monitoringSubnavScrollBound) {
+      scrollContainer.dataset.monitoringSubnavScrollBound = "true";
       scrollContainer.addEventListener("scroll", onScroll, { passive: true });
-    } else {
+    } else if (!scrollContainer && !window.monitoringSubnavScrollBound) {
+      window.monitoringSubnavScrollBound = true;
       window.addEventListener("scroll", onScroll, { passive: true });
     }
-    updateActiveFromScroll();
+    if (subnavs.length) updateActiveFromScroll();
+  }
+
+  function bind() {
+    bindAvailableSubnavs();
+    var observer = new MutationObserver(function () {
+      bindAvailableSubnavs();
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
   }
 
   if (document.readyState === "loading") {

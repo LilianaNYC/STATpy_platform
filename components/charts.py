@@ -303,6 +303,80 @@ def build_pd_calibration_rag_trend_figure(rag_trend, monitoring_quarter, range_v
     )
 
 
+def build_lgd_calibration_rag_trend_figure(rag_trend, monitoring_quarter, range_value=None) -> go.Figure:
+    periods = filter_pd_periods_by_range(range_value, [row["quarter"] for row in rag_trend])
+    trend = [row for row in rag_trend if row["quarter"] in periods]
+    if not trend:
+        return _empty_figure("No calibration-conservatism RAG periods are available for the selected monitoring point.")
+
+    def pct(value):
+        return "â€”" if value is None or not _finite(value) else f"{value * 100:.2f}%"
+
+    quarters = [row["quarter"] for row in trend]
+    customdata = [
+        [
+            row["rag"],
+            pct(row.get("me")),
+            row.get("me_rag") or "N/A",
+            pct(row.get("rmse")),
+            row.get("rmse_rag") or "N/A",
+            "â€”" if row.get("weighted_average") is None or not _finite(row.get("weighted_average")) else f"{row['weighted_average']:.2f}",
+            "â€”" if row.get("rounded_score") is None or not _finite(row.get("rounded_score")) else f"{row['rounded_score']}",
+        ]
+        for row in trend
+    ]
+    return _rag_dot_figure(
+        quarters,
+        [row["rag_score"] for row in trend],
+        [row["rag"] for row in trend],
+        customdata,
+        "%{x}<br>Calibration Conservatism RAG: %{customdata[0]}<br>"
+        "ME 1 year: %{customdata[1]} (%{customdata[2]})<br>"
+        "RMSE 1 year: %{customdata[3]} (%{customdata[4]})<br>"
+        "Weighted score: %{customdata[5]}<br>Rounded score: %{customdata[6]}<extra></extra>",
+        monitoring_quarter,
+        "Calibration Conservatism Score",
+    )
+
+
+def build_lgd_discrimination_rag_trend_figure(rag_trend, monitoring_quarter, range_value=None) -> go.Figure:
+    periods = filter_pd_periods_by_range(range_value, [row["quarter"] for row in rag_trend])
+    trend = [row for row in rag_trend if row["quarter"] in periods]
+    if not trend:
+        return _empty_figure("No discriminatory-power RAG periods are available for the selected monitoring point.")
+
+    quarters = [row["quarter"] for row in trend]
+    customdata = [
+        [
+            row["rag"],
+            _format_metric_value(row.get("kendall_tau"), 3),
+            row.get("kendall_tau_rag") or "N/A",
+            "â€”" if row.get("weighted_average") is None or not _finite(row.get("weighted_average")) else f"{row['weighted_average']:.2f}",
+            "â€”" if row.get("rounded_score") is None or not _finite(row.get("rounded_score")) else f"{row['rounded_score']}",
+        ]
+        for row in trend
+    ]
+    return _rag_dot_figure(
+        quarters,
+        [row["rag_score"] for row in trend],
+        [row["rag"] for row in trend],
+        customdata,
+        "%{x}<br>Discriminatory Power RAG: %{customdata[0]}<br>"
+        "Kendall's Tau 1 year: %{customdata[1]} (%{customdata[2]})<br>"
+        "Weighted score: %{customdata[3]}<br>Rounded score: %{customdata[4]}<extra></extra>",
+        monitoring_quarter,
+        "Discriminatory Power Score",
+    )
+
+
+def build_ead_calibration_rag_trend_figure(rag_trend, monitoring_quarter, range_value=None) -> go.Figure:
+    return build_lgd_calibration_rag_trend_figure(rag_trend, monitoring_quarter, range_value)
+
+
+def build_ead_discrimination_rag_trend_figure(rag_trend, monitoring_quarter, range_value=None) -> go.Figure:
+    return build_lgd_discrimination_rag_trend_figure(rag_trend, monitoring_quarter, range_value)
+
+
 def build_pd_discrimination_rag_trend_figure(rag_trend, monitoring_quarter, range_value=None) -> go.Figure:
     periods = filter_pd_periods_by_range(range_value, [row["quarter"] for row in rag_trend])
     trend = [row for row in rag_trend if row["quarter"] in periods]
@@ -760,6 +834,233 @@ def build_pd_mev_range_figure(model_data, mev_name: str, mev_data, color: str, r
         shapes=shapes,
         xaxis=build_pd_time_series_xaxis(quarters, {"title": "Quarter", "gridcolor": "#e2e8f0", "showline": True, "linecolor": AXIS_LINE_COLOR, "ticks": "outside"}, density="compact"),
         yaxis=dict(title=mev_name, range=[y_min, y_max], automargin=True, gridcolor="#e2e8f0", zerolinecolor=AXIS_LINE_COLOR, showline=True, linecolor=AXIS_LINE_COLOR, ticks="outside"),
+    )
+    _apply_transparent_background(fig)
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# LGD Performance charts
+# ---------------------------------------------------------------------------
+
+
+def _lgd_thresholds(monitoring_thresholds) -> list[dict]:
+    return list((monitoring_thresholds or {}).get("lgd_thresholds") or [])
+
+
+def _lgd_metric_format(metric: str) -> str:
+    if metric in {"ME", "RMSE", "Predicted LGD", "Actual LGD"}:
+        return ".2%"
+    return ".3f"
+
+
+def _lgd_metric_title(metric: str) -> str:
+    if metric in {"ME", "RMSE", "Predicted LGD", "Actual LGD"}:
+        return f"{metric} (%)"
+    return metric
+
+
+def build_lgd_metric_trend_figure(metric_rows, monitoring_thresholds, metric: str, monitoring_point: str) -> go.Figure:
+    if not metric_rows:
+        return _empty_figure("No LGD monitoring periods are available for the selected filters.", height=308)
+
+    quarters = [row["Monitoring Period"] for row in metric_rows]
+    values = [row.get(metric) for row in metric_rows]
+    thresholds = _lgd_thresholds(monitoring_thresholds)
+    threshold = next((row for row in thresholds if row.get("metric") == metric), {})
+    rags = [calculate_pd_metric_rag(thresholds, metric, value) for value in values]
+    bands = build_pd_threshold_bands(threshold, values)
+
+    shapes = list(bands["shapes"])
+    if monitoring_point in quarters:
+        shapes.append(_vertical_marker(monitoring_point))
+
+    hover_value_format = "%{y:.2%}" if metric in {"ME", "RMSE"} else "%{y:.3f}"
+    fig = go.Figure(go.Scatter(
+        x=quarters,
+        y=values,
+        mode="lines+markers",
+        name=metric,
+        connectgaps=False,
+        line=dict(color="#2563eb", width=2.5),
+        marker=dict(size=8, color=[pd_rag_color(rag) for rag in rags], line=dict(color="#fff", width=1)),
+        customdata=rags,
+        hovertemplate=f"%{{x}}<br>{metric}: {hover_value_format}<br>RAG: %{{customdata}}<extra></extra>",
+    ))
+    fig.update_layout(
+        height=308,
+        margin=dict(t=18, r=26, b=54, l=64),
+        hovermode="x unified",
+        showlegend=False,
+        shapes=shapes,
+        xaxis=build_pd_time_series_xaxis(quarters, {"title": "Monitoring Point", "gridcolor": GRID_COLOR}, density="compact"),
+        yaxis=dict(title=_lgd_metric_title(metric), tickformat=_lgd_metric_format(metric), range=bands["axis_range"], gridcolor=GRID_COLOR, zerolinecolor=AXIS_LINE_COLOR),
+    )
+    _apply_transparent_background(fig)
+    return fig
+
+
+def build_ead_metric_trend_figure(metric_rows, monitoring_thresholds, metric: str, monitoring_point: str) -> go.Figure:
+    if not metric_rows:
+        return _empty_figure("No EAD monitoring periods are available for the selected filters.", height=308)
+
+    quarters = [row["Monitoring Period"] for row in metric_rows]
+    values = [row.get(metric) for row in metric_rows]
+    thresholds = _lgd_thresholds(monitoring_thresholds)
+    threshold = next((row for row in thresholds if row.get("metric") == metric), {})
+    rags = [calculate_pd_metric_rag(thresholds, metric, value) for value in values]
+    bands = build_pd_threshold_bands(threshold, values)
+
+    shapes = list(bands["shapes"])
+    if monitoring_point in quarters:
+        shapes.append(_vertical_marker(monitoring_point))
+
+    hover_value_format = "%{y:.2%}" if metric in {"ME", "RMSE"} else "%{y:.3f}"
+    fig = go.Figure(go.Scatter(
+        x=quarters,
+        y=values,
+        mode="lines+markers",
+        name=metric,
+        connectgaps=False,
+        line=dict(color="#2563eb", width=2.5),
+        marker=dict(size=8, color=[pd_rag_color(rag) for rag in rags], line=dict(color="#fff", width=1)),
+        customdata=rags,
+        hovertemplate=f"%{{x}}<br>{metric}: {hover_value_format}<br>RAG: %{{customdata}}<extra></extra>",
+    ))
+    fig.update_layout(
+        height=308,
+        margin=dict(t=18, r=26, b=54, l=64),
+        hovermode="x unified",
+        showlegend=False,
+        shapes=shapes,
+        xaxis=build_pd_time_series_xaxis(quarters, {"title": "Monitoring Point", "gridcolor": GRID_COLOR}, density="compact"),
+        yaxis=dict(title=_lgd_metric_title(metric), tickformat=_lgd_metric_format(metric), range=bands["axis_range"], gridcolor=GRID_COLOR, zerolinecolor=AXIS_LINE_COLOR),
+    )
+    _apply_transparent_background(fig)
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# Loss Performance charts
+# ---------------------------------------------------------------------------
+
+
+def _loss_thresholds(monitoring_thresholds) -> list[dict]:
+    return list((monitoring_thresholds or {}).get("loss_thresholds") or [])
+
+
+def build_loss_rag_trend_figure(rag_trend, monitoring_quarter, range_value=None) -> go.Figure:
+    periods = filter_pd_periods_by_range(range_value, [row["quarter"] for row in rag_trend])
+    trend = [row for row in rag_trend if row["quarter"] in periods]
+    if not trend:
+        return _empty_figure("No Loss RAG periods are available for the selected monitoring point.")
+
+    def pct(value):
+        return "â€”" if value is None or not _finite(value) else f"{value * 100:.2f}%"
+
+    quarters = [row["quarter"] for row in trend]
+    customdata = [
+        [
+            row["rag"],
+            pct(row.get("me_pct")),
+            row.get("me_pct_rag") or "N/A",
+            _format_metric_value(row.get("weighted_average"), 2),
+            "â€”" if row.get("rounded_score") is None or not _finite(row.get("rounded_score")) else f"{row['rounded_score']}",
+        ]
+        for row in trend
+    ]
+    return _rag_dot_figure(
+        quarters,
+        [row["rag_score"] for row in trend],
+        [row["rag"] for row in trend],
+        customdata,
+        "%{x}<br>Performance RAG: %{customdata[0]}<br>"
+        "ME % 1 year: %{customdata[1]} (%{customdata[2]})<br>"
+        "Score: %{customdata[3]}<br>Rounded score: %{customdata[4]}<extra></extra>",
+        monitoring_quarter,
+        "Performance Score",
+    )
+
+
+def build_loss_metric_trend_figure(metric_rows, monitoring_thresholds, monitoring_point: str) -> go.Figure:
+    if not metric_rows:
+        return _empty_figure("No Loss monitoring periods are available for the selected filters.", height=308)
+
+    metric = "ME %"
+    quarters = [row["Monitoring Period"] for row in metric_rows]
+    values = [row.get(metric) for row in metric_rows]
+    thresholds = _loss_thresholds(monitoring_thresholds)
+    threshold = next((row for row in thresholds if row.get("metric") == metric), {})
+    rags = [calculate_pd_metric_rag(thresholds, metric, value) for value in values]
+    bands = build_pd_threshold_bands(threshold, values)
+
+    shapes = list(bands["shapes"])
+    if monitoring_point in quarters:
+        shapes.append(_vertical_marker(monitoring_point))
+
+    fig = go.Figure(go.Scatter(
+        x=quarters,
+        y=values,
+        mode="lines+markers",
+        name=metric,
+        connectgaps=False,
+        line=dict(color="#2563eb", width=2.5),
+        marker=dict(size=8, color=[pd_rag_color(rag) for rag in rags], line=dict(color="#fff", width=1)),
+        customdata=rags,
+        hovertemplate="%{x}<br>ME %: %{y:.2%}<br>RAG: %{customdata}<extra></extra>",
+    ))
+    fig.update_layout(
+        height=308,
+        margin=dict(t=18, r=26, b=54, l=64),
+        hovermode="x unified",
+        showlegend=False,
+        shapes=shapes,
+        xaxis=build_pd_time_series_xaxis(quarters, {"title": "Monitoring Point", "gridcolor": GRID_COLOR}, density="compact"),
+        yaxis=dict(title="ME %", tickformat=".2%", range=bands["axis_range"], gridcolor=GRID_COLOR, zerolinecolor=AXIS_LINE_COLOR),
+    )
+    _apply_transparent_background(fig)
+    return fig
+
+
+def build_lgd_predicted_actual_figure(metric_rows, monitoring_point: str) -> go.Figure:
+    if not metric_rows:
+        return _empty_figure("No predicted or actual LGD periods are available for the selected filters.", height=328)
+
+    quarters = [row["Monitoring Period"] for row in metric_rows]
+    predicted = [row.get("Predicted LGD") for row in metric_rows]
+    actual = [row.get("Actual LGD") for row in metric_rows]
+
+    shapes = []
+    if monitoring_point in quarters:
+        shapes.append(_vertical_marker(monitoring_point))
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=quarters,
+        y=predicted,
+        mode="lines+markers",
+        name="Predicted LGD",
+        line=dict(color="#2563eb", width=2.5, dash="dash"),
+        marker=dict(size=7),
+        hovertemplate="%{x}<br>Predicted LGD: %{y:.2%}<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=quarters,
+        y=actual,
+        mode="lines+markers",
+        name="Actual LGD",
+        line=dict(color="#dc2626", width=2.5),
+        marker=dict(size=7),
+        hovertemplate="%{x}<br>Actual LGD: %{y:.2%}<extra></extra>",
+    ))
+    fig.update_layout(
+        height=328,
+        margin=dict(t=24, r=26, b=54, l=64),
+        hovermode="x unified",
+        legend=dict(orientation="h", x=0, y=1.15),
+        shapes=shapes,
+        xaxis=build_pd_time_series_xaxis(quarters, {"title": "Monitoring Point", "gridcolor": GRID_COLOR}, density="compact"),
+        yaxis=dict(title="LGD", tickformat=".1%", rangemode="tozero", gridcolor=GRID_COLOR, zerolinecolor=AXIS_LINE_COLOR),
     )
     _apply_transparent_background(fig)
     return fig

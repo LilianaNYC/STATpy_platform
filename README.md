@@ -11,26 +11,41 @@ be filled in following the same per-page structure.
 
 ## Running the app
 
-This app is self-contained - it can be run from inside the
-`pd_performance_dash/` folder regardless of where that folder lives on disk.
+This app is self-contained. In this repository the package folder is named
+`Dashboards`, so run the module from the parent directory:
 
-```bash
-pip install -r requirements.txt
-python -m pd_performance_dash.app
+```powershell
+cd "C:\Users\ernes\Mi unidad\HSBC\Monitoring module"
+pip install -r "Dashboards\requirements.txt"
+python -m Dashboards.app
 ```
 
-(or, from the parent directory: `python -m pd_performance_dash.app`, after
-`pip install -r pd_performance_dash/requirements.txt`)
+To enable Dash development tools and hot reload while working locally:
+
+```powershell
+$env:DASH_DEBUG = "true"
+python -m Dashboards.app
+```
 
 This starts a Dash dev server (default `http://127.0.0.1:8050`). The sidebar
-links navigate between `/` (PD Performance), `/lgd-performance` and
-`/ead-performance`.
+links navigate between `/` (Overview), `/pd-performance`,
+`/lgd-performance` and `/ead-performance`.
+
+### Development setup
+
+The project also includes a minimal `pyproject.toml`. From the parent
+directory, install the app plus test dependencies with:
+
+```powershell
+pip install -e "Dashboards[dev]"
+pytest Dashboards
+```
 
 ## Data sources
 
-Source data lives in `pd_performance_dash/source_data/` (see
+Source data lives in `Dashboards/source_data/` (see
 `monitoring_config.py`), bundled with the app so it works regardless of where
-the `pd_performance_dash/` folder is moved:
+the `Dashboards/` folder is moved:
 
 - `portfolio.xlsx` (sheet `Portfolio`) - facility-level portfolio extract
 - `statpy_monitoring_thresholds.xlsm` (sheets `PD_Thresholds`,
@@ -39,29 +54,32 @@ the `pd_performance_dash/` folder is moved:
 - `mev_dummy_data.json` - macroeconomic-variable scenario catalog
 - `facilities_dummy_data.json` - facility-level scenario rank-ordering paths
 
-`load_pd_performance_data()` re-reads these files from `source_data/` on app
-startup.
+`load_pd_performance_data()` reads these files from `source_data/` the first
+time the app is created; `data_store.get_pd_performance_data()` then caches
+the assembled dashboard payload for layouts and callbacks.
 
 ## Project layout
 
 ```
-pd_performance_dash/
+Dashboards/
   app.py                  # entry point (create_app / app / server): builds the
                             # shell, registers each page's callbacks + the router
   shell.py                # sidebar nav, page footer, URL routing between pages
-  data_store.py           # module-level data singletons shared across pages
-                            # (PD_PERFORMANCE_DATA, loaded once at import time)
+  data_store.py           # cached PD data accessor shared across pages
   monitoring_config.py    # paths, column names, RAG groups, thresholds, etc.
   pages/
+    monitoring_overview_layout.py         # overview landing page
     monitoring_pd_performance_layout.py   # page layout + the master content-rendering function
     monitoring_lgd_performance_layout.py  # placeholder page layout
     monitoring_ead_performance_layout.py  # placeholder page layout
   callbacks/
+    monitoring_overview_callbacks.py         # overview filters and content refresh
     monitoring_pd_performance_callbacks.py   # all PD Performance callbacks (filters, ranges, MEV, etc.)
     monitoring_lgd_performance_callbacks.py  # placeholder (no callbacks yet)
     monitoring_ead_performance_callbacks.py  # placeholder (no callbacks yet)
   data/
     data_loader.py         # reads portfolio.xlsx / thresholds / MEV / facilities JSON
+    overview.py            # overview page aggregation helpers
     transformations.py      # calculation engine (RAG, calibration, discrimination, ...)
     mev.py                  # MEV Range section helpers (catalog, thresholds, RAG)
     rank_ordering.py         # Scenario Rank Ordering helpers + YYYY-Qn quarter utils
@@ -89,7 +107,10 @@ that page's top bar + content. Each page's callbacks live in
 chrome (sidebar, page footer, and the PD Performance `dcc.Store`s) and a
 small router that swaps `#page-content` based on `dcc.Location.pathname`:
 
-- `/` -> PD Performance (`pages/monitoring_pd_performance_layout.py` /
+- `/` -> Overview (`pages/monitoring_overview_layout.py` /
+  `callbacks/monitoring_overview_callbacks.py`) - portfolio-level model
+  monitoring view across PD, LGD and EAD model groups.
+- `/pd-performance` -> PD Performance (`pages/monitoring_pd_performance_layout.py` /
   `callbacks/monitoring_pd_performance_callbacks.py`) - fully ported,
   see "Coverage" below.
 - `/lgd-performance` -> LGD Performance
@@ -101,10 +122,10 @@ small router that swaps `#page-content` based on `dcc.Location.pathname`:
   `callbacks/monitoring_ead_performance_callbacks.py`) - placeholder
   page/card only, no data source yet.
 
-`data_store.py` loads `load_pd_performance_data()` once at import time so
+`data_store.py` loads `load_pd_performance_data()` lazily and caches it so
 both `pages/monitoring_pd_performance_layout.py` (called on every navigation
-to `/`) and `callbacks/monitoring_pd_performance_callbacks.py` share
-the same in-memory data without re-reading the source workbook.
+to `/`) and `callbacks/monitoring_pd_performance_callbacks.py` share the same
+in-memory data without re-reading the source workbook.
 
 ## Coverage
 
@@ -129,6 +150,15 @@ rendered by `renderPdModels()`:
 
 The PDF export button from the original page is intentionally **not**
 included (out of scope per the porting brief).
+
+## Current limitations
+
+- **PD Performance** is the implemented dashboard surface.
+- **LGD Performance** and **EAD Performance** are placeholder pages with no
+  data source or live callbacks yet.
+- PDF export is intentionally not included.
+- Source data is bundled locally under `source_data/`; there is no external
+  data refresh integration yet.
 
 ## Assumptions and simplifications
 

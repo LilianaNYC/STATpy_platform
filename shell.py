@@ -1,13 +1,10 @@
 """Shared app shell: sidebar navigation, page routing, and page footer.
 
 Ports the sidebar/top-level shell from ``components/monitoring_layout.py``'s
-``build_layout``. The original single-page app rendered the PD Performance
-tab directly inside this shell; now the shell hosts a small client-side
-router (:func:`register_callbacks`) that swaps ``#page-content`` between the
-PD/LGD/EAD performance pages based on the current URL, while the PD
-Performance ``dcc.Store`` components
-(:func:`pages.monitoring_pd_performance_layout.build_stores`) live in the
-shell itself so filter/range state survives navigation.
+``build_layout``. The shell hosts a small router that swaps ``#page-content``
+between the PD/LGD/EAD performance pages based on the current URL, while the
+PD Performance ``dcc.Store`` components live in the shell itself so
+filter/range state survives navigation.
 """
 
 from __future__ import annotations
@@ -15,33 +12,39 @@ from __future__ import annotations
 from dash import ALL, Input, Output, State, dcc, html
 
 from . import monitoring_config as config
-from .data_store import PD_PERFORMANCE_DATA
 from .pages import monitoring_ead_performance_layout as ead_performance_layout
 from .pages import monitoring_lgd_performance_layout as lgd_performance_layout
+from .pages import monitoring_loss_performance_layout as loss_performance_layout
+from .pages import monitoring_overview_layout as overview_layout
 from .pages import monitoring_pd_performance_layout as pd_performance_layout
 
 URL_ID = "app-url"
 PAGE_CONTENT_ID = "page-content"
 
-# (icon, label, path) for each registered page, in sidebar order.
+# (label, path) for each registered page, in sidebar order.
 NAV_LINKS = [
-    ("🧠", "PD Performance", "/"),
-    ("📉", "LGD Performance", "/lgd-performance"),
-    ("📈", "EAD Performance", "/ead-performance"),
+    ("Overview", "/"),
+    ("PD Performance", "/pd-performance"),
+    ("LGD Performance", "/lgd-performance"),
+    ("EAD Performance", "/ead-performance"),
+    ("Loss Performance", "/loss-performance"),
 ]
 
-# Maps a URL path to the function that builds that page's content.
-PAGE_BUILDERS = {
-    "/": lambda: pd_performance_layout.page_layout(PD_PERFORMANCE_DATA),
-    "/lgd-performance": lgd_performance_layout.page_layout,
-    "/ead-performance": ead_performance_layout.page_layout,
-}
+
+def _page_builders(pd_performance_data: dict, overview_rows: list[dict]) -> dict:
+    return {
+        "/": lambda: overview_layout.page_layout(pd_performance_data, overview_rows),
+        "/pd-performance": lambda: pd_performance_layout.page_layout(pd_performance_data),
+        "/lgd-performance": lambda: lgd_performance_layout.page_layout(pd_performance_data),
+        "/ead-performance": lambda: ead_performance_layout.page_layout(pd_performance_data),
+        "/loss-performance": lambda: loss_performance_layout.page_layout(pd_performance_data),
+    }
 
 
-def _build_nav_link(icon: str, label: str, href: str) -> html.Li:
+def _build_nav_link(label: str, href: str) -> html.Li:
     return html.Li(
         dcc.Link(
-            [html.Span(icon, className="nav-icon"), html.Span(label, className="nav-label")],
+            label,
             href=href,
             id={"type": "nav-link", "href": href},
             className="nav-item",
@@ -49,9 +52,9 @@ def _build_nav_link(icon: str, label: str, href: str) -> html.Li:
     )
 
 
-def _build_sidebar() -> html.Nav:
-    latest_snapshot = PD_PERFORMANCE_DATA.get("latest_snapshot_date") or "—"
-    refreshed_at = (PD_PERFORMANCE_DATA.get("app_meta") or {}).get("last_refresh") or "—"
+def _build_sidebar(pd_performance_data: dict) -> html.Nav:
+    latest_snapshot = pd_performance_data.get("latest_snapshot_date") or "-"
+    refreshed_at = (pd_performance_data.get("app_meta") or {}).get("last_refresh") or "-"
 
     return html.Nav(
         className="sidebar",
@@ -59,7 +62,6 @@ def _build_sidebar() -> html.Nav:
             html.Div(
                 className="sidebar-logo",
                 children=[
-                    html.Div("📊", className="logo-icon"),
                     html.H1("Model Monitoring"),
                     html.P("Wholesale Credit Platform"),
                 ],
@@ -67,14 +69,7 @@ def _build_sidebar() -> html.Nav:
             html.Ul(
                 className="nav-list",
                 children=[
-                    html.Li(
-                        html.Span(
-                            [html.Span("📊", className="nav-icon"), html.Span("Overview", className="nav-label")],
-                            className="nav-item is-disabled",
-                            **{"aria-disabled": "true"},
-                        )
-                    ),
-                    *[_build_nav_link(icon, label, href) for icon, label, href in NAV_LINKS],
+                    *[_build_nav_link(label, href) for label, href in NAV_LINKS],
                 ],
             ),
             html.Div(
@@ -94,10 +89,10 @@ def _build_sidebar() -> html.Nav:
     )
 
 
-def _build_page_footer() -> html.Div:
-    latest_snapshot = PD_PERFORMANCE_DATA.get("latest_snapshot_date") or "—"
-    source_file = PD_PERFORMANCE_DATA.get("source_file") or config.PORTFOLIO_FILE.name
-    app_meta = PD_PERFORMANCE_DATA.get("app_meta") or {}
+def _build_page_footer(pd_performance_data: dict) -> html.Div:
+    latest_snapshot = pd_performance_data.get("latest_snapshot_date") or "-"
+    source_file = pd_performance_data.get("source_file") or config.PORTFOLIO_FILE.name
+    app_meta = pd_performance_data.get("app_meta") or {}
 
     return html.Div(
         className="page-footer",
@@ -105,35 +100,38 @@ def _build_page_footer() -> html.Div:
             html.Span(f"Data as of: {latest_snapshot}"),
             html.Span(f"Source: {source_file}"),
             html.Span(f"Run ID: {app_meta.get('run_id') or 'DASH'}"),
-            html.Span(f"Last refresh: {app_meta.get('last_refresh') or '—'}"),
+            html.Span(f"Last refresh: {app_meta.get('last_refresh') or '-'}"),
         ],
     )
 
 
-def build_app_shell() -> html.Div:
+def build_app_shell(pd_performance_data: dict, overview_rows: list[dict]) -> html.Div:
+    page_builders = _page_builders(pd_performance_data, overview_rows)
     return html.Div(
         className="monitoring-shell",
         children=[
             dcc.Location(id=URL_ID, refresh=False),
             *pd_performance_layout.build_stores(),
-            _build_sidebar(),
+            dcc.Store(id=overview_layout.RANGE_STORE_ID, data={}),
+            _build_sidebar(pd_performance_data),
             html.Div(
                 className="main",
                 children=[
-                    html.Div(id=PAGE_CONTENT_ID, className="page-shell", children=PAGE_BUILDERS["/"]()),
-                    _build_page_footer(),
+                    html.Div(id=PAGE_CONTENT_ID, className="page-shell", children=page_builders["/"]()),
+                    _build_page_footer(pd_performance_data),
                 ],
             ),
         ],
     )
 
 
-def register_callbacks(app) -> None:
+def register_callbacks(app, pd_performance_data: dict, overview_rows: list[dict]) -> None:
     """Register the page router and sidebar active-link highlighting."""
+    page_builders = _page_builders(pd_performance_data, overview_rows)
 
     @app.callback(Output(PAGE_CONTENT_ID, "children"), Input(URL_ID, "pathname"))
     def render_page(pathname):
-        builder = PAGE_BUILDERS.get(pathname, PAGE_BUILDERS["/"])
+        builder = page_builders.get(pathname, page_builders["/"])
         return builder()
 
     @app.callback(

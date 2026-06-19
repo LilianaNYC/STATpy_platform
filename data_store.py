@@ -1,14 +1,13 @@
-"""Module-level data singletons shared across pages.
+"""Cached dashboard data shared across pages.
 
-Each page's source workbook is loaded once, at import time, so that both a
-page's ``layout`` function (called on every page load) and its callbacks
-module can read the same in-memory data without re-reading the workbook or
-threading ``data`` through ``app.py``.
+The PD source workbook is loaded lazily the first time the Dash app is
+created, then cached so layouts and callbacks use the same in-memory data.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
+from functools import lru_cache
 
 from .data.data_loader import load_pd_performance_data
 
@@ -22,7 +21,7 @@ def _with_app_meta(data: dict) -> dict:
     return data
 
 
-# PD Performance tab data (Chapter 1 & 2). LGD/EAD Performance pages don't
-# have a data source yet - see pages/monitoring_lgd_performance_layout.py and
-# pages/monitoring_ead_performance_layout.py.
-PD_PERFORMANCE_DATA = _with_app_meta(load_pd_performance_data())
+@lru_cache(maxsize=1)
+def get_pd_performance_data() -> dict:
+    """Return cached PD Performance data for layouts and callbacks."""
+    return _with_app_meta(load_pd_performance_data())

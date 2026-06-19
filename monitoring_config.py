@@ -27,6 +27,8 @@ MONITORING_THRESHOLDS_FILE = SOURCE_DATA_DIR / "statpy_monitoring_thresholds.xls
 PD_THRESHOLDS_SHEET_NAME = "PD_Thresholds"
 CRR_MASTER_SCALE_SHEET_NAME = "CRR_Master_Scale"
 RAG_ASSIGNMENT_PD_SHEET_NAME = "RAG_Assignment_PD"
+LGD_THRESHOLDS_SHEET_NAME = "LGD_Thresholds"
+LOSS_THRESHOLDS_SHEET_NAME = "Loss_Thresholds"
 
 MEV_DUMMY_DATA_FILE = SOURCE_DATA_DIR / "mev_dummy_data.json"
 FACILITIES_DUMMY_DATA_FILE = SOURCE_DATA_DIR / "facilities_dummy_data.json"
@@ -37,6 +39,7 @@ FACILITIES_DUMMY_DATA_FILE = SOURCE_DATA_DIR / "facilities_dummy_data.json"
 DATE_COLUMN = "MONTH END-SNAPSHOT DATE"
 SEGMENT_COLUMN = "Portfolio"
 FACILITY_ID_COLUMN = "facility id"
+LIMIT_AMOUNT_COLUMN = "limit_amount"
 PD_MODEL_COLUMN = "pd_model"
 RATING_COLUMN = "rating_grade"
 
@@ -47,6 +50,13 @@ PD_OBSERVED_DEFAULT_1Y_COLUMN = "default flag 1y"
 PD_OBSERVED_DEFAULT_2Y_COLUMN = "default flag 2y"
 EAD_PREDICTED_1Y_COLUMN = "EAD_1y_base"
 EAD_PREDICTED_2Y_COLUMN = "EAD_2y_base"
+EAD_MODEL_COLUMN = "ead_model"
+EAD_REALIZED_COLUMN = "realized_ead"
+LGD_MODEL_COLUMN = "lgd_model"
+LGD_PREDICTED_1Y_COLUMN = "LGD_1y_base"
+LGD_PREDICTED_2Y_COLUMN = "LGD_2y_base"
+LGD_REALIZED_COLUMN = "realized_lgd"
+BALANCE_COLUMN = "Balance"
 
 NULL_SENTINELS = ["NULL", "ZZZ", "N/A", ""]
 

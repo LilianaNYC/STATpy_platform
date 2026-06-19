@@ -16,17 +16,20 @@ from the original ``build_monitoring_pd_models`` are intentionally NOT
 ported -- they feed the model-overview tables on other tabs and are not
 referenced by ``renderPdModels()``'s live PD Performance sections. The model
 and segment filter option lists are instead derived directly from the
-portfolio dataframe.
+portfolio frame.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import math
+from datetime import date, datetime
+from pathlib import Path
 from typing import Any
 
-import numpy as np
-import pandas as pd
+import polars as pl
+from openpyxl import load_workbook
 
 from .. import monitoring_config as config
 
@@ -36,74 +39,133 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Small shared helpers
 # ---------------------------------------------------------------------------
-def _label(ts: pd.Timestamp) -> str:
+def _is_missing(value: Any) -> bool:
+    return value is None or (isinstance(value, float) and math.isnan(value))
+
+
+def _to_float(value: Any) -> float | None:
+    if _is_missing(value):
+        return None
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return None if math.isnan(result) else result
+
+
+def _label(value: date | datetime) -> str:
     """Convert a quarter-end timestamp to a label like '2025Q1'."""
-    q = (ts.month - 1) // 3 + 1
-    return f"{ts.year}Q{q}"
+    q = (value.month - 1) // 3 + 1
+    return f"{value.year}Q{q}"
 
 
 def _normalize_model_name(value: Any) -> str:
-    if pd.isna(value):
+    if _is_missing(value):
         return ""
     return str(value).strip()
+
+
+def _format_rating_value(value: Any) -> str:
+    if _is_missing(value):
+        return ""
+    if isinstance(value, (int, float)) and float(value).is_integer():
+        return str(int(value))
+    return str(value).strip()
+
+
+def _clean_null_sentinels(df: pl.DataFrame) -> pl.DataFrame:
+    return df.with_columns(
+        [
+            pl.when(pl.col(column).cast(pl.String).is_in(config.NULL_SENTINELS))
+            .then(None)
+            .otherwise(pl.col(column))
+            .alias(column)
+            for column in df.columns
+        ]
+    )
+
+
+def _read_excel_sheet(path: Path, sheet_name: str) -> pl.DataFrame:
+    """Read an Excel sheet into Polars while preserving openpyxl cell values."""
+    workbook = load_workbook(path, data_only=True, read_only=True)
+    worksheet = workbook[sheet_name]
+    rows = list(worksheet.iter_rows(values_only=True))
+    workbook.close()
+    if not rows:
+        return pl.DataFrame()
+
+    headers = [str(value).strip() if value is not None else f"column_{index}" for index, value in enumerate(rows[0])]
+    body = [row for row in rows[1:] if any(value is not None for value in row)]
+    if not body:
+        return pl.DataFrame(schema=headers)
+
+    return pl.DataFrame(body, schema=headers, orient="row", infer_schema_length=None)
 
 
 # ---------------------------------------------------------------------------
 # Portfolio loading
 # ---------------------------------------------------------------------------
-def load_portfolio() -> pd.DataFrame:
+def load_portfolio() -> pl.DataFrame:
     """Load the portfolio Excel file, clean null sentinels, derive quarter labels."""
     log.info("Loading portfolio from %s [%s]", config.PORTFOLIO_FILE, config.PORTFOLIO_SHEET_NAME)
 
-    df = pd.read_excel(config.PORTFOLIO_FILE, sheet_name=config.PORTFOLIO_SHEET_NAME)
-    df.replace(config.NULL_SENTINELS, pd.NA, inplace=True)
+    df = _read_excel_sheet(config.PORTFOLIO_FILE, config.PORTFOLIO_SHEET_NAME)
+    df = _clean_null_sentinels(df)
+    df = df.with_columns(
+        pl.col(config.DATE_COLUMN).cast(pl.Date, strict=False).alias(config.DATE_COLUMN)
+    )
+    df = df.with_columns(
+        [
+            pl.col(config.DATE_COLUMN)
+            .map_elements(_label, return_dtype=pl.String)
+            .alias("_quarter"),
+            pl.col(config.DATE_COLUMN).alias("_snapshot_date"),
+        ]
+    )
 
-    df[config.DATE_COLUMN] = pd.to_datetime(df[config.DATE_COLUMN])
-    df["_quarter"] = df[config.DATE_COLUMN].apply(_label)
-    df["_snapshot_date"] = df[config.DATE_COLUMN].dt.date
-
-    log.info("Loaded %d records across %d quarters", len(df), df["_quarter"].nunique())
+    log.info("Loaded %d records across %d quarters", df.height, df["_quarter"].n_unique())
     return df
 
 
-def get_quarters(df: pd.DataFrame) -> list[str]:
+def get_quarters(df: pl.DataFrame) -> list[str]:
     """Return sorted list of all available quarter labels."""
-    dates = df[config.DATE_COLUMN].sort_values().unique()
-    labels = [_label(pd.Timestamp(d)) for d in dates]
+    dates = df.select(pl.col(config.DATE_COLUMN).sort().unique()).to_series().to_list()
+    labels = [_label(value) for value in dates if value is not None]
     return sorted(set(labels))
 
 
-def get_quarter_df(df: pd.DataFrame, quarter: str) -> pd.DataFrame:
+def get_quarter_df(df: pl.DataFrame, quarter: str) -> pl.DataFrame:
     """Return rows for a specific quarter label."""
-    return df[df["_quarter"] == quarter].copy()
+    return df.filter(pl.col("_quarter") == quarter)
 
 
-def get_snapshot_date(df: pd.DataFrame, quarter: str) -> str:
+def get_snapshot_date(df: pl.DataFrame, quarter: str) -> str:
     """Return the snapshot date string for a quarter."""
-    rows = df[df["_quarter"] == quarter]
-    if rows.empty:
+    rows = df.filter(pl.col("_quarter") == quarter)
+    if rows.is_empty():
         return ""
-    return str(rows["_snapshot_date"].iloc[0])
+    return str(rows["_snapshot_date"][0])
 
 
-def get_model_names(df: pd.DataFrame) -> list[str]:
-    values = df[config.PD_MODEL_COLUMN].map(_normalize_model_name)
-    return sorted({value for value in values if value})
+def get_model_names(df: pl.DataFrame) -> list[str]:
+    values = df.select(config.PD_MODEL_COLUMN).to_series().to_list()
+    return sorted({_normalize_model_name(value) for value in values if _normalize_model_name(value)})
 
 
-def get_segment_values(df: pd.DataFrame) -> list[str]:
-    values = df[config.SEGMENT_COLUMN].astype(str).str.strip()
-    return sorted({value for value in values if value and value.lower() != "nan"})
+def get_segment_values(df: pl.DataFrame) -> list[str]:
+    values = df.select(config.SEGMENT_COLUMN).to_series().to_list()
+    clean = {_normalize_model_name(value) for value in values}
+    return sorted({value for value in clean if value and value.lower() != "nan"})
 
 
 # ---------------------------------------------------------------------------
 # Monitoring thresholds
 # ---------------------------------------------------------------------------
-def _records(df: pd.DataFrame) -> list[dict[str, Any]]:
-    """Convert a DataFrame to a list of JSON-safe records (NaN -> None)."""
-    if df.empty:
+def _records(df: pl.DataFrame) -> list[dict[str, Any]]:
+    """Convert a DataFrame to a list of JSON-safe records."""
+    if df.is_empty():
         return []
-    return df.where(pd.notna(df), None).to_dict(orient="records")
+    return df.to_dicts()
 
 
 def load_monitoring_thresholds() -> dict[str, list[dict[str, Any]]]:
@@ -121,11 +183,13 @@ def load_monitoring_thresholds() -> dict[str, list[dict[str, Any]]]:
         ("pd_thresholds", config.PD_THRESHOLDS_SHEET_NAME),
         ("crr_master_scale", config.CRR_MASTER_SCALE_SHEET_NAME),
         ("rag_assignment_pd", config.RAG_ASSIGNMENT_PD_SHEET_NAME),
+        ("lgd_thresholds", config.LGD_THRESHOLDS_SHEET_NAME),
+        ("loss_thresholds", config.LOSS_THRESHOLDS_SHEET_NAME),
     ):
         try:
-            df = pd.read_excel(config.MONITORING_THRESHOLDS_FILE, sheet_name=sheet_name)
+            df = _read_excel_sheet(config.MONITORING_THRESHOLDS_FILE, sheet_name)
             thresholds[key] = _records(df)
-            log.info("Loaded thresholds sheet '%s' as %s (%d rows)", sheet_name, key, len(df))
+            log.info("Loaded thresholds sheet '%s' as %s (%d rows)", sheet_name, key, df.height)
         except Exception as exc:  # noqa: BLE001 - mirror original best-effort loading
             log.warning("Unable to load sheet '%s' for %s: %s", sheet_name, key, exc)
             thresholds[key] = []
@@ -136,7 +200,7 @@ def load_monitoring_thresholds() -> dict[str, list[dict[str, Any]]]:
 # ---------------------------------------------------------------------------
 # PD performance observations (1y / 2y / NCO 1y)
 # ---------------------------------------------------------------------------
-def build_pd_performance_observations(df: pd.DataFrame) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def build_pd_performance_observations(df: pl.DataFrame) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Return the compact row-level payload needed for interactive PD metrics.
 
     Port of ``_build_pd_performance_observations``.
@@ -172,39 +236,44 @@ def build_pd_performance_observations(df: pd.DataFrame) -> tuple[dict[str, Any],
         for column in [columns["observed_column"], columns["predicted_column"], columns.get("ead_column")]
         if column
     ]))
-    observations = df[payload_columns].copy()
-    observations[model_column] = observations[model_column].map(_normalize_model_name)
-    observations[segment_column] = observations[segment_column].astype(str).str.strip()
-    observations = observations.dropna(subset=["_quarter"])
-    observations = observations[
-        (observations[model_column] != "")
-        & (observations[segment_column] != "")
-    ]
+    observations = df.select(payload_columns).with_columns(
+        [
+            pl.col(model_column).map_elements(_normalize_model_name, return_dtype=pl.String),
+            pl.col(segment_column).map_elements(_normalize_model_name, return_dtype=pl.String),
+        ]
+    )
+    observations = observations.filter(
+        pl.col("_quarter").is_not_null()
+        & (pl.col(model_column) != "")
+        & (pl.col(segment_column) != "")
+    )
 
-    for columns in available_horizons.values():
-        observed_column = columns["observed_column"]
-        observations[observed_column] = pd.to_numeric(observations[observed_column], errors="coerce")
-        predicted_column = columns["predicted_column"]
-        observations[predicted_column] = pd.to_numeric(observations[predicted_column], errors="coerce")
-        ead_column = columns.get("ead_column")
-        if ead_column and ead_column in observations.columns:
-            observations[ead_column] = pd.to_numeric(observations[ead_column], errors="coerce")
+    numeric_columns = list(dict.fromkeys([
+        column
+        for columns in available_horizons.values()
+        for column in [columns["observed_column"], columns["predicted_column"], columns.get("ead_column")]
+        if column and column in observations.columns
+    ]))
+    if numeric_columns:
+        observations = observations.with_columns(
+            [pl.col(column).cast(pl.Float64, strict=False).alias(column) for column in numeric_columns]
+        )
 
     result = []
-    for _, row in observations.iterrows():
+    for row in observations.iter_rows(named=True):
         horizons = {}
         for horizon, columns in available_horizons.items():
             observed = row[columns["observed_column"]]
-            if pd.isna(observed) or observed not in (0, 1):
+            if _is_missing(observed) or observed not in (0, 1):
                 continue
             predicted = row[columns["predicted_column"]]
-            if not pd.isna(predicted) and 0 <= predicted <= 1:
+            if not _is_missing(predicted) and 0 <= predicted <= 1:
                 ead_column = columns.get("ead_column")
-                ead = row[ead_column] if ead_column and ead_column in observations.columns else np.nan
+                ead = row[ead_column] if ead_column and ead_column in observations.columns else None
                 horizons[horizon] = {
                     "observed": int(observed),
                     "predicted": round(float(predicted), 8),
-                    "ead": round(float(ead), 2) if not pd.isna(ead) and ead >= 0 else None,
+                    "ead": round(float(ead), 2) if not _is_missing(ead) and ead >= 0 else None,
                 }
         if horizons:
             result.append(
@@ -212,7 +281,7 @@ def build_pd_performance_observations(df: pd.DataFrame) -> tuple[dict[str, Any],
                     "quarter": row["_quarter"],
                     "model": row[model_column],
                     "segment": row[segment_column],
-                    "rating": _normalize_model_name(row[rating_column]) if rating_column in observations.columns else "",
+                    "rating": _format_rating_value(row[rating_column]) if rating_column in observations.columns else "",
                     "horizons": horizons,
                 }
             )
@@ -223,7 +292,7 @@ def build_pd_performance_observations(df: pd.DataFrame) -> tuple[dict[str, Any],
 # ---------------------------------------------------------------------------
 # Rating migration (worst-grade per facility per quarter)
 # ---------------------------------------------------------------------------
-def build_rating_migration_observations(df: pd.DataFrame) -> tuple[list[str], list[dict[str, Any]]]:
+def build_rating_migration_observations(df: pl.DataFrame) -> tuple[list[str], list[dict[str, Any]]]:
     """Return one worst-grade rating row per facility and quarter.
 
     Port of ``_build_rating_migration_observations``.
@@ -239,22 +308,29 @@ def build_rating_migration_observations(df: pd.DataFrame) -> tuple[list[str], li
         log.warning("Rating migration columns not found: %s", missing)
         return [], []
 
-    observations = df[required].copy()
-    observations[id_column] = observations[id_column].map(_normalize_model_name)
-    observations[model_column] = observations[model_column].map(_normalize_model_name)
-    observations[segment_column] = observations[segment_column].astype(str).str.strip()
-    observations["_rating_numeric"] = pd.to_numeric(observations[rating_column], errors="coerce")
-    observations = observations.dropna(subset=["_quarter", "_rating_numeric"])
-    observations = observations[
-        (observations[id_column] != "")
-        & (observations[model_column] != "")
-        & (observations[segment_column] != "")
-    ]
+    observations = df.select(required).with_columns(
+        [
+            pl.col(id_column).map_elements(_normalize_model_name, return_dtype=pl.String),
+            pl.col(model_column).map_elements(_normalize_model_name, return_dtype=pl.String),
+            pl.col(segment_column).map_elements(_normalize_model_name, return_dtype=pl.String),
+            pl.col(rating_column).cast(pl.Float64, strict=False).alias("_rating_numeric"),
+        ]
+    )
+    observations = observations.filter(
+        pl.col("_quarter").is_not_null()
+        & pl.col("_rating_numeric").is_not_null()
+        & (pl.col(id_column) != "")
+        & (pl.col(model_column) != "")
+        & (pl.col(segment_column) != "")
+    )
 
-    observations = observations.sort_values("_rating_numeric")
-    observations = observations.groupby(["_quarter", id_column], as_index=False).tail(1)
+    observations = observations.sort("_rating_numeric").unique(
+        subset=["_quarter", id_column],
+        keep="last",
+        maintain_order=True,
+    )
 
-    ratings = sorted(observations["_rating_numeric"].unique())
+    ratings = sorted(observations["_rating_numeric"].unique().to_list())
 
     def rating_label(value: float) -> str:
         return str(int(value)) if float(value).is_integer() else str(value)
@@ -269,7 +345,7 @@ def build_rating_migration_observations(df: pd.DataFrame) -> tuple[list[str], li
                 "segment": row[segment_column],
                 "rating": rating_label(row["_rating_numeric"]),
             }
-            for _, row in observations.iterrows()
+            for row in observations.iter_rows(named=True)
         ],
     )
 
@@ -322,15 +398,15 @@ def load_pd_mev_catalog() -> dict[str, Any]:
                 time_series = {}
 
             clean_range = {
-                "min": pd.to_numeric(dev_range.get("min"), errors="coerce"),
-                "max": pd.to_numeric(dev_range.get("max"), errors="coerce"),
-                "mean": pd.to_numeric(dev_range.get("mean"), errors="coerce"),
-                "2std_lower": pd.to_numeric(dev_range.get("2std_lower"), errors="coerce"),
-                "2std_upper": pd.to_numeric(dev_range.get("2std_upper"), errors="coerce"),
+                "min": _to_float(dev_range.get("min")),
+                "max": _to_float(dev_range.get("max")),
+                "mean": _to_float(dev_range.get("mean")),
+                "2std_lower": _to_float(dev_range.get("2std_lower")),
+                "2std_upper": _to_float(dev_range.get("2std_upper")),
                 "development_date": str(dev_range.get("development_date") or ""),
             }
             clean_range = {
-                key: (round(float(value), 6) if pd.notna(value) else None)
+                key: (round(float(value), 6) if value is not None else None)
                 for key, value in clean_range.items()
                 if key != "development_date"
             } | {"development_date": clean_range["development_date"]}
@@ -338,7 +414,7 @@ def load_pd_mev_catalog() -> dict[str, Any]:
             clean_series = {
                 str(period): round(float(value), 6)
                 for period, value in time_series.items()
-                if pd.notna(pd.to_numeric(value, errors="coerce"))
+                if _to_float(value) is not None
             }
             mevs[str(raw_mev_name).strip()] = {
                 "dev_range": clean_range,
@@ -367,8 +443,8 @@ def _clean_rank_ordering_series(raw_series: Any) -> dict[str, float]:
     clean: dict[str, float] = {}
     for raw_period, raw_value in raw_series.items():
         period = str(raw_period).strip()
-        value = pd.to_numeric(raw_value, errors="coerce")
-        if period and pd.notna(value):
+        value = _to_float(raw_value)
+        if period and value is not None:
             clean[period] = round(float(value), 6)
     return clean
 
