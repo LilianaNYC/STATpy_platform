@@ -23,6 +23,17 @@
      `.pd-overall-status`).
    ========================================================================== */
 
+/* Bundle Inter so the dashboard uses the same typeface on every machine
+   (no dependency on the OS having Inter installed, and no external CDN). The
+   variable font covers every weight the app uses (400-800). */
+@font-face{
+  font-family:'Inter';
+  font-style:normal;
+  font-weight:100 900;
+  font-display:swap;
+  src:url('fonts/InterVariable.woff2') format('woff2');
+}
+
 *{box-sizing:border-box;margin:0;padding:0;font-family:'Inter','Segoe UI',sans-serif}
 :root{
   --navy:#0f1d35;--navy-accent:#243860;--blue:#2563eb;--blue-light:#3b82f6;
@@ -39,30 +50,67 @@ body{background:#f8fafc;overflow:hidden}
    Monitoring shell
    --------------------------------------------------------------------- */
 .monitoring-shell{display:flex;height:100vh;max-height:100vh;overflow:hidden}
-.sidebar{width:220px;min-width:220px;height:100vh;background:var(--navy);display:flex;flex-direction:column;overflow-y:auto;scrollbar-gutter:stable}
+.sidebar{width:248px;min-width:248px;height:100vh;background:var(--navy);display:flex;flex-direction:column;overflow-y:auto;scrollbar-gutter:stable}
 .sidebar-logo{padding:20px 16px;border-bottom:1px solid var(--navy-accent)}
 .sidebar-logo .logo-icon{font-size:28px;margin-bottom:6px}
 .sidebar-logo h1{color:#fff;font-size:12px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;line-height:1.4}
 .sidebar-logo p{color:#94a3b8;font-size:10px;margin-top:2px}
-.nav-list{list-style:none;padding:8px 0;flex:1}
-.nav-item{display:flex;align-items:center;gap:10px;padding:10px 16px;cursor:pointer;color:#94a3b8;font-size:13px;font-weight:500;transition:all .15s;border-left:3px solid transparent;text-decoration:none}
+/* --- nav-tree: collapsible dashboard "folders" (native <details>) --- */
+.sidebar-nav-eyebrow{display:flex;align-items:baseline;justify-content:space-between;padding:18px 18px 8px}
+.sidebar-nav-eyebrow-label{color:#cbd5e1;font-size:10px;font-weight:800;letter-spacing:.72px;text-transform:uppercase}
+.sidebar-nav-eyebrow-count{color:#64748b;font-size:10px;font-weight:700}
+.nav-tree{margin:0;padding:0 12px 14px;display:flex;flex-direction:column;gap:6px;flex:1;min-height:0}
+.nav-group{border:1px solid transparent;border-radius:14px;transition:background .18s,border-color .18s}
+.nav-group[open]{background:rgba(15,29,53,.32);border-color:rgba(148,163,184,.12);box-shadow:0 10px 22px rgba(2,6,23,.16)}
+.nav-group-header{display:grid;grid-template-columns:30px minmax(0,1fr) auto auto;align-items:center;gap:10px;padding:11px 12px;border-radius:14px;color:#cbd5e1;cursor:pointer;list-style:none;transition:background .15s,color .15s}
+.nav-group-header::-webkit-details-marker{display:none}
+.nav-group-header::marker{content:""}
+.nav-group-header:hover{background:rgba(36,56,96,.42);color:#fff}
+.nav-group[open]>.nav-group-header{background:linear-gradient(135deg,rgba(37,99,235,.28) 0%,rgba(59,130,246,.16) 100%);color:#fff}
+.nav-group:not([open]) .nav-group-header.active{background:rgba(59,130,246,.12);color:#fff}
+.nav-group-header:focus-visible{outline:2px solid var(--blue-light,#60a5fa);outline-offset:2px}
+.nav-group-icon{display:flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:10px;background:rgba(59,130,246,.16);font-size:16px}
+.nav-group-title{font-size:12.5px;font-weight:700;line-height:1.3;color:inherit;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nav-group-count{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:20px;padding:0 7px;border-radius:999px;background:rgba(255,255,255,.08);color:#e2e8f0;font-size:10px;font-weight:800}
+.nav-group-chevron{color:#94a3b8;font-size:13px;line-height:1;transform:rotate(-90deg);transition:transform .22s ease}
+.nav-group[open] .nav-group-chevron{transform:rotate(0)}
+.nav-group-header:hover .nav-group-chevron{color:#e2e8f0}
+.nav-group-pages-list{list-style:none;margin:0;padding:4px 8px 8px;display:flex;flex-direction:column;gap:3px}
+.nav-group[open] .nav-group-pages-list{animation:navGroupReveal .2s ease}
+@keyframes navGroupReveal{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+.nav-item{display:flex;align-items:center;gap:10px;padding:9px 12px;cursor:pointer;color:#94a3b8;font-size:13px;font-weight:500;transition:all .15s;border-left:3px solid transparent;border-radius:12px;text-decoration:none}
 .nav-item:hover{background:var(--navy-accent);color:#e2e8f0}
 .nav-item.active{background:var(--navy-accent);color:#fff;border-left-color:var(--blue-light)}
 .nav-item.is-disabled{cursor:not-allowed;opacity:.72}
 .nav-item.is-disabled:hover{background:transparent;color:#94a3b8}
 .nav-icon{font-size:16px;width:20px;text-align:center}
-.sidebar-footer{padding:12px 16px;border-top:1px solid var(--navy-accent);color:#475569;font-size:10.5px;line-height:1.7}
+.sidebar-footer{padding:12px 16px;border-top:1px solid var(--navy-accent);color:#475569;font-size:10.5px;line-height:1.7;display:flex;flex-direction:column;gap:2px}
+.sidebar-footer-refresh,.sidebar-footer-version{display:block;opacity:.85}
 .main{flex:1;min-width:0;height:100vh;display:flex;flex-direction:column;overflow:hidden}
 .page-shell{display:flex;flex-direction:column;flex:1;min-height:0}
 .top-bar{background:#fff;border-bottom:1px solid var(--border);padding:14px 24px 16px;display:flex;align-items:flex-start;gap:16px;flex-shrink:0;box-shadow:0 8px 24px rgba(15,23,42,.04);z-index:20}
-.saas-download-report-button{display:inline-flex;align-items:center;gap:6px;flex-shrink:0;white-space:nowrap}
 .saas-download-report-icon{font-size:13px;line-height:1}
-.saas-download-actions{display:flex;flex-direction:column;gap:8px;flex-shrink:0}
-.saas-download-action-row{display:flex;align-items:center;gap:6px}
-.saas-download-action-row .saas-download-report-button{flex:1 1 auto;justify-content:center}
-.saas-download-info{cursor:help}
-.saas-download-excel-button{background:#ecfdf5;border-color:#a7f3d0;color:#047857}
-.saas-download-excel-button:hover,.saas-download-excel-button:focus{background:#d1fae5;border-color:#6ee7b7;color:#065f46}
+.saas-download-actions{position:relative;flex-shrink:0;min-width:168px}
+.saas-download-toggle{display:flex;align-items:center;justify-content:center;gap:7px;width:100%;min-height:34px;list-style:none;cursor:pointer;user-select:none}
+.saas-download-toggle::-webkit-details-marker{display:none}
+.saas-download-actions.is-disabled .saas-download-toggle{opacity:.52;cursor:not-allowed;pointer-events:none;box-shadow:none}
+.saas-download-actions.is-disabled .saas-download-report-icon,
+.saas-download-actions.is-disabled .saas-download-toggle-label,
+.saas-download-actions.is-disabled .saas-download-caret{color:#94a3b8}
+.saas-download-toggle-label{font-size:11px;font-weight:800;letter-spacing:.28px}
+.saas-download-caret{font-size:10px;line-height:1;transition:transform .15s}
+.saas-download-actions[open] .saas-download-caret{transform:rotate(180deg)}
+.saas-download-menu-panel{position:absolute;top:calc(100% + 8px);right:0;z-index:90;width:min(292px,calc(100vw - 40px));padding:5px;border:1px solid #dbe4f0;border-radius:14px;background:#fff;box-shadow:0 18px 46px rgba(15,23,42,.18)}
+.saas-download-menu-panel::before{content:"";position:absolute;right:22px;top:-6px;width:10px;height:10px;border-left:1px solid #dbe4f0;border-top:1px solid #dbe4f0;background:#fff;transform:rotate(45deg)}
+.saas-download-menu-item{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"title format";align-items:center;gap:8px 10px;width:100%;min-height:42px;padding:7px 9px;border:1px solid transparent;border-radius:10px;background:transparent;color:var(--text);text-align:left;cursor:pointer;transition:background .15s,border-color .15s,transform .15s}
+.saas-download-menu-item:hover,.saas-download-menu-item:focus{background:#f8fbff;border-color:#dbeafe;outline:none;transform:translateY(-1px)}
+.saas-download-menu-item:disabled{cursor:not-allowed;opacity:.58;transform:none}
+.saas-download-menu-item:disabled:hover,.saas-download-menu-item:disabled:focus{background:transparent;border-color:transparent;box-shadow:none}
+.saas-download-menu-item+.saas-download-menu-item{margin-top:1px}
+.saas-download-item-title{grid-area:title;font-size:12px;font-weight:800;line-height:1.25;color:var(--text)}
+.saas-download-item-format{grid-area:format;align-self:center;justify-self:end;padding:4px 7px;border:1px solid #dbe4f0;border-radius:999px;background:#f8fafc;color:#475569;font-size:9px;font-weight:800;letter-spacing:.3px;text-transform:uppercase;white-space:nowrap}
+.saas-download-compare-note{margin:5px 4px 2px;padding:7px 9px;border-left:3px solid #cbd5e1;border-radius:6px;background:#f8fafc;color:#64748b;font-size:10.5px;line-height:1.4}
+.saas-download-compare-note.is-hidden{display:none}
 .saas-modal-overlay{position:fixed;inset:0;background:rgba(15,23,42,.45);display:none;align-items:center;justify-content:center;z-index:1000}
 .saas-modal-overlay.is-open{display:flex}
 .saas-modal{background:#fff;border-radius:12px;padding:22px 24px;width:380px;max-width:92vw;box-shadow:0 18px 48px rgba(15,23,42,.28)}
@@ -76,7 +124,6 @@ body{background:#f8fafc;overflow:hidden}
 .content{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:14px 24px 26px;scrollbar-gutter:stable}
 .tab-panel{display:none}
 .tab-panel.active{display:block}
-.page-footer{flex-shrink:0;background:#fff;border-top:1px solid var(--border);padding:10px 24px;display:flex;align-items:center;gap:20px;font-size:10.5px;line-height:1.5;color:var(--text-muted)}
 #tab-pd_models,.pd-performance-app{max-width:1760px;margin:0 auto}
 
 /* ---------------------------------------------------------------------
@@ -86,8 +133,8 @@ body{background:#f8fafc;overflow:hidden}
 .monitoring-filter{display:flex;flex-direction:column;gap:5px;position:relative}
 .monitoring-filter>label{font-size:10px;color:#64748b;font-weight:800;letter-spacing:.35px;text-transform:uppercase}
 .saas-top-filter-row{display:grid;column-gap:14px;row-gap:12px;align-items:end;justify-content:flex-start}
-.saas-primary-filter-row{grid-template-columns:repeat(3,minmax(127px,155px)) repeat(auto-fit,minmax(95px,116px))}
-.saas-secondary-filter-row{grid-template-columns:repeat(auto-fit,minmax(127px,155px));margin-top:14px;padding-top:12px;border-top:1px solid #e8eef6}
+.saas-primary-filter-row{grid-template-columns:repeat(3,minmax(140px,171px)) repeat(auto-fit,minmax(105px,128px))}
+.saas-secondary-filter-row{grid-template-columns:repeat(auto-fit,minmax(140px,171px));margin-top:14px;padding-top:12px;border-top:1px solid #e8eef6}
 .saas-top-filter-row .monitoring-filter{width:100%;min-width:0 !important;max-width:none !important}
 .saas-top-filter-row .monitoring-top-select,
 .saas-top-filter-row .single-select-dropdown,
@@ -166,6 +213,20 @@ body{background:#f8fafc;overflow:hidden}
 .single-select-option-label{line-height:1.25}
 .single-select-option-check{color:var(--blue);font-size:12px;font-weight:700;opacity:0;flex-shrink:0}
 .single-select-option.is-selected .single-select-option-check{opacity:1}
+/* Application-wide: every dropdown value/option and checkbox-dropdown label uses
+   the same font as the Reporting Cycle dropdown (Inter, 12px, weight 500) - both
+   the custom checkbox dropdowns and the react-select (dcc.Dropdown) controls. */
+.checkbox-dropdown-toggle,
+.checkbox-dropdown-menu label,
+.single-select-option,
+.Select-control,
+.Select-value,
+.Select-value-label,
+.Select-placeholder,
+.Select-input>input,
+.Select-menu-outer,
+.Select-option,
+.VirtualizedSelectOption{font-family:'Inter','Segoe UI',sans-serif;font-size:12px;font-weight:500}
 .checkbox-dropdown-menu input[type="checkbox"]{width:16px;height:16px;accent-color:var(--blue);cursor:pointer}
 .checkbox-dropdown-menu input[type="checkbox"]:disabled{cursor:not-allowed;opacity:.5}
 .checkbox-dropdown-menu label:has(input:disabled){color:var(--text-muted);cursor:not-allowed}
@@ -277,7 +338,7 @@ tr:last-child td{border-bottom:none}
 .pd-range-controls{display:flex;align-items:flex-end;gap:5px;flex-wrap:wrap;padding:6px;background:#f8fafc;border:1px solid var(--border);border-radius:7px}
 .pd-range-controls label{display:flex;flex-direction:column;gap:2px}
 .pd-range-controls span{font-size:10px;color:var(--text-muted);font-weight:800;text-transform:uppercase;letter-spacing:.25px}
-.pd-range-controls select,.pd-range-controls .Select-control{height:28px;max-width:132px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--text);font-size:11px}
+.pd-range-controls select,.pd-range-controls .Select-control{height:28px;max-width:132px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--text);font-size:12px}
 .pd-range-controls label:first-child select{max-width:128px}
 .pd-performance-comparison{display:flex;justify-content:space-between;gap:12px;border-top:1px solid #f1f5f9;margin-top:auto;padding-top:12px}
 .pd-performance-comparison div{display:flex;flex-direction:column;gap:4px}
@@ -416,9 +477,16 @@ tr:last-child td{border-bottom:none}
 .pd-mev-empty-state{padding:18px 18px 8px;border-style:dashed;background:linear-gradient(135deg,#ffffff 0%,#f8fafc 70%,#f1f5f9 100%)}
 .pd-mev-empty-state .pd-section-subtitle{margin-top:14px}
 .saas-getting-started{padding-bottom:18px}
+.saas-getting-started-summary{margin-top:14px;padding:12px 14px;border:1px solid #dbe4f0;border-radius:12px;background:linear-gradient(135deg,#eff6ff 0%,#f8fbff 52%,#ffffff 100%);box-shadow:inset 0 1px 0 rgba(255,255,255,.85)}
+.saas-getting-started-summary-title{font-size:11px;font-weight:800;letter-spacing:.45px;text-transform:uppercase;color:#1d4ed8}
+.saas-getting-started-highlights{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.saas-getting-started-highlight{display:inline-flex;align-items:center;min-height:28px;padding:6px 10px;border:1px solid #bfdbfe;border-radius:999px;background:rgba(255,255,255,.92);color:#1e3a8a;font-size:11px;font-weight:700;line-height:1.35}
+.saas-getting-started-summary-note{margin-top:10px;font-size:11.5px;line-height:1.55;color:#475569}
 .saas-getting-started-steps{margin:14px 0 0;padding-left:22px;display:flex;flex-direction:column;gap:9px;max-width:90ch}
 .saas-getting-started-steps li{font-size:12.5px;line-height:1.55;color:#334155}
 .saas-getting-started-steps li strong{color:var(--navy)}
+.saas-getting-started-substeps{margin:6px 0 2px;padding-left:20px;display:flex;flex-direction:column;gap:4px}
+.saas-getting-started-substeps li{font-size:12px;line-height:1.5;color:#475569}
 .saas-getting-started-note{display:block;margin-top:4px;font-size:11.5px;line-height:1.5;color:#92400e;background:#fffbeb;border-left:3px solid #f59e0b;border-radius:4px;padding:5px 9px}
 .pd-default-rate-trend-section{margin-top:0}
 .pd-default-rate-trend-chart{min-height:460px}
@@ -568,6 +636,617 @@ tr:last-child td{border-bottom:none}
 .saas-model-panel-stack{display:flex;flex-direction:column;gap:18px}
 
 /* ---------------------------------------------------------------------
+   App theme
+   --------------------------------------------------------------------- */
+.app-theme-control{margin-top:14px;padding-top:12px;border-top:1px solid var(--navy-accent)}
+.app-theme-label{margin-bottom:6px;color:#94a3b8;font-size:9px;font-weight:800;letter-spacing:.45px;text-transform:uppercase}
+.app-theme-toggle{display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:3px;border:1px solid rgba(148,163,184,.22);border-radius:8px;background:rgba(15,23,42,.36)}
+.app-theme-toggle-option{display:flex;align-items:center;justify-content:center;min-height:26px;border-radius:6px;color:#94a3b8;font-size:10px;font-weight:800;line-height:1;cursor:pointer;transition:background .15s,color .15s}
+.app-theme-toggle-input{position:absolute;opacity:0;pointer-events:none}
+.app-theme-toggle-option:has(input:checked){background:#3b82f6;color:#fff;box-shadow:0 6px 14px rgba(37,99,235,.24)}
+.app-theme-toggle-option:focus-within{outline:2px solid rgba(96,165,250,.5);outline-offset:2px}
+
+.monitoring-shell.theme-dark{
+  --dark-bg:#0b1020;
+  --dark-bg-soft:#0f172a;
+  --dark-rail:#08111f;
+  --dark-topbar:rgba(13,22,38,.94);
+  --dark-surface:#111c2f;
+  --dark-surface-2:#152238;
+  --dark-surface-3:#1b2b45;
+  --dark-surface-hover:#203452;
+  --dark-border:rgba(148,163,184,.20);
+  --dark-border-strong:rgba(186,204,228,.34);
+  --dark-text:#f6f8fc;
+  --dark-text-soft:#d8e1ee;
+  --dark-muted:#a7b4c8;
+  --dark-subtle:#7f90aa;
+  --dark-accent:#7dd3fc;
+  --dark-accent-strong:#38bdf8;
+  --dark-accent-soft:rgba(125,211,252,.14);
+  --dark-success:#86efac;
+  --dark-warning:#fbbf24;
+  --dark-danger:#fb7185;
+  --dark-purple:#c4b5fd;
+  --dark-shadow:0 18px 42px rgba(0,0,0,.28);
+  --text:var(--dark-text-soft);
+  --text-muted:var(--dark-muted);
+  --border:var(--dark-border);
+  --gray-light:var(--dark-surface-2);
+  --pd-line:var(--dark-border);
+  --pd-panel:var(--dark-surface);
+  --navy:var(--dark-accent);
+  --navy-accent:rgba(125,211,252,.14);
+  --blue:var(--dark-accent-strong);
+  --blue-light:var(--dark-accent);
+  --green:var(--dark-success);
+  --red:var(--dark-danger);
+  --card-shadow:var(--dark-shadow);
+  color-scheme:dark;
+  color:var(--dark-text-soft);
+  background:
+    radial-gradient(circle at 88% 8%,rgba(56,189,248,.15),transparent 34%),
+    radial-gradient(circle at 12% 18%,rgba(196,181,253,.10),transparent 28%),
+    linear-gradient(180deg,var(--dark-bg) 0%,#0d1526 46%,#0a1220 100%);
+}
+.monitoring-shell.theme-dark .sidebar{
+  background:
+    linear-gradient(180deg,rgba(8,17,31,.98) 0%,rgba(9,16,29,.98) 100%);
+  border-right:1px solid rgba(148,163,184,.10);
+}
+.monitoring-shell.theme-dark .sidebar-logo,
+.monitoring-shell.theme-dark .sidebar-footer{
+  border-color:rgba(148,163,184,.16);
+}
+.monitoring-shell.theme-dark .sidebar-logo h1,
+.monitoring-shell.theme-dark .monitoring-dashboard-title,
+.monitoring-shell.theme-dark .section-title,
+.monitoring-shell.theme-dark .pd-domain-heading h3,
+.monitoring-shell.theme-dark .pd-content-heading h3,
+.monitoring-shell.theme-dark .pd-chapter-heading h2,
+.monitoring-shell.theme-dark .pd-chart-heading .section-title,
+.monitoring-shell.theme-dark .pd-test-card-heading h4,
+.monitoring-shell.theme-dark .pd-test-value,
+.monitoring-shell.theme-dark .pd-domain-status strong,
+.monitoring-shell.theme-dark .pd-placeholder-title,
+.monitoring-shell.theme-dark .pd-mev-chart-title,
+.monitoring-shell.theme-dark .pd-mev-model-copy h4,
+.monitoring-shell.theme-dark .saas-historical-dispersion-title,
+.monitoring-shell.theme-dark .pd-overview-flow-node-label,
+.monitoring-shell.theme-dark .pd-overview-flow-node-value,
+.monitoring-shell.theme-dark .pd-overview-flow-performance-title,
+.monitoring-shell.theme-dark .pd-overview-flow-performance strong{
+  color:var(--dark-text);
+}
+.monitoring-shell.theme-dark .sidebar-logo p,
+.monitoring-shell.theme-dark .sidebar-footer,
+.monitoring-shell.theme-dark .nav-item,
+.monitoring-shell.theme-dark .nav-group-header{
+  color:var(--dark-muted);
+}
+.monitoring-shell.theme-dark .sidebar-nav-eyebrow-label{
+  color:rgba(186,230,253,.88);
+}
+.monitoring-shell.theme-dark .nav-group[open]{
+  background:rgba(15,23,42,.42);
+  border-color:rgba(148,163,184,.12);
+  box-shadow:0 16px 30px rgba(2,6,23,.26);
+}
+.monitoring-shell.theme-dark .nav-group-header:hover{
+  background:rgba(14,116,144,.16);
+  color:var(--dark-text);
+}
+.monitoring-shell.theme-dark .nav-group[open]>.nav-group-header{
+  background:linear-gradient(135deg,rgba(14,116,144,.24) 0%,rgba(6,182,212,.14) 100%);
+  color:var(--dark-text);
+}
+.monitoring-shell.theme-dark .nav-group:not([open]) .nav-group-header.active{
+  background:rgba(14,116,144,.18);
+  color:var(--dark-text);
+}
+.monitoring-shell.theme-dark .nav-group-icon{
+  background:rgba(103,232,249,.12);
+}
+.monitoring-shell.theme-dark .nav-group-count{
+  border-color:rgba(148,163,184,.18);
+  background:rgba(125,211,252,.08);
+}
+.monitoring-shell.theme-dark .nav-item:hover,
+.monitoring-shell.theme-dark .nav-item.active{
+  background:linear-gradient(90deg,rgba(125,211,252,.14) 0%,rgba(125,211,252,.06) 100%);
+  color:var(--dark-text);
+}
+.monitoring-shell.theme-dark .nav-item.active{
+  border-left-color:var(--dark-accent);
+  box-shadow:inset 1px 0 0 rgba(125,211,252,.42);
+}
+.monitoring-shell.theme-dark .nav-item.is-disabled:hover{
+  background:transparent;
+  color:var(--dark-subtle);
+}
+.monitoring-shell.theme-dark .app-theme-control{border-top-color:rgba(148,163,184,.18)}
+.monitoring-shell.theme-dark .app-theme-label{color:var(--dark-subtle)}
+.monitoring-shell.theme-dark .app-theme-toggle{
+  background:rgba(15,23,42,.78);
+  border-color:rgba(148,163,184,.18);
+}
+.monitoring-shell.theme-dark .app-theme-toggle-option{color:var(--dark-muted)}
+.monitoring-shell.theme-dark .app-theme-toggle-option:hover{
+  background:rgba(125,211,252,.10);
+  color:var(--dark-text);
+}
+.monitoring-shell.theme-dark .app-theme-toggle-option:has(input:checked){
+  background:linear-gradient(180deg,var(--dark-accent) 0%,var(--dark-accent-strong) 100%);
+  color:#06111f;
+  box-shadow:0 8px 18px rgba(56,189,248,.22);
+}
+.monitoring-shell.theme-dark .app-theme-toggle-option:focus-within{outline-color:rgba(125,211,252,.5)}
+.monitoring-shell.theme-dark .top-bar{
+  background:var(--dark-topbar);
+  border-bottom-color:rgba(148,163,184,.16);
+  box-shadow:0 16px 34px rgba(0,0,0,.24);
+  backdrop-filter:saturate(130%) blur(12px);
+}
+.monitoring-shell.theme-dark .main,
+.monitoring-shell.theme-dark .page-shell,
+.monitoring-shell.theme-dark .content{
+  background:transparent;
+}
+  color:var(--dark-muted);
+}
+.monitoring-shell.theme-dark .content{
+  scrollbar-color:rgba(125,211,252,.34) rgba(15,23,42,.42);
+}
+.monitoring-shell.theme-dark .monitoring-filter>label,
+.monitoring-shell.theme-dark .monitoring-section-subnav-label,
+.monitoring-shell.theme-dark .pd-card-title-row,
+.monitoring-shell.theme-dark .pd-mev-filter-group label,
+.monitoring-shell.theme-dark .pd-domain-status span,
+.monitoring-shell.theme-dark .pd-test-card-heading span,
+.monitoring-shell.theme-dark .pd-content-kicker,
+.monitoring-shell.theme-dark .pd-chapter-kicker,
+.monitoring-shell.theme-dark .saas-modal-label{
+  color:var(--dark-muted);
+}
+.monitoring-shell.theme-dark .pd-content-kicker,
+.monitoring-shell.theme-dark .pd-chapter-kicker,
+.monitoring-shell.theme-dark .pd-test-card-heading span{
+  color:var(--dark-accent);
+}
+.monitoring-shell.theme-dark .section-card,
+.monitoring-shell.theme-dark #pd-subnav.monitoring-section-subnav,
+.monitoring-shell.theme-dark #saas-subnav.monitoring-section-subnav,
+.monitoring-shell.theme-dark .pd-live-section,
+.monitoring-shell.theme-dark .pd-placeholder-section,
+.monitoring-shell.theme-dark .pd-placeholder-card,
+.monitoring-shell.theme-dark .pd-domain-status,
+.monitoring-shell.theme-dark .pd-test-card,
+.monitoring-shell.theme-dark .pd-chapter-heading,
+.monitoring-shell.theme-dark .pd-overview-flow-wrap,
+.monitoring-shell.theme-dark .pd-mev-filter-row,
+.monitoring-shell.theme-dark .pd-mev-model-panel,
+.monitoring-shell.theme-dark .pd-mev-chart-card,
+.monitoring-shell.theme-dark .saas-historical-dispersion,
+.monitoring-shell.theme-dark .pd-mev-empty-state,
+.monitoring-shell.theme-dark .pd-performance-note,
+.monitoring-shell.theme-dark .saas-date-range-controls .pd-range-controls,
+.monitoring-shell.theme-dark .pd-overview-flow-node,
+.monitoring-shell.theme-dark .pd-overview-flow-input{
+  border-color:var(--dark-border);
+  background:
+    linear-gradient(180deg,rgba(21,34,56,.96) 0%,rgba(17,28,47,.97) 100%);
+  box-shadow:var(--dark-shadow);
+  color:var(--dark-text);
+}
+.monitoring-shell.theme-dark .pd-live-section,
+.monitoring-shell.theme-dark .pd-mev-model-panel,
+.monitoring-shell.theme-dark .pd-mev-chart-card{
+  box-shadow:0 18px 48px rgba(0,0,0,.24), inset 0 1px 0 rgba(255,255,255,.035);
+}
+.monitoring-shell.theme-dark .pd-placeholder-section,
+.monitoring-shell.theme-dark .pd-placeholder-card,
+.monitoring-shell.theme-dark .pd-mev-empty-state{
+  border-style:dashed;
+  background:
+    linear-gradient(135deg,rgba(21,34,56,.88) 0%,rgba(13,21,38,.94) 100%);
+}
+.monitoring-shell.theme-dark .pd-chapter-body,
+.monitoring-shell.theme-dark .pd-domain-heading,
+.monitoring-shell.theme-dark .pd-content-heading,
+.monitoring-shell.theme-dark .pd-chart-heading,
+.monitoring-shell.theme-dark .pd-mev-model-heading,
+.monitoring-shell.theme-dark .monitoring-section-subnav-group+.monitoring-section-subnav-group,
+.monitoring-shell.theme-dark .pd-mev-development-row,
+.monitoring-shell.theme-dark .pd-mev-rag-model,
+.monitoring-shell.theme-dark .pd-test-footnote,
+.monitoring-shell.theme-dark .pd-performance-comparison,
+.monitoring-shell.theme-dark td,
+.monitoring-shell.theme-dark th{
+  border-color:var(--dark-border);
+}
+.monitoring-shell.theme-dark .pd-domain-heading p,
+.monitoring-shell.theme-dark .pd-content-heading p,
+.monitoring-shell.theme-dark .pd-chapter-heading p,
+.monitoring-shell.theme-dark .pd-placeholder-card p,
+.monitoring-shell.theme-dark .pd-mev-model-copy p,
+.monitoring-shell.theme-dark .pd-mev-chart-meta,
+.monitoring-shell.theme-dark .pd-performance-note,
+.monitoring-shell.theme-dark .saas-historical-dispersion-note,
+.monitoring-shell.theme-dark .saas-historical-dispersion-footer,
+.monitoring-shell.theme-dark .pd-section-subtitle,
+.monitoring-shell.theme-dark .pd-test-meta,
+.monitoring-shell.theme-dark .pd-test-footnote,
+.monitoring-shell.theme-dark .pd-mev-rag-model-meta,
+.monitoring-shell.theme-dark .pd-mev-marker-legend-label,
+.monitoring-shell.theme-dark .saas-getting-started-summary-note,
+.monitoring-shell.theme-dark .pd-overview-flow-node-note,
+.monitoring-shell.theme-dark .pd-overview-flow-input span,
+.monitoring-shell.theme-dark .saas-getting-started-steps li{
+  color:var(--dark-muted);
+}
+.monitoring-shell.theme-dark .saas-getting-started-summary{
+  border-color:var(--dark-border-strong);
+  background:linear-gradient(135deg,rgba(29,78,216,.16) 0%,rgba(20,33,54,.94) 58%,rgba(15,23,42,.96) 100%);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.04);
+}
+.monitoring-shell.theme-dark .saas-getting-started-summary-title{
+  color:#93c5fd;
+}
+.monitoring-shell.theme-dark .saas-getting-started-highlight{
+  border-color:rgba(125,211,252,.28);
+  background:rgba(15,23,42,.44);
+  color:#dbeafe;
+}
+.monitoring-shell.theme-dark .saas-getting-started-steps li strong,
+.monitoring-shell.theme-dark .pd-mev-marker-legend-date,
+.monitoring-shell.theme-dark .pd-performance-comparison strong,
+.monitoring-shell.theme-dark .pd-mev-development-row strong,
+.monitoring-shell.theme-dark .pd-mev-rag-model-header strong,
+.monitoring-shell.theme-dark td{
+  color:var(--dark-text-soft);
+}
+.monitoring-shell.theme-dark th{
+  background:rgba(21,34,56,.98);
+  color:var(--dark-text);
+}
+.monitoring-shell.theme-dark tr:hover td{
+  background:rgba(125,211,252,.04);
+}
+.monitoring-shell.theme-dark .pd-mev-model-badge,
+.monitoring-shell.theme-dark .saas-subnav-model-chip,
+.monitoring-shell.theme-dark .monitoring-section-subnav-links button,
+.monitoring-shell.theme-dark .pd-placeholder-badge,
+.monitoring-shell.theme-dark .pd-placeholder-tags span,
+.monitoring-shell.theme-dark .pd-chapter-note,
+.monitoring-shell.theme-dark .pd-mev-filter-reset,
+.monitoring-shell.theme-dark .btn,
+.monitoring-shell.theme-dark .pd-info-chip{
+  background:rgba(27,43,69,.82);
+  border-color:var(--dark-border);
+  color:var(--dark-text-soft);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.035);
+}
+.monitoring-shell.theme-dark .saas-subnav-model-chip:hover,
+.monitoring-shell.theme-dark .saas-subnav-model-chip:focus,
+.monitoring-shell.theme-dark .monitoring-section-subnav-links button:hover,
+.monitoring-shell.theme-dark .monitoring-section-subnav-links button:focus,
+.monitoring-shell.theme-dark .pd-mev-filter-reset:hover,
+.monitoring-shell.theme-dark .pd-mev-filter-reset:focus,
+.monitoring-shell.theme-dark .btn:hover,
+.monitoring-shell.theme-dark .btn:focus{
+  background:var(--dark-surface-hover);
+  border-color:rgba(125,211,252,.62);
+  color:var(--dark-text);
+  box-shadow:0 0 0 3px rgba(125,211,252,.12);
+}
+.monitoring-shell.theme-dark .btn:disabled,
+.monitoring-shell.theme-dark .pd-mev-filter-reset:disabled,
+.monitoring-shell.theme-dark .checkbox-dropdown-toggle:disabled{
+  background:rgba(21,34,56,.50);
+  border-color:rgba(148,163,184,.12);
+  color:var(--dark-subtle);
+  box-shadow:none;
+}
+.monitoring-shell.theme-dark .btn-primary{
+  background:linear-gradient(180deg,var(--dark-accent) 0%,var(--dark-accent-strong) 100%);
+  border-color:rgba(125,211,252,.86);
+  color:#06111f;
+  box-shadow:0 10px 24px rgba(56,189,248,.22);
+}
+.monitoring-shell.theme-dark .btn-primary:hover,
+.monitoring-shell.theme-dark .btn-primary:focus{
+  background:linear-gradient(180deg,#bae6fd 0%,#67e8f9 100%);
+  border-color:#bae6fd;
+  color:#06111f;
+}
+.monitoring-shell.theme-dark .saas-download-menu-panel{
+  background:linear-gradient(180deg,rgba(21,34,56,.98) 0%,rgba(10,18,32,.98) 100%);
+  border-color:var(--dark-border-strong);
+  box-shadow:0 24px 58px rgba(0,0,0,.36), inset 0 1px 0 rgba(255,255,255,.035);
+}
+.monitoring-shell.theme-dark .saas-download-menu-panel::before{
+  background:rgba(21,34,56,.98);
+  border-color:var(--dark-border-strong);
+}
+.monitoring-shell.theme-dark .saas-download-menu-item{
+  color:var(--dark-text-soft);
+}
+.monitoring-shell.theme-dark .saas-download-actions.is-disabled .saas-download-toggle{
+  opacity:.46;
+}
+.monitoring-shell.theme-dark .saas-download-actions.is-disabled .saas-download-report-icon,
+.monitoring-shell.theme-dark .saas-download-actions.is-disabled .saas-download-toggle-label,
+.monitoring-shell.theme-dark .saas-download-actions.is-disabled .saas-download-caret{
+  color:var(--dark-muted);
+}
+.monitoring-shell.theme-dark .saas-download-menu-item:hover,
+.monitoring-shell.theme-dark .saas-download-menu-item:focus{
+  background:rgba(32,52,82,.82);
+  border-color:rgba(125,211,252,.32);
+}
+.monitoring-shell.theme-dark .saas-download-menu-item:disabled{
+  opacity:.48;
+}
+.monitoring-shell.theme-dark .saas-download-menu-item:disabled:hover,
+.monitoring-shell.theme-dark .saas-download-menu-item:disabled:focus{
+  background:transparent;
+  border-color:transparent;
+}
+.monitoring-shell.theme-dark .saas-download-item-title{
+  color:var(--dark-text);
+}
+.monitoring-shell.theme-dark .saas-download-item-format{
+  background:rgba(125,211,252,.10);
+  border-color:rgba(125,211,252,.28);
+  color:#bae6fd;
+}
+.monitoring-shell.theme-dark .saas-download-compare-note{
+  background:rgba(125,211,252,.07);
+  border-left-color:rgba(125,211,252,.34);
+  color:#c8d4e3;
+  box-shadow:inset 0 0 0 1px rgba(125,211,252,.10);
+}
+.monitoring-shell.theme-dark .saas-subnav-model-chip.active,
+.monitoring-shell.theme-dark .monitoring-section-subnav-links button.active,
+.monitoring-shell.theme-dark .saas-inline-segmented .single-select-option.is-selected,
+.monitoring-shell.theme-dark .single-select-option.is-selected{
+  background:linear-gradient(180deg,var(--dark-accent-soft) 0%,rgba(56,189,248,.18) 100%);
+  border-color:rgba(125,211,252,.70);
+  color:var(--dark-text);
+  box-shadow:0 10px 24px rgba(56,189,248,.14);
+}
+.monitoring-shell.theme-dark .monitoring-top-select,
+.monitoring-shell.theme-dark .checkbox-dropdown-toggle,
+.monitoring-shell.theme-dark .single-select-option,
+.monitoring-shell.theme-dark .checkbox-dropdown-menu,
+.monitoring-shell.theme-dark .monitoring-top-select .Select-menu-outer,
+.monitoring-shell.theme-dark .monitoring-top-select .Select-control,
+.monitoring-shell.theme-dark .pd-range-controls select,
+.monitoring-shell.theme-dark .pd-range-controls .Select-control,
+.monitoring-shell.theme-dark .pd-mev-filter-select .Select-control{
+  background:rgba(10,18,32,.94) !important;
+  border-color:var(--dark-border) !important;
+  color:var(--dark-text-soft) !important;
+}
+.monitoring-shell.theme-dark .monitoring-top-select:hover,
+.monitoring-shell.theme-dark .checkbox-dropdown-toggle:hover,
+.monitoring-shell.theme-dark .checkbox-dropdown:has(.checkbox-dropdown-menu.open) .checkbox-dropdown-toggle,
+.monitoring-shell.theme-dark .checkbox-dropdown-toggle:focus-visible,
+.monitoring-shell.theme-dark .monitoring-top-select:has(.Select.is-open),
+.monitoring-shell.theme-dark .monitoring-top-select:has(.Select.is-focused){
+  border-color:rgba(125,211,252,.68) !important;
+  box-shadow:0 0 0 3px rgba(125,211,252,.13);
+}
+.monitoring-shell.theme-dark .monitoring-top-select .Select-value-label,
+.monitoring-shell.theme-dark .monitoring-top-select .Select-placeholder,
+.monitoring-shell.theme-dark .monitoring-top-select .Select-input>input,
+.monitoring-shell.theme-dark .single-select-option-label,
+.monitoring-shell.theme-dark .checkbox-dropdown-menu label{
+  color:var(--dark-text-soft) !important;
+}
+.monitoring-shell.theme-dark .monitoring-top-select .Select-placeholder{
+  color:var(--dark-muted) !important;
+}
+.monitoring-shell.theme-dark .monitoring-top-select .Select-arrow,
+.monitoring-shell.theme-dark .checkbox-dropdown-toggle::after{
+  border-top-color:var(--dark-muted);
+}
+.monitoring-shell.theme-dark .monitoring-top-select .Select-option,
+.monitoring-shell.theme-dark .monitoring-top-select .VirtualizedSelectOption,
+.monitoring-shell.theme-dark .checkbox-dropdown-menu label,
+.monitoring-shell.theme-dark .single-select-option{
+  background:rgba(10,18,32,.94);
+  color:var(--dark-text-soft);
+}
+.monitoring-shell.theme-dark .monitoring-top-select .Select-option.is-focused,
+.monitoring-shell.theme-dark .monitoring-top-select .Select-option:hover,
+.monitoring-shell.theme-dark .monitoring-top-select .VirtualizedSelectFocusedOption,
+.monitoring-shell.theme-dark .checkbox-dropdown-menu label:hover,
+.monitoring-shell.theme-dark .single-select-option:hover{
+  background:rgba(32,52,82,.96);
+  color:var(--dark-text);
+}
+.monitoring-shell.theme-dark .monitoring-top-select .Select-option.is-selected,
+.monitoring-shell.theme-dark .monitoring-top-select .VirtualizedSelectSelectedOption{
+  background:rgba(125,211,252,.18);
+  color:var(--dark-text);
+}
+.monitoring-shell.theme-dark .saas-historical-dispersion-card{
+  background:rgba(10,18,32,.84);
+  border-color:var(--dark-border);
+}
+.monitoring-shell.theme-dark .saas-historical-dispersion-card.is-neutral{
+  background:linear-gradient(180deg,rgba(21,34,56,.92) 0%,rgba(10,18,32,.92) 100%);
+}
+.monitoring-shell.theme-dark .saas-historical-dispersion-card.is-blue{
+  background:linear-gradient(180deg,rgba(125,211,252,.17) 0%,rgba(21,34,56,.94) 100%);
+  border-color:rgba(125,211,252,.50);
+}
+.monitoring-shell.theme-dark .saas-historical-dispersion-card.is-amber{
+  background:linear-gradient(180deg,rgba(251,191,36,.16) 0%,rgba(21,34,56,.94) 100%);
+  border-color:rgba(251,191,36,.52);
+}
+.monitoring-shell.theme-dark .saas-historical-dispersion-card-label,
+.monitoring-shell.theme-dark .saas-historical-dispersion-note,
+.monitoring-shell.theme-dark .saas-historical-dispersion-footer{
+  color:var(--dark-muted);
+}
+.monitoring-shell.theme-dark .saas-historical-dispersion-card-value{
+  color:var(--dark-text);
+}
+.monitoring-shell.theme-dark .saas-getting-started-note{
+  color:#c8d4e3;
+  background:rgba(125,211,252,.07);
+  border-left-color:rgba(125,211,252,.34);
+  box-shadow:inset 0 0 0 1px rgba(125,211,252,.10);
+}
+.monitoring-shell.theme-dark .pd-data-note{
+  color:#fde68a;
+  background:rgba(251,191,36,.12);
+  border-color:rgba(251,191,36,.42);
+  border-left-color:var(--dark-warning);
+}
+.monitoring-shell.theme-dark .saas-modal-overlay{
+  background:rgba(3,8,18,.72);
+  backdrop-filter:blur(4px);
+}
+.monitoring-shell.theme-dark .saas-modal{
+  background:linear-gradient(180deg,var(--dark-surface-2) 0%,var(--dark-surface) 100%);
+  border:1px solid var(--dark-border-strong);
+  box-shadow:0 28px 70px rgba(0,0,0,.46);
+}
+.monitoring-shell.theme-dark .saas-modal-title{
+  color:var(--dark-text);
+}
+.monitoring-shell.theme-dark .saas-modal-subtitle{
+  color:var(--dark-muted);
+}
+.monitoring-shell.theme-dark .saas-modal-cancel{
+  background:rgba(10,18,32,.84);
+}
+/* Export dialog dropdowns keep the default light control/menu, so the selected
+   value and the options in the list use a dark-gray font (the default light
+   gray is hard to read). */
+.monitoring-shell.theme-dark .saas-modal-dropdown .dash-dropdown-value-item,
+.monitoring-shell.theme-dark .saas-modal-dropdown .dash-dropdown-value,
+.monitoring-shell.theme-dark .saas-modal-dropdown .dash-dropdown-placeholder,
+.monitoring-shell.theme-dark .saas-modal-dropdown .dash-dropdown-option{
+  color:#374151 !important;
+}
+.monitoring-shell.theme-dark .pd-test-green,
+.monitoring-shell.theme-dark .pd-domain-green{border-left-color:var(--dark-success);border-top-color:var(--dark-success)}
+.monitoring-shell.theme-dark .pd-test-amber,
+.monitoring-shell.theme-dark .pd-domain-amber{border-left-color:var(--dark-warning);border-top-color:var(--dark-warning)}
+.monitoring-shell.theme-dark .pd-test-red,
+.monitoring-shell.theme-dark .pd-domain-red{border-left-color:var(--dark-danger);border-top-color:var(--dark-danger)}
+.monitoring-shell.theme-dark .pd-test-status-green,
+.monitoring-shell.theme-dark .pd-rag-green{color:var(--dark-success)}
+.monitoring-shell.theme-dark .pd-test-status-amber,
+.monitoring-shell.theme-dark .pd-rag-amber{color:var(--dark-warning)}
+.monitoring-shell.theme-dark .pd-test-status-red,
+.monitoring-shell.theme-dark .pd-rag-red{color:var(--dark-danger)}
+.monitoring-shell.theme-dark .pd-test-status-na,
+.monitoring-shell.theme-dark .pd-rag-na{color:var(--dark-subtle)}
+.monitoring-shell.theme-dark .pd-mev-rag-tag-green,
+.monitoring-shell.theme-dark .pd-mev-threshold-chip-green{
+  background:rgba(134,239,172,.12);
+  border-color:rgba(134,239,172,.38);
+  color:#bbf7d0;
+}
+.monitoring-shell.theme-dark .pd-mev-rag-tag-amber,
+.monitoring-shell.theme-dark .pd-mev-threshold-chip-amber{
+  background:rgba(251,191,36,.12);
+  border-color:rgba(251,191,36,.38);
+  color:#fde68a;
+}
+.monitoring-shell.theme-dark .pd-mev-rag-tag-red,
+.monitoring-shell.theme-dark .pd-mev-threshold-chip-red{
+  background:rgba(251,113,133,.12);
+  border-color:rgba(251,113,133,.40);
+  color:#fecdd3;
+}
+.monitoring-shell.theme-dark .pd-rag-tag-neutral,
+.monitoring-shell.theme-dark .pd-mev-rag-tag-neutral{
+  background:rgba(27,43,69,.82);
+  border-color:var(--dark-border);
+  color:var(--dark-muted);
+}
+.monitoring-shell.theme-dark .pd-overview-flow{
+  --flow-blue:var(--dark-accent);
+}
+.monitoring-shell.theme-dark .pd-overview-flow-stage{
+  background:linear-gradient(180deg,#67e8f9 0%,#38bdf8 100%);
+  color:#06111f;
+  box-shadow:0 14px 26px rgba(56,189,248,.18);
+}
+.monitoring-shell.theme-dark .pd-overview-flow-input{
+  border-color:rgba(125,211,252,.36);
+  background:linear-gradient(180deg,rgba(125,211,252,.13) 0%,rgba(21,34,56,.92) 100%);
+}
+.monitoring-shell.theme-dark .pd-overview-flow-input-balance{
+  border-color:rgba(196,181,253,.36);
+  background:linear-gradient(180deg,rgba(196,181,253,.12) 0%,rgba(21,34,56,.92) 100%);
+}
+.monitoring-shell.theme-dark .pd-overview-flow-node-green{background:linear-gradient(180deg,rgba(134,239,172,.16) 0%,rgba(21,34,56,.96) 100%);border-color:rgba(134,239,172,.46)}
+.monitoring-shell.theme-dark .pd-overview-flow-node-amber{background:linear-gradient(180deg,rgba(251,191,36,.16) 0%,rgba(21,34,56,.96) 100%);border-color:rgba(251,191,36,.46)}
+.monitoring-shell.theme-dark .pd-overview-flow-node-red{background:linear-gradient(180deg,rgba(251,113,133,.16) 0%,rgba(21,34,56,.96) 100%);border-color:rgba(251,113,133,.48)}
+.monitoring-shell.theme-dark .pd-overview-flow-node-na{background:linear-gradient(180deg,rgba(27,43,69,.94) 0%,rgba(17,28,47,.96) 100%)}
+.monitoring-shell.theme-dark .pd-overview-flow-link:hover,
+.monitoring-shell.theme-dark .pd-overview-flow-link:focus{
+  box-shadow:0 0 0 3px rgba(125,211,252,.15) inset;
+}
+.monitoring-shell.theme-dark .pd-overview-flow-performance{
+  --perf-bg-start:rgba(251,191,36,.16);
+  --perf-bg-end:rgba(21,34,56,.96);
+  --perf-shadow:rgba(0,0,0,.24);
+  --perf-gauge-bg:rgba(251,191,36,.12);
+}
+.monitoring-shell.theme-dark .pd-overview-flow-performance-green{
+  --perf-border:rgba(134,239,172,.50);
+  --perf-bg-start:rgba(134,239,172,.15);
+  --perf-bg-end:rgba(21,34,56,.96);
+  --perf-gauge-bg:rgba(134,239,172,.12);
+}
+.monitoring-shell.theme-dark .pd-overview-flow-performance-red{
+  --perf-border:rgba(251,113,133,.52);
+  --perf-bg-start:rgba(251,113,133,.15);
+  --perf-bg-end:rgba(21,34,56,.96);
+  --perf-gauge-bg:rgba(251,113,133,.12);
+}
+.monitoring-shell.theme-dark .pd-overview-flow-performance-na{
+  --perf-border:var(--dark-border);
+  --perf-bg-start:rgba(27,43,69,.88);
+  --perf-bg-end:rgba(17,28,47,.96);
+  --perf-gauge-bg:rgba(148,163,184,.10);
+}
+.monitoring-shell.theme-dark .pd-mev-marker-legend-line-development{border-top-color:var(--dark-text-soft)}
+.monitoring-shell.theme-dark .pd-mev-marker-legend-line-scenario{border-top-color:var(--dark-warning)}
+.monitoring-shell.theme-dark .pd-mev-marker-legend-line-series{border-top-color:var(--dark-muted)}
+.monitoring-shell.theme-dark .pd-mev-marker-legend-line-current{border-top-color:var(--dark-danger)}
+.monitoring-shell.theme-dark .js-plotly-plot text,
+.monitoring-shell.theme-dark .js-plotly-plot .legendtext,
+.monitoring-shell.theme-dark .js-plotly-plot .xtick text,
+.monitoring-shell.theme-dark .js-plotly-plot .ytick text,
+.monitoring-shell.theme-dark .js-plotly-plot .gtitle,
+.monitoring-shell.theme-dark .js-plotly-plot .annotation-text{
+  fill:var(--dark-text-soft) !important;
+  color:var(--dark-text-soft) !important;
+}
+.monitoring-shell.theme-dark .js-plotly-plot .legend .bg{
+  fill:rgba(17,28,47,.94) !important;
+  stroke:rgba(148,163,184,.28) !important;
+}
+.monitoring-shell.theme-dark .js-plotly-plot .xgrid,
+.monitoring-shell.theme-dark .js-plotly-plot .ygrid{
+  stroke:rgba(148,163,184,.16) !important;
+}
+.monitoring-shell.theme-dark .js-plotly-plot .zeroline,
+.monitoring-shell.theme-dark .js-plotly-plot .xlines-above,
+.monitoring-shell.theme-dark .js-plotly-plot .ylines-above{
+  stroke:rgba(148,163,184,.34) !important;
+}
+
+/* ---------------------------------------------------------------------
    Responsive
    --------------------------------------------------------------------- */
 @media(max-width:900px){
@@ -575,12 +1254,11 @@ tr:last-child td{border-bottom:none}
   .monitoring-shell{flex-direction:column;height:auto;max-height:none;min-height:100%;overflow:visible}
   .sidebar{width:100%;min-width:0;height:auto;max-height:none}
   .main{height:auto;max-height:none}
-  .nav-list{display:flex;overflow-x:auto;padding:0}
-  .nav-item{border-left:none;border-bottom:3px solid transparent;white-space:nowrap}
-  .nav-item.active{border-left-color:transparent;border-bottom-color:var(--blue-light)}
+  .sidebar-nav-eyebrow{padding:14px 18px 8px}
+  .nav-tree{padding:0 16px 16px}
+  .nav-item{white-space:normal}
   .top-bar{padding:14px 16px}
   .content{padding:12px 16px 22px;overflow:visible}
-  .page-footer{flex-wrap:wrap;gap:10px;padding:10px 16px}
   .pd-trend-detail-grid,.pd-discrimination-trend-grid,.pd-test-grid{grid-template-columns:1fr}
   .pd-mev-summary-grid{grid-template-columns:1fr}
   .pd-mev-chart-grid{grid-template-columns:1fr}

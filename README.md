@@ -1,36 +1,54 @@
-# Wholesale Portfolio Model Monitoring Dashboard (standalone, multi-page)
+# STATpy Dashboards (multi-dashboard Dash app)
 
-A standalone [Dash](https://dash.plotly.com/) multi-page app. The **PD
-Performance** page is a full port of the **PD Performance** tab from
-`pages/monitoring_pd_models_page.py` (the original monolithic JS-in-Python
-monitoring dashboard): it loads the same source data files directly and
-reproduces the tab's calculations, layout, charts and interactivity using
-Dash callbacks instead of hand-written JavaScript. **LGD Performance** and
-**EAD Performance** are placeholder pages with no data source yet, ready to
-be filled in following the same per-page structure.
+A [Dash](https://dash.plotly.com/) app organised by **dashboard -> page ->
+module**. Two dashboards are wired up today:
+
+- **Monitoring** – Wholesale Portfolio model monitoring. The **PD Performance**
+  page is fully built out; **LGD** / **EAD Performance** are placeholders ready
+  to be filled in following the same per-page structure.
+- **SAAS** – a scenario / MEV workspace (MEV time series, projections, bands,
+  exports).
+
+Routing and callback registration are **registry-driven**: each dashboard
+declares its pages, and the app shell / `app.py` read those registries, so
+adding a page or dashboard never requires editing several unrelated central
+files. See each dashboard's own README (`features/<name>/README.md`) for its
+routes, data sources and conventions.
 
 ## Running the app
 
-This app is self-contained - it can be run from inside the
-`pd_performance_dash/` folder regardless of where that folder lives on disk.
+The app is self-contained – source data is bundled under `source_data/`.
 
 ```bash
 pip install -r requirements.txt
-python -m pd_performance_dash.app
+python -m STATpy_platform.app
 ```
 
-(or, from the parent directory: `python -m pd_performance_dash.app`, after
-`pip install -r pd_performance_dash/requirements.txt`)
+(run from the directory that *contains* the `STATpy_platform/` folder).
 
 This starts a Dash dev server (default `http://127.0.0.1:8050`). The sidebar
-links navigate between `/` (PD Performance), `/lgd-performance` and
-`/ead-performance`.
+links navigate between `/` (PD Performance), `/lgd-performance`,
+`/ead-performance` and `/saas`.
+
+The active environment is selected with `STATPY_ENV` (`dev` by default; see
+`config/environments.py`), and the bundled data directory can be overridden with
+`STATPY_SOURCE_DATA_DIR`.
+
+## Tests
+
+```bash
+pytest STATpy_platform/tests
+```
+
+The suite mirrors `features/` one-to-one: a smoke test per page (layout
+builds without raising), selector tests for the shared analytics helpers, and a
+registry test asserting page paths are unique and reachable.
 
 ## Data sources
 
-Source data lives in `pd_performance_dash/source_data/` (see
-`monitoring_config.py`), bundled with the app so it works regardless of where
-the `pd_performance_dash/` folder is moved:
+Source data lives in `source_data/`, bundled with the app. File *locations* are
+resolved in `config/settings.py`; data-domain constants (column/sheet names,
+RAG bands) live in `data/analytics/constants.py`.
 
 - `portfolio.xlsx` (sheet `Portfolio`) - facility-level portfolio extract
 - `statpy_monitoring_thresholds.xlsm` (sheets `PD_Thresholds`,
@@ -38,337 +56,227 @@ the `pd_performance_dash/` folder is moved:
   thresholds, master-scale PDs, and RAG bands
 - `mev_dummy_data.json` - macroeconomic-variable scenario catalog
 - `facilities_dummy_data.json` - facility-level scenario rank-ordering paths
+- `dummy_mev_data.xlsx` - SAAS MEV descriptions, time series and model
+  characteristics
 
-`load_pd_performance_data()` re-reads these files from `source_data/` on app
-startup.
+Each dashboard's `data_access.py` reads its source files once at import time
+and exposes the in-memory payload (e.g. `PD_PERFORMANCE_DATA`, `SAAS_PAGE_DATA`).
 
 ## Project layout
 
 ```
-pd_performance_dash/
-  app.py                  # entry point (create_app / app / server): builds the
-                            # shell, registers each page's callbacks + the router
-  shell.py                # sidebar nav, page footer, URL routing between pages
-  data_store.py           # module-level data singletons shared across pages
-                            # (PD_PERFORMANCE_DATA, loaded once at import time)
-  monitoring_config.py    # paths, column names, RAG groups, thresholds, etc.
-  pages/
-    monitoring_pd_performance_layout.py   # page layout + the master content-rendering function
-    monitoring_lgd_performance_layout.py  # placeholder page layout
-    monitoring_ead_performance_layout.py  # placeholder page layout
-  callbacks/
-    monitoring_pd_performance_callbacks.py   # all PD Performance callbacks (filters, ranges, MEV, etc.)
-    monitoring_lgd_performance_callbacks.py  # placeholder (no callbacks yet)
-    monitoring_ead_performance_callbacks.py  # placeholder (no callbacks yet)
+STATpy_platform/
+  app.py                  # entry point: builds shell, loops registry to register callbacks
+  shell.py                # sidebar nav, page footer, URL router (all registry-driven)
+  features_registry.py    # app-level registry: the list of dashboards
+
+  shared/                 # cross-dashboard shared layer
+    types.py              # DashboardDefinition / PageDefinition registry types
+    theme.py              # app-shell theme constants + element ids
+    registration.py       # per-app idempotent register_callbacks guard
+
+  components/             # shared UI library (reused by >=2 dashboards)
+    charts.py             # Plotly figure builders (PD + SAAS)
+    filters.py            # global filter bar / sub-nav / range+horizon controls
+
+  config/                 # centralised configuration
+    settings.py           # typed Settings (data paths, env, feature flags), built once
+    environments.py       # dev / uat / prod overrides
+
   data/
-    data_loader.py         # reads portfolio.xlsx / thresholds / MEV / facilities JSON
-    transformations.py      # calculation engine (RAG, calibration, discrimination, ...)
-    mev.py                  # MEV Range section helpers (catalog, thresholds, RAG)
-    rank_ordering.py         # Scenario Rank Ordering helpers + YYYY-Qn quarter utils
-  components/
-    filters.py              # global filter bar, section sub-nav + per-chart range/horizon controls
-    kpis.py                  # RAG/test/EAD/static-info card builders
-    charts.py                # Plotly figure builders
-  assets/
-    styles.css               # stylesheet (auto-loaded by Dash)
-    pd_subnav.js             # section sub-nav scroll-sync/jump-link behaviour (auto-loaded by Dash)
-  source_data/
-    portfolio.xlsx                     # facility-level portfolio extract
-    statpy_monitoring_thresholds.xlsm  # PD thresholds, master scale, RAG assignment
-    mev_dummy_data.json                # macroeconomic-variable scenario catalog
-    facilities_dummy_data.json         # facility-level scenario rank-ordering paths
+    common/text.py        # generic helpers shared by loaders (normalize / ordered-unique)
+    analytics/            # shared analytics used by components + both dashboards
+      calculations.py     #   PD calculation engine (RAG, calibration, discrimination, ...)
+      mev_range.py        #   MEV Range helpers (catalog, thresholds, RAG)
+      rank_ordering.py    #   Scenario Rank Ordering helpers + YYYY-Qn quarter utils
+      constants.py        #   data-domain constants (columns, sheets, RAG bands, palettes)
+    monitoring/loader.py  # reads portfolio.xlsx / thresholds / MEV / facilities JSON
+    saas/loader.py        # reads dummy_mev_data.xlsx for the SAAS workspace
+
+  features/
+    monitoring/           # README, dashboard.py, page_registry.py, stores.py, data_access.py
+      pages/pd_performance/  {page.py, callbacks.py, cards.py}
+      pages/lgd_performance/ {page.py, callbacks.py}
+      pages/ead_performance/ {page.py, callbacks.py}
+    saas/                 # README, dashboard.py, page_registry.py, stores.py, data_access.py
+      pages/workspace/    {page.py, callbacks.py}
+
+  tests/                  # mirrors features/ 1:1 (registry + per-page smoke + selector tests)
+  assets/                 # styles.css, js/ subnav scripts, fonts/ (auto-loaded by Dash)
+  source_data/            # bundled Excel/JSON inputs
 ```
 
-### Multi-page structure
+### How the registry wiring works
 
-The app is split into three pages under `pages/`, named
-`monitoring_<page>_layout.py`, each with a `page_layout()` function returning
-that page's top bar + content. Each page's callbacks live in
-`callbacks/monitoring_<page>_callbacks.py`, with a
-`register_callbacks(app, ...)` function. `shell.py` builds the persistent
-chrome (sidebar, page footer, and the PD Performance `dcc.Store`s) and a
-small router that swaps `#page-content` based on `dcc.Location.pathname`:
+Each page is described by a `PageDefinition` (key, label, path, `build_layout`,
+`register_callbacks`) in its dashboard's `page_registry.py`. Each dashboard exposes a
+`DashboardDefinition` from `dashboard.py`, and `features_registry.py` lists the
+dashboards. From there:
 
-- `/` -> PD Performance (`pages/monitoring_pd_performance_layout.py` /
-  `callbacks/monitoring_pd_performance_callbacks.py`) - fully ported,
-  see "Coverage" below.
-- `/lgd-performance` -> LGD Performance
-  (`pages/monitoring_lgd_performance_layout.py` /
-  `callbacks/monitoring_lgd_performance_callbacks.py`) - placeholder
-  page/card only, no data source yet.
-- `/ead-performance` -> EAD Performance
-  (`pages/monitoring_ead_performance_layout.py` /
-  `callbacks/monitoring_ead_performance_callbacks.py`) - placeholder
-  page/card only, no data source yet.
+- `shell.py` builds the sidebar links, the app-level `dcc.Store`s and the
+  `#page-content` router (keyed on `dcc.Location.pathname`) entirely from the
+  registry. Routes: `/` -> PD Performance, `/lgd-performance`, `/ead-performance`,
+  `/saas`.
+- `app.py` loops the registry and calls each dashboard's `register_callbacks`.
+- Every `register_callbacks(app)` is idempotent via
+  `shared.registration.already_registered(app, key)` (per-app, so building a
+  second app instance – e.g. in tests – still registers correctly).
+- Each dashboard's `data_access.py` loads its source workbook once at import
+  time and exposes it (e.g. `PD_PERFORMANCE_DATA`, `SAAS_PAGE_DATA`), so layouts
+  and callbacks share the same in-memory data without re-reading files.
 
-`data_store.py` loads `load_pd_performance_data()` once at import time so
-both `pages/monitoring_pd_performance_layout.py` (called on every navigation
-to `/`) and `callbacks/monitoring_pd_performance_callbacks.py` share
-the same in-memory data without re-reading the source workbook.
+### Design notes
 
-## Coverage
+- **Shared analytics live in `data/analytics/`.** The PD calculation engine is
+  consumed by the shared `components/` layer *and* by the SAAS dashboard, so by
+  the "rule of two" it belongs in a shared location rather than inside a single
+  dashboard package.
+- **URL paths are declarative.** Routes (`/`, `/lgd-performance`, ...) are
+  defined on the page registry, so changing the scheme is a one-place edit.
+- **The custom registry is the single source of truth for routing.** Dash's
+  built-in `use_pages` / `dash.register_page` is intentionally not enabled; if
+  adopted later it should be driven from the same registry to avoid two parallel
+  routers.
 
-The app reproduces the **full PD Performance tab**, i.e. both chapters
-rendered by `renderPdModels()`:
+## PD Performance page
+
+The PD Performance page renders both chapters of the ECL PIT / Balance Sheet PD
+analysis:
 
 - **Chapter 1 - ECL PIT PD Performance**
-  - 1.1 Overview (the "RAG Assignment Overview" 5-stage process-flow
-    diagram: Calibration / Discrimination / Balance Sheet RAGs feeding the
-    overall Performance PD RAG)
-  - 1.2 ECL PIT PD - Calibration Conservatism (CI test, Notching test,
-    default-rate trends, calibration trend)
-  - 1.3 ECL PIT PD - Discrimination Power (Accuracy Ratio, Gini, KS,
-    Kendall's Tau, discrimination trend charts)
-  - 1.4 ECL PIT PD - Performance vs Actuals (EAD-weighted summary,
-    Scenario Rank Ordering, MEV Range charts with model/MEV chart filters)
+  - 1.1 Overview – the "RAG Assignment Overview" 5-stage process-flow diagram
+    (Calibration / Discrimination / Balance Sheet RAGs feeding the overall
+    Performance PD RAG).
+  - 1.2 Calibration Conservatism – CI test, Notching test, default-rate trends,
+    calibration trend.
+  - 1.3 Discrimination Power – Accuracy Ratio, Gini, KS, Kendall's Tau, and
+    discrimination trend charts.
+  - 1.4 Performance vs Actuals – EAD-weighted summary, Scenario Rank Ordering,
+    and MEV Range charts with model/MEV chart filters.
 - **Chapter 2 - Balance Sheet PD Performance**
   - 2.1-2.4 mirror the Chapter 1 sections for the Balance Sheet PD horizon
-    (`nco_1y`), where source data is available; sections without data
-    render as placeholder cards (matching the original page's behaviour
-    when the corresponding JS sections had no live implementation)
+    (`nco_1y`). Sections without source data render as placeholder cards.
 
-The PDF export button from the original page is intentionally **not**
-included (out of scope per the porting brief).
+### Interaction model
 
-## Assumptions and simplifications
+Filter state lives in the global filter controls plus three `dcc.Store`
+components (`pd-range-store`, `pd-trend-horizon-store`, `pd-mev-filter-store`).
+A single master callback re-runs `layout.render_pd_performance_content`
+whenever any filter or store changes; section builders are pure functions of
+that state.
 
-This section documents every place where this port deliberately diverges
-from, or simplifies, the original `monitoring_pd_models_page.py` /
-`monitoring_layout.py` / `monitoring_style.py` behaviour.
-
-### State management
-
-- The original page held global mutable state (`MONITORING_MODELS`,
-  `PD_TIME_RANGES`, `PD_CALIBRATION_TREND_HORIZON`, `PD_MEV_FILTER_*`, ...)
-  and called `renderPdModels()` after every change. Here that state lives in
-  the global filter controls plus three `dcc.Store` components
-  (`pd-range-store`, `pd-trend-horizon-store`, `pd-mev-filter-store`), and a
-  single master callback re-renders `layout.render_pd_performance_content`
-  whenever any filter or store changes.
-- **Per-chart range controls** (`buildPdRangeControls`): each chart panel
-  that has a "Window / From / To" control uses one of 13 unique
-  `range_key`s (`calibration_rag`, `calibration_ci`, `calibration_notching`,
-  `calibration_default_rate`, `discrimination_rag`, `discrimination_accuracy`,
-  `discrimination_trend`, `balance_sheet_calibration_rag`,
-  `balance_sheet_ci`, `balance_sheet_notching`,
-  `balance_sheet_default_rate`, `rank_ordering`, `mev`), all stored as
-  `{range_key: {"from": ..., "to": ...}}` in `pd-range-store`. The
-  Window/From/To preset logic (`getPdRangePreset` / `setPdRangePreset` /
-  `setPdRangeBoundary`, including the "swap the other boundary if from >
-  to" behaviour) is ported as-is.
-- **Trend PD-horizon controls** (calibration trend / discrimination trend
-  1y vs 2y selectors): the original page kept one horizon per *section*. Here
-  every control that affects the same section shares one entry in
-  `pd-trend-horizon-store` via `layout.TREND_HORIZON_GROUPS`
-  (`{"calibration_ci": "calibration", "calibration_notching": "calibration",
-  "calibration_default_rate": "calibration", "discrimination_trend":
-  "discrimination"}`), defaulting to `{"calibration": "1y",
-  "discrimination": "1y"}`.
-- **"Specific Models" checkbox-dropdown** (`.checkbox-dropdown` /
-  `toggleMonitoringModelMenu` / `monitoring-model-toggle` /
-  `monitoring-model-menu`): the Models filter is a collapsed
-  `pd-models-toggle` button (label computed exactly as in
-  `syncMonitoringFilterControls`: `"Select models"` if none are checked,
-  `"All models"` if every model is checked, the model's name if exactly one
-  is checked, otherwise `"N models selected"`, or `"Disabled while Segment
-  is selected"` when a Portfolio Segment is active) that opens/closes a
-  `pd-models-menu` dropdown containing the "All" toggle and the per-model
-  checkboxes, via `.checkbox-dropdown-toggle` / `.checkbox-dropdown-menu`
-  (ported from `monitoring_style.py`). As in the original, the menu only
-  toggles open/closed on clicking the button (no click-outside-to-close
-  handler exists for this menu in the source page either) and stays open
-  while making selections.
-- **"Select all models" sync** (`setMonitoringModels` /
-  `syncMonitoringFilterControls`): the two-way sync between the "All"
-  checkbox and the models checklist is ported (selecting "All" selects
-  every model; selecting every model individually re-checks "All").
-- **Segment/model mutual-exclusivity** (`syncMonitoringFilterControls`'s
-  `isPerformanceTab` branch, via `hasSegmentSelection` /
-  `hasSpecificModelSelection`) is ported: selecting a non-"All" Portfolio
+- **Per-chart range controls** – each chart panel with a "Window / From / To"
+  control uses one of 13 unique `range_key`s (`calibration_rag`,
+  `calibration_ci`, `calibration_notching`, `calibration_default_rate`,
+  `discrimination_rag`, `discrimination_accuracy`, `discrimination_trend`,
+  `balance_sheet_calibration_rag`, `balance_sheet_ci`, `balance_sheet_notching`,
+  `balance_sheet_default_rate`, `rank_ordering`, `mev`), stored as
+  `{range_key: {"from": ..., "to": ...}}` in `pd-range-store`. Selecting a
+  "From" later than the current "To" (or vice-versa) snaps the other boundary so
+  the range stays valid.
+- **Trend PD-horizon controls** – every control that affects the same section
+  shares one entry in `pd-trend-horizon-store` via `layout.TREND_HORIZON_GROUPS`
+  (`calibration_ci`/`calibration_notching`/`calibration_default_rate` ->
+  `calibration`, `discrimination_trend` -> `discrimination`), defaulting to
+  `{"calibration": "1y", "discrimination": "1y"}`.
+- **"Specific Models" checkbox-dropdown** – the Models filter is a collapsed
+  `pd-models-toggle` button whose label reflects the current selection
+  (`"Select models"` when none are checked, `"All models"` when every model is
+  checked, the model name when exactly one is checked, otherwise
+  `"N models selected"`, or `"Disabled while Segment is selected"`). It opens a
+  `pd-models-menu` dropdown with an "All" toggle and per-model checkboxes; the
+  menu stays open while making selections.
+- **Segment / model mutual-exclusivity** – selecting a non-"All" Portfolio
   Segment disables the Models checklist (and its "All" toggle); selecting a
-  strict subset of models disables the Portfolio Segment dropdown. A help
-  text below the filter bar (`pd-filter-help`, replacing
-  `#monitoring-filter-help`) explains which filter is active, matching the
-  original's three messages. Neither control's *value* is reset when it
-  becomes disabled - exactly as in the original, the user must reset one
-  filter to "All"/all-models before the other becomes selectable again.
-- **No "Time Horizon" / "PD Input" filter controls**: the original page's
-  `MONITORING_TIME_HORIZON` / `MONITORING_PD_INPUT` are page-level JS
-  globals (defaulting to `'1y'` / `'time_horizon'`) read by
-  `getActivePdInputKey()` for the LGD/EAD tabs - the actual top-bar
-  (`TOP_BAR_CONTROLS_HTML` in `monitoring_layout.py`) never renders a
-  "Time Horizon" or "PD Input" dropdown for the PD Performance tab. This
-  port likewise has no such controls; `PdFilterContext` only carries
-  `quarters` / `models` / `segment` / `monitoring_point`, and each PD
-  Performance section hardcodes its own horizon (1y / 2y / `nco_1y`) as the
-  original sections do.
+  strict subset of models disables the Portfolio Segment dropdown. A help line
+  (`pd-filter-help`) explains which filter is active. A disabled control keeps
+  its value – reset one filter to "All" before the other becomes selectable.
+- **No "Time Horizon" / "PD Input" controls** – `PdFilterContext` carries only
+  `quarters` / `models` / `segment` / `monitoring_point`; each section hardcodes
+  its own horizon (`1y` / `2y` / `nco_1y`).
 
 ### MEV Range chart filters
 
-- `pd-mev-filter-store = {"model": "all" | <model_name>, "names": None | []
-  | [list]}`. `"model"` selects which PD model's MEV panel(s) are shown
-  (`resolve_pd_mev_chart_model_names`); `"names"` selects which MEVs are
-  shown within that scope (`resolve_pd_mev_chart_names`).
+`pd-mev-filter-store = {"model": "all" | <model_name>, "names": None | [] | [list]}`.
+
+- `"model"` selects which PD model's MEV panel(s) are shown
+  (`resolve_pd_mev_chart_model_names`); `"names"` selects which MEVs are shown
+  within that scope (`resolve_pd_mev_chart_names`).
 - `"names": None` means "no explicit selection yet" and resolves to *all*
   available MEV names for the current model scope. Once the user makes an
-  explicit multi-select choice, `"names"` becomes a list (which **may be
-  empty**).
-- **Behavioural difference from the original JS**: in the original page, an
-  empty MEV multi-select was treated the same as "all" (showing every MEV
-  chart). In this Dash port, an explicitly-empty multi-select shows **zero**
-  MEV charts (the empty-state card is rendered instead). This was judged the
-  more useful/intuitive behaviour for a Dash `dcc.Dropdown(multi=True)` and
-  is easily reversible if the original behaviour is required.
+  explicit choice, `"names"` becomes a list (which may be empty). An
+  explicitly-empty selection shows **zero** MEV charts (an empty-state card is
+  rendered).
 - "Reset chart filters" restores `pd-mev-filter-store` to
   `{"model": "all", "names": None}` and clears the `"mev"` entry from
   `pd-range-store`.
 
-### Quarter formats
+### Quarter label formats
 
-- Portfolio data and most PD-performance calculations use the `YYYYQn`
-  quarter label format (e.g. `2022Q4`).
+- Portfolio data and most PD-performance calculations use the `YYYYQn` label
+  format (e.g. `2022Q4`).
 - Scenario Rank Ordering and MEV data (`facilities_dummy_data.json`,
-  `mev_dummy_data.json`) use the `YYYY-Qn` format (e.g. `2022-Q4`), produced
-  from ISO dates via `iso_date_to_pd_quarter`. `data/rank_ordering.py` and
-  `data/mev.py` keep this format and provide their own
-  `compare_pd_quarter_labels` / `_pd_quarter_sort_key` helpers - it is **not**
-  normalized to `YYYYQn`, matching the original page.
+  `mev_dummy_data.json`) use the `YYYY-Qn` format (e.g. `2022-Q4`), produced from
+  ISO dates via `iso_date_to_pd_quarter`. `data/analytics/rank_ordering.py` and
+  `data/analytics/mev_range.py` keep this format and provide their own
+  `compare_pd_quarter_labels` / `_pd_quarter_sort_key` helpers; it is not
+  normalised to `YYYYQn`.
 
-### "1.1 Overview" section
+### 1.1 Overview diagram
 
-- The original page's 1.1 Overview renders a large, hand-coded CSS-grid
-  "flow diagram" (`buildPdOverviewHeatmap`, with `buildPdOverviewFlow*`
-  helper functions and `.pd-overview-flow*` / `.pd-flow-*` CSS, ~50 rules)
-  connecting input ECL PIT PD / Balance Sheet PD nodes through the
-  calibration and discrimination tests to an overall Performance PD RAG
-  gauge. It is live - rendered inside `<section id="pd-analysis-scope">` as
-  part of `renderPdModels()` - and is **faithfully ported** here as
-  `build_pd_overview_heatmap` in `components/kpis.py`.
-- The diagram is a 5-stage process flow (Components / Tests / RAG Assignment
-  / Monitoring Dimension RAG / Performance PD RAG) laid out with CSS Grid
-  `grid-template-areas`, including:
-  - The "Calibration Conservatism RAG (ECL PIT)" 1-year and 2-year
-    notching/confidence-interval test nodes feeding their RAG-assignment
-    nodes, which feed the "Calibration Conservatism RAG (ECL PIT)" dimension
-    node.
-  - The "Discriminatory Power RAG" Accuracy Ratio / Delta Accuracy Ratio test
-    nodes feeding the "Discriminatory Power RAG" dimension node (with a
-    pass-through connector spanning the unused RAG-assignment column).
-  - The "Calibration Conservatism RAG (Balance Sheet)" notching/confidence
-    interval test nodes feeding the "Calibration Conservatism RAG (Balance
-    Sheet)" dimension node (also via a pass-through connector).
-  - All three dimension RAG nodes feeding into the overall "Performance PD
-    RAG" gauge (`build_pd_overview_flow_performance`,
-    `calculate_pd_overview_performance_rag` -> weighted 0.25/0.25/0.50 score
-    -> rounded RAG, exactly as in the original).
-  - Connector-arrow spans (`.pd-overview-flow-connector-in/-out`) reproduce
-    the original's directional arrows between stages.
-- Each of the three dimension RAG nodes (and the per-horizon RAG-assignment
-  nodes) is an in-page anchor link (`href="#pd-calibration-rag"`,
-  `"#pd-discrimination-rag"`, `"#pd-balance-sheet-calibration"`) that jumps
-  to the corresponding 1.2/1.3/2.1 section, matching the original's
-  `data-pd-section-link` navigation.
-- RAG-valued nodes carry an "info chip" tooltip (`.pd-info-chip`,
-  `aria-label`/`title`) with the same explanatory text used by the
-  corresponding 1.2/1.3/2.1 section cards (e.g. the calibration RAG tooltip
-  from `build_pd_calibration_tooltip`, the discrimination RAG tooltip, and
-  the balance-sheet calibration-assignment tooltip), and the Performance PD
-  RAG gauge's tooltip is `build_pd_overview_performance_rag_tooltip`.
+`build_pd_overview_heatmap`
+(`features/monitoring/pages/pd_performance/cards.py`) renders a CSS-grid
+process-flow diagram with five stages (Components / Tests / RAG Assignment /
+Monitoring Dimension RAG / Performance PD RAG), laid out with
+`grid-template-areas`:
 
-### Dead code intentionally not ported
+- Calibration Conservatism (ECL PIT) 1y/2y notching & confidence-interval test
+  nodes feed their RAG-assignment nodes, which feed the calibration dimension
+  node.
+- Discriminatory Power Accuracy Ratio / Delta Accuracy Ratio test nodes feed the
+  discrimination dimension node.
+- Calibration Conservatism (Balance Sheet) notching & confidence-interval test
+  nodes feed the balance-sheet calibration dimension node.
+- All three dimension RAG nodes feed the overall Performance PD RAG gauge
+  (`calculate_pd_overview_performance_rag`: weighted 0.25 / 0.25 / 0.50 score,
+  rounded to a RAG).
 
-The following functions/markup exist in the original page but are never
-invoked by `renderPdModels()` (or only feed sections outside the PD
-Performance tab) and were excluded:
+Each dimension RAG node is an in-page anchor link
+(`#pd-calibration-rag`, `#pd-discrimination-rag`, `#pd-balance-sheet-calibration`)
+that jumps to the corresponding 1.2 / 1.3 / 2.1 section, and RAG-valued nodes
+carry an info-chip tooltip (`.pd-info-chip`) with the same explanatory text as
+the section cards.
 
-- `buildPdRagMovement` and the RAG history table/movement matrix
-  (`.pd-rag-table*`, `.pd-rag-movement*`, `.pd-rag-cell*`, `.pd-rag-legend`,
-  `.pd-view-toggle`)
-- The rating-migration matrix/heatmap functions and `.pd-migration-*` /
-  `.pd-rating-*` / `.pd-subchart-*` markup
-- `drawPdStabilityTrend` / `drawPdDistributionShift` and
-  `.pd-stability-trend-*` markup
-- `buildPdExecutiveSignals` / the retention-warning banner and
-  `.pd-executive-grid` / `.pd-signal-card*` / `.pd-retention-*` /
-  `.pd-scope-bar` / `.pd-page-header` / `.pd-overall-status` markup
-- The standalone `performanceRag` / `trendPeriods` globals (superseded by
-  `PdFilterContext` / per-call return values)
-- `data-pd-expand-title` / chart-expand modal behaviour (no equivalent
-  "expand chart" UI in this port)
-- `_build_model_rows`, `_build_model_quarter_breakdown`,
-  `_build_model_segment_quarter_breakdown`, `_build_threshold_summary` from
-  `data_manager.py` (they feed model-overview tables on *other* tabs, not
-  the PD Performance tab)
+## Styling & client-side assets
 
-### CSS (`assets/styles.css`)
+Files in `assets/` are auto-loaded by Dash.
 
-`assets/styles.css` is adapted from the single `CSS` string in
-`components/monitoring_style.py` (688 lines, shared across the whole
-monitoring dashboard). Changes made when porting:
+- `styles.css` – the app stylesheet (includes the `.pd-overview-flow*` /
+  `.pd-flow-*` rules for the 1.1 Overview diagram and the `InterVariable.woff2`
+  `@font-face`).
+- The PD Performance top bar (`.pd-top-bar`, containing the filter bar and
+  section sub-nav) is `position: sticky; top: 0` so it stays visible while the
+  page scrolls.
+- `js/monitoring_pd_subnav.js` – section sub-navigation for the PD page
+  (`#pd-subnav`): it smooth-scrolls to a section on click and highlights
+  whichever link/group corresponds to the section currently at the top of the
+  viewport.
+- `js/saas_workspace_subnav.js` – the equivalent section sub-navigation for the
+  SAAS workspace (`#saas-subnav`).
 
-- **No sidebar**: the original `body{display:flex;height:100vh;
-  overflow:hidden}` assumed a fixed-height sidebar layout with
-  internally-scrolling panels. This standalone app has no sidebar, so
-  `body` just scrolls normally (`background:#f8fafc;min-height:100vh`).
-- **`#tab-pd_models` -> `.pd-performance-app`**: the ~30 spacing/density
-  override rules scoped to `#tab-pd_models` (and to `#pd-analysis-scope`,
-  the 1.1 Overview section's id) are re-scoped to `.pd-performance-app`,
-  the class set on the PD Performance page's content wrapper
-  (`pages/monitoring_pd_performance_layout.py`'s `page_layout`).
-- **New global filter bar styles** (`.pd-filter-bar`, `.pd-filter-control`,
-  `.pd-filter-control-models`, `.pd-models-select-all`,
-  `.pd-models-checklist`): the original sidebar top-bar's
-  `.monitoring-filter` / `<select>`-based controls have no direct
-  equivalent for this app's `dcc.Dropdown` / `dcc.Checklist`-based filter
-  bar, so minimal new rules were written.
-- **Sticky top bar**: the original `.top-bar` was `flex-shrink:0` inside
-  a `display:flex; overflow:hidden` `.main` column, so it stayed pinned in
-  place while only `.content` scrolled underneath it. This standalone app's
-  body scrolls normally (no internal scroll containers), so the new
-  `.pd-top-bar` wrapper (containing the filter bar and section sub-nav) is
-  given `position:sticky; top:0; z-index:50` to reproduce the same "stays
-  visible while the page scrolls" behaviour.
-- **Section sub-navigation** (`#monitoring-pd-subnav` /
-  `.monitoring-section-subnav*` -> `#pd-subnav` / `.pd-subnav-*`,
-  `components/filters.py`'s `build_section_subnav`): the "RAG Assignment"
-  and "Post Subjective Review Analysis" jump-link bars are ported, including
-  the two-tone active styling (blue accent bar for RAG Assignment, orange for
-  Post Subjective Review Analysis). `assets/pd_subnav.js` is a small
-  client-side script (ported from `setMonitoringPdSubnavActive` /
-  `updateMonitoringPdSubnavActiveState` / `jumpToMonitoringSection`) that
-  smooth-scrolls to a section on click and highlights whichever
-  link/group corresponds to the section currently at the top of the
-  viewport. This is implemented as a plain `.js` file in `assets/` (which
-  Dash auto-loads) rather than a callback, since it is purely presentational
-  and doesn't affect chart data or filter state.
-- **`.pd-overview-flow*` / `.pd-flow-*`** (the 1.1 Overview process-flow
-  diagram, ~50 rules) are ported as-is, with the `#tab-pd_models`-scoped
-  density overrides and `@media` rules re-scoped to `.pd-performance-app`
-  (see "1.1 Overview" section above).
-- **Omitted as out of scope / unused by this app's markup**: the top-bar
-  mode switch (`.monitoring-mode-switch*`), PDF export menu/overlay/
-  spinner (`.export-*`, `body.exporting-pdf`, `@keyframes spin`), `.badge*`,
-  LGD/EAD and "monitoring overview" KPI grids (`.lgd-*`, `.ead-*`,
-  `.monitoring-overview-*`, `.pd-kpi-dashboard-grid`),
-  `.pd-filter-application-note` (dead code), and the CSS for the other
-  dead-code PD features listed above (`.pd-rag-table*`, `.pd-rag-movement*`,
-  `.pd-migration-*`, `.pd-stability-trend-*`, `.pd-executive-grid`,
-  `.pd-signal-card*`, `.pd-retention-*`, `.pd-scope-bar`, `.pd-page-header`,
-  `.pd-overall-status`, `.pd-formula-note`, `.pd-view-toggle`,
-  `.pd-section-heading`, `.pd-metric-group*`, `.pd-performance-card`,
-  `.pd-performance-grid`, `.grid-2`, `.grid-3`).
+These are plain `.js` files (not callbacks) because they are purely
+presentational and don't affect chart data or filter state. They live in
+`assets/js/`; Dash loads `assets/` (including subfolders) automatically.
 
 ### Layout details
 
-- Trend-detail chart pairs (e.g. default-rate trend + calibration trend)
-  always render as a horizontal two-column grid (`.pd-trend-detail-grid`,
-  `.pd-discrimination-trend-grid`) regardless of viewport, with a
-  `@media(max-width:900px)` collapse to a single column - matching the
-  original's responsive behaviour.
-- Chart x-axis tick density is fixed (not recalculated from container
-  width), as Plotly's own `automargin`/tick-reduction handles overcrowding
-  reasonably for the data volumes involved.
-- `PQ` (the previous monitoring quarter, `get_previous_pd_quarter(cq)`) is
-  computed once per render and threaded into the calibration/discrimination
-  trend and EAD-comparison helpers, exactly as the JS computed it once per
-  `renderPdModels()` call.
+- Trend-detail chart pairs (e.g. default-rate trend + calibration trend) render
+  as a horizontal two-column grid (`.pd-trend-detail-grid`,
+  `.pd-discrimination-trend-grid`) that collapses to a single column under
+  `@media (max-width: 900px)`.
+- Chart x-axis tick density is fixed rather than recalculated from container
+  width; Plotly's `automargin` / tick-reduction handles overcrowding for the
+  data volumes involved.
+- The previous monitoring quarter (`get_previous_pd_quarter`) is computed once
+  per render and threaded into the calibration/discrimination trend and
+  EAD-comparison helpers.

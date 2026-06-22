@@ -25,14 +25,15 @@ from __future__ import annotations
 import calendar
 from datetime import date, datetime, timedelta
 import math
+import re
 import statistics
 
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from ..monitoring_config import pd_rag_color
-from ..data.mev import calculate_pd_mev_thresholds
-from ..data.rank_ordering import (
+from ..data.analytics.constants import pd_rag_color
+from ..data.analytics.mev_range import calculate_pd_mev_thresholds
+from ..data.analytics.rank_ordering import (
     build_pd_rank_ordering_period_label_map,
     compare_pd_quarter_labels,
     format_pd_compact_quarter_label,
@@ -40,7 +41,7 @@ from ..data.rank_ordering import (
     iso_date_to_pd_quarter,
     _pd_quarter_sort_key,
 )
-from ..data.transformations import (
+from ..data.analytics.calculations import (
     _finite,
     build_pd_ae_ratio_bands,
     build_pd_threshold_bands,
@@ -58,6 +59,12 @@ SAAS_SCENARIO_COLOR_MAP = {
     "other": "#2563eb",
 }
 SAAS_SCENARIO_FALLBACK_COLORS = ["#0f766e", "#d97706", "#0891b2", "#7c2d12"]
+SAAS_DARK_SCENARIO_COLOR_MAP = {
+    "baseline": "#86efac",
+    "intsevere": "#fb7185",
+    "other": "#7dd3fc",
+}
+SAAS_DARK_SCENARIO_FALLBACK_COLORS = ["#c4b5fd", "#fbbf24", "#67e8f9", "#f472b6"]
 SAAS_SCENARIO_ORDER = {"baseline": 0, "other": 1, "intsevere": 2}
 SAAS_SCENARIO_LABEL_MAP = {
     "baseline": "Baseline",
@@ -65,6 +72,56 @@ SAAS_SCENARIO_LABEL_MAP = {
     "other": "Other",
 }
 SAAS_RUN_FOR_DASHES = ["solid", "dot", "dash", "dashdot"]
+SAAS_THEME_PALETTES = {
+    "light": {
+        "empty_message": "#64748b",
+        "marker_fill": "#ffffff",
+        "year_band_fill": "rgba(148,163,184,0.055)",
+        "projection_band_fill": "rgba(148,163,184,0.045)",
+        "projection_marker": "#94a3b8",
+        "annotation_bg": "rgba(255,255,255,0.82)",
+        "annotation_text": "#64748b",
+        "legend_title": "#64748b",
+        "legend_bg": "rgba(255,255,255,0.92)",
+        "legend_border": "rgba(203,213,225,0.92)",
+        "legend_font": "#334155",
+        "axis_title": "#334155",
+        "axis_tick": "#475569",
+        "grid_color": "#e2e8f0",
+        "axis_line": AXIS_LINE_COLOR,
+        "zero_line": "#cbd5e1",
+        "spike_color": "#94a3b8",
+        "development_marker": "#0f172a",
+        "scenario_date_marker": "#dc2626",
+        "minmax_fill": "rgba(37,99,235,0.06)",
+        "hover_bg": "rgba(15,23,42,0.95)",
+        "hover_font": "#f8fafc",
+    },
+    "dark": {
+        "empty_message": "#a7b4c8",
+        "marker_fill": "#111c2f",
+        "year_band_fill": "rgba(148,163,184,0.10)",
+        "projection_band_fill": "rgba(125,211,252,0.08)",
+        "projection_marker": "#a7b4c8",
+        "annotation_bg": "rgba(17,28,47,0.92)",
+        "annotation_text": "#d8e1ee",
+        "legend_title": "#a7b4c8",
+        "legend_bg": "rgba(17,28,47,0.94)",
+        "legend_border": "rgba(148,163,184,0.28)",
+        "legend_font": "#d8e1ee",
+        "axis_title": "#d8e1ee",
+        "axis_tick": "#a7b4c8",
+        "grid_color": "rgba(148,163,184,0.18)",
+        "axis_line": "rgba(148,163,184,0.34)",
+        "zero_line": "rgba(148,163,184,0.34)",
+        "spike_color": "#7dd3fc",
+        "development_marker": "#f6f8fc",
+        "scenario_date_marker": "#fb7185",
+        "minmax_fill": "rgba(125,211,252,0.12)",
+        "hover_bg": "rgba(8,17,31,0.96)",
+        "hover_font": "#f6f8fc",
+    },
+}
 
 
 # ---------------------------------------------------------------------------
@@ -72,7 +129,16 @@ SAAS_RUN_FOR_DASHES = ["solid", "dot", "dash", "dashdot"]
 # ---------------------------------------------------------------------------
 
 
-def _empty_figure(message: str, height: int = 220) -> go.Figure:
+def _normalize_saas_theme(theme: str | None) -> str:
+    return theme if theme in SAAS_THEME_PALETTES else "light"
+
+
+def _saas_theme_palette(theme: str | None) -> dict[str, str]:
+    return SAAS_THEME_PALETTES[_normalize_saas_theme(theme)]
+
+
+def _empty_figure(message: str, height: int = 220, *, theme: str = "light") -> go.Figure:
+    palette = _saas_theme_palette(theme)
     fig = go.Figure()
     fig.update_layout(
         height=height,
@@ -89,7 +155,7 @@ def _empty_figure(message: str, height: int = 220) -> go.Figure:
             x=0.5,
             y=0.5,
             align="center",
-            font=dict(size=13, color="#64748b"),
+            font=dict(size=13, color=palette["empty_message"]),
         )],
     )
     return fig
@@ -103,13 +169,21 @@ def _vertical_marker(x_value, xref="x", yref="paper", color="#64748b", dash="dot
     return dict(type="line", xref=xref, x0=x_value, x1=x_value, yref=yref, y0=0, y1=1, line=dict(color=color, width=width, dash=dash))
 
 
-def _saas_scenario_color(scenario: str, scenario_colors: dict[str, str]) -> str:
+def _saas_scenario_color(
+    scenario: str,
+    scenario_colors: dict[str, str],
+    *,
+    base_colors: dict[str, str] | None = None,
+    fallback_colors: list[str] | None = None,
+) -> str:
     normalized_scenario = str(scenario or "").strip().lower()
+    base_colors = base_colors or SAAS_SCENARIO_COLOR_MAP
+    fallback_colors = fallback_colors or SAAS_SCENARIO_FALLBACK_COLORS
     if normalized_scenario in scenario_colors:
         return scenario_colors[normalized_scenario]
-    if normalized_scenario in SAAS_SCENARIO_COLOR_MAP:
-        return SAAS_SCENARIO_COLOR_MAP[normalized_scenario]
-    color = SAAS_SCENARIO_FALLBACK_COLORS[len(scenario_colors) % len(SAAS_SCENARIO_FALLBACK_COLORS)]
+    if normalized_scenario in base_colors:
+        return base_colors[normalized_scenario]
+    color = fallback_colors[len(scenario_colors) % len(fallback_colors)]
     scenario_colors[normalized_scenario] = color
     return color
 
@@ -206,7 +280,7 @@ def _build_saas_date_ticks(date_values, max_ticks: int = 8):
     return deduped
 
 
-def _saas_history_year_band_shapes(date_values) -> list[dict]:
+def _saas_history_year_band_shapes(date_values, *, fillcolor: str = "rgba(148,163,184,0.055)") -> list[dict]:
     parsed_dates = sorted(
         parsed_date
         for parsed_date in (_coerce_saas_date(value) for value in (date_values or []))
@@ -229,7 +303,7 @@ def _saas_history_year_band_shapes(date_values) -> list[dict]:
                 yref="paper",
                 y0=0,
                 y1=1,
-                fillcolor="rgba(148,163,184,0.055)",
+                fillcolor=fillcolor,
                 line=dict(width=0),
                 layer="below",
             )
@@ -941,7 +1015,27 @@ def build_pd_rank_ordering_figure(aggregate, y_title: str, range_value=None) -> 
 # ---------------------------------------------------------------------------
 
 
-def build_pd_mev_range_figure(model_data, mev_name: str, mev_data, color: str, range_value=None) -> go.Figure:
+def _pd_quarter_to_date(quarter_label: str):
+    """Convert a ``YYYY-Qn`` quarter label to the quarter-end ``date``."""
+    match = re.match(r"^(\d{4})-Q([1-4])$", quarter_label or "")
+    if not match:
+        return None
+    year, q = int(match.group(1)), int(match.group(2))
+    end_month = q * 3
+    last_day = calendar.monthrange(year, end_month)[1]
+    return date(year, end_month, last_day)
+
+
+def _format_pd_mev_quarter_tick(quarter_label: str) -> str:
+    """Format a ``YYYY-Qn`` quarter label as ``YYYYQn`` (matching the SAAS axis style)."""
+    match = re.match(r"^(\d{4})-Q([1-4])$", quarter_label or "")
+    if not match:
+        return quarter_label or ""
+    return f"{match.group(1)}Q{match.group(2)}"
+
+
+def build_pd_mev_range_figure(model_data, mev_name: str, mev_data, color: str, range_value=None, *, current_quarter: str | None = None, theme: str = "light") -> go.Figure:
+    palette = _saas_theme_palette(_normalize_saas_theme(theme))
     all_points = sorted(
         ((quarter, value) for quarter, value in (mev_data.get("time_series") or {}).items() if _finite(value)),
         key=lambda item: _pd_quarter_sort_key(item[0]),
@@ -949,13 +1043,17 @@ def build_pd_mev_range_figure(model_data, mev_name: str, mev_data, color: str, r
     visible_quarters = set(filter_pd_periods_by_range(range_value, [point[0] for point in all_points]))
     points = [point for point in all_points if point[0] in visible_quarters]
     if not points:
-        return _empty_figure("No MEV time-series data is available for the selected time window.", height=292)
+        return _empty_figure("No MEV time-series data is available for the selected time window.", height=292, theme=theme)
 
     thresholds = calculate_pd_mev_thresholds(mev_data.get("dev_range") or {})
     quarters = [point[0] for point in points]
     values = [point[1] for point in points]
-    development_quarter = iso_date_to_pd_quarter(mev_data.get("dev_range", {}).get("development_date"))
+    raw_dev_date = (mev_data.get("dev_range") or {}).get("development_date") or ""
+    development_quarter = raw_dev_date if re.match(r"^\d{4}-Q[1-4]$", raw_dev_date) else iso_date_to_pd_quarter(raw_dev_date)
     severe_quarter = iso_date_to_pd_quarter(model_data.get("severe_scenario_date"))
+
+    quarter_dates = [_pd_quarter_to_date(q) for q in quarters]
+    quarter_date_map = dict(zip(quarters, quarter_dates))
 
     all_y_values = list(values)
     if thresholds:
@@ -972,41 +1070,92 @@ def build_pd_mev_range_figure(model_data, mev_name: str, mev_data, color: str, r
         green_max = thresholds["green_max"]
         amber_lower = thresholds["amber_lower"]
         amber_upper = thresholds["amber_upper"]
-        red = "rgba(220,38,38,0.14)"
-        amber = "rgba(217,119,6,0.20)"
-        green = "rgba(22,163,74,0.16)"
         shapes.extend([
-            dict(type="rect", xref="paper", x0=0, x1=1, yref="y", y0=y_min, y1=amber_lower, fillcolor=red, line=dict(width=0), layer="below"),
-            dict(type="rect", xref="paper", x0=0, x1=1, yref="y", y0=amber_lower, y1=green_min, fillcolor=amber, line=dict(width=0), layer="below"),
-            dict(type="rect", xref="paper", x0=0, x1=1, yref="y", y0=green_min, y1=green_max, fillcolor=green, line=dict(width=0), layer="below"),
-            dict(type="rect", xref="paper", x0=0, x1=1, yref="y", y0=green_max, y1=amber_upper, fillcolor=amber, line=dict(width=0), layer="below"),
-            dict(type="rect", xref="paper", x0=0, x1=1, yref="y", y0=amber_upper, y1=y_max, fillcolor=red, line=dict(width=0), layer="below"),
-            dict(type="line", xref="paper", x0=0, x1=1, yref="y", y0=green_min, y1=green_min, line=dict(color="rgba(22,163,74,0.9)", width=1.8)),
-            dict(type="line", xref="paper", x0=0, x1=1, yref="y", y0=green_max, y1=green_max, line=dict(color="rgba(22,163,74,0.9)", width=1.8)),
-            dict(type="line", xref="paper", x0=0, x1=1, yref="y", y0=amber_lower, y1=amber_lower, line=dict(color="rgba(217,119,6,0.82)", width=1.4, dash="dash")),
-            dict(type="line", xref="paper", x0=0, x1=1, yref="y", y0=amber_upper, y1=amber_upper, line=dict(color="rgba(217,119,6,0.82)", width=1.4, dash="dash")),
+            dict(type="rect", xref="paper", x0=0, x1=1, yref="y", y0=y_min, y1=amber_lower, fillcolor="rgba(239,68,68,0.10)", line=dict(width=0), layer="below"),
+            dict(type="rect", xref="paper", x0=0, x1=1, yref="y", y0=amber_lower, y1=green_min, fillcolor="rgba(245,158,11,0.12)", line=dict(width=0), layer="below"),
+            dict(type="rect", xref="paper", x0=0, x1=1, yref="y", y0=green_min, y1=green_max, fillcolor="rgba(34,197,94,0.12)", line=dict(width=0), layer="below"),
+            dict(type="rect", xref="paper", x0=0, x1=1, yref="y", y0=green_max, y1=amber_upper, fillcolor="rgba(245,158,11,0.12)", line=dict(width=0), layer="below"),
+            dict(type="rect", xref="paper", x0=0, x1=1, yref="y", y0=amber_upper, y1=y_max, fillcolor="rgba(239,68,68,0.10)", line=dict(width=0), layer="below"),
+            dict(type="line", xref="paper", x0=0, x1=1, yref="y", y0=green_min, y1=green_min, line=dict(color="#f59e0b", width=1.3, dash="dash")),
+            dict(type="line", xref="paper", x0=0, x1=1, yref="y", y0=green_max, y1=green_max, line=dict(color="#f59e0b", width=1.3, dash="dash")),
         ])
 
-    if development_quarter and development_quarter in quarters:
-        shapes.append(_vertical_marker(development_quarter, color="#0f172a", dash="dot"))
-    if severe_quarter and severe_quarter in quarters:
-        shapes.append(_vertical_marker(severe_quarter, color="#9a3412", dash="dash"))
+    dev_date = quarter_date_map.get(development_quarter)
+    if dev_date is not None:
+        shapes.append(_vertical_marker(dev_date, color=palette["development_marker"], dash="dot", width=1.8))
+    severe_date = quarter_date_map.get(severe_quarter)
+    if severe_date is not None:
+        shapes.append(_vertical_marker(severe_date, color="#9a3412", dash="dash"))
+    current_date = quarter_date_map.get(current_quarter)
+    if current_date is not None:
+        shapes.append(_vertical_marker(current_date, color=palette["scenario_date_marker"], dash="dash", width=1.8))
 
-    fig = go.Figure(go.Scatter(
-        x=quarters, y=values,
-        mode="lines+markers", connectgaps=False,
-        line=dict(color=color, width=2.6, shape="spline", smoothing=0.45),
-        marker=dict(size=6, color="#ffffff", line=dict(color=color, width=2)),
-        hovertemplate=f"%{{x}}<br>{mev_name}: %{{y:,.2f}}<extra></extra>",
-    ))
+    fig = go.Figure()
+    has_split = current_quarter and current_quarter in quarters
+    if has_split:
+        split_index = quarters.index(current_quarter)
+        history_dates = quarter_dates[: split_index + 1]
+        history_values = values[: split_index + 1]
+        history_labels = quarters[: split_index + 1]
+        future_dates = quarter_dates[split_index:]
+        future_values = values[split_index:]
+        future_labels = quarters[split_index:]
+        fig.add_trace(go.Scatter(
+            x=history_dates, y=history_values,
+            mode="lines", connectgaps=False,
+            line=dict(color=color, width=2.6, shape="spline", smoothing=0.45),
+            customdata=[_format_pd_mev_quarter_tick(q) for q in history_labels],
+            hovertemplate=f"%{{customdata}}<br>{mev_name}: %{{y:,.2f}}<extra></extra>",
+            showlegend=False,
+        ))
+        fig.add_trace(go.Scatter(
+            x=future_dates, y=future_values,
+            mode="lines", connectgaps=False,
+            line=dict(color=color, width=2.6, shape="spline", smoothing=0.45),
+            opacity=0.35,
+            customdata=[_format_pd_mev_quarter_tick(q) for q in future_labels],
+            hovertemplate=f"%{{customdata}}<br>{mev_name}: %{{y:,.2f}}<extra></extra>",
+            showlegend=False,
+        ))
+    else:
+        fig.add_trace(go.Scatter(
+            x=quarter_dates, y=values,
+            mode="lines", connectgaps=False,
+            line=dict(color=color, width=2.6, shape="spline", smoothing=0.45),
+            customdata=[_format_pd_mev_quarter_tick(q) for q in quarters],
+            hovertemplate=f"%{{customdata}}<br>{mev_name}: %{{y:,.2f}}<extra></extra>",
+            showlegend=False,
+        ))
+
+    tickvals = _build_saas_date_ticks(quarter_dates, max_ticks=8)
+    ticktext = [_format_saas_quarter_label(d) for d in tickvals]
     fig.update_layout(
         height=292,
         margin=dict(t=16, r=18, b=54, l=58),
         hovermode="x unified",
         showlegend=False,
         shapes=shapes,
-        xaxis=build_pd_time_series_xaxis(quarters, {"title": "Quarter", "gridcolor": "#e2e8f0", "showline": True, "linecolor": AXIS_LINE_COLOR, "ticks": "outside"}, density="compact"),
-        yaxis=dict(title=mev_name, range=[y_min, y_max], automargin=True, gridcolor="#e2e8f0", zerolinecolor=AXIS_LINE_COLOR, showline=True, linecolor=AXIS_LINE_COLOR, ticks="outside"),
+        xaxis=dict(
+            title=dict(text="Quarter", font=dict(size=12, color=palette["axis_title"])),
+            type="date",
+            tickmode="array",
+            tickvals=tickvals,
+            ticktext=ticktext,
+            tickfont=dict(size=11, color=palette["axis_tick"]),
+            gridcolor=palette["grid_color"],
+            gridwidth=1,
+            showline=True,
+            linecolor=palette["axis_line"],
+            ticks="outside",
+            tickangle=0,
+            automargin=True,
+            showspikes=True,
+            spikecolor=palette["spike_color"],
+            spikedash="dot",
+            spikemode="across",
+            spikethickness=1,
+        ),
+        yaxis=dict(title=mev_name, range=[y_min, y_max], automargin=True, gridcolor=palette["grid_color"], zerolinecolor=palette["zero_line"], showline=True, linecolor=palette["axis_line"], ticks="outside"),
     )
     _apply_transparent_background(fig)
     return fig
@@ -1102,8 +1251,13 @@ def build_saas_mev_time_series_figure(
     development_date=None,
     current_date=None,
     projection_start_date=None,
+    theme: str = "light",
 ) -> go.Figure:
     """Plot quarterly MEV time series for the selected SAAS model(s)."""
+    normalized_theme = _normalize_saas_theme(theme)
+    palette = _saas_theme_palette(normalized_theme)
+    scenario_color_map = SAAS_DARK_SCENARIO_COLOR_MAP if normalized_theme == "dark" else SAAS_SCENARIO_COLOR_MAP
+    scenario_fallback_colors = SAAS_DARK_SCENARIO_FALLBACK_COLORS if normalized_theme == "dark" else SAAS_SCENARIO_FALLBACK_COLORS
     mev_label_map = mev_label_map or {}
     model_label_map = model_label_map or {}
     resolved_y_axis_title = str(y_axis_title or "").strip() or "MEV Value"
@@ -1133,7 +1287,7 @@ def build_saas_mev_time_series_figure(
         grouped.setdefault((model_name, mev_name, scenario, run_for), []).append((date_value, quarter_value, float_value))
 
     if not grouped:
-        return _empty_figure(empty_message, height=420)
+        return _empty_figure(empty_message, height=420, theme=theme)
 
     multiple_models = len(selected_models) > 1
     multiple_run_fors = len(selected_run_fors) > 1
@@ -1170,15 +1324,24 @@ def build_saas_mev_time_series_figure(
     )
 
     for model_name, mev_name, scenario, run_for in ordered_group_keys:
-        color = _saas_scenario_color(scenario, scenario_colors)
+        color = _saas_scenario_color(
+            scenario,
+            scenario_colors,
+            base_colors=scenario_color_map,
+            fallback_colors=scenario_fallback_colors,
+        )
         points = sorted(
             grouped[(model_name, mev_name, scenario, run_for)],
             key=lambda item: item[1] if is_projection_only and item[1] is not None else item[0],
         )
         is_primary_run_for = bool(primary_run_for and run_for == primary_run_for)
         run_for_dash = run_for_dash_map.get(run_for, "solid")
-        if reference_lines == "monitoring":
-            run_for_dash = "solid" if scenario == "baseline" else "dash"
+        if reference_lines in ("monitoring", "min_max", "none"):
+            run_for_dash = "solid" if is_primary_run_for or not multiple_run_fors else "dash"
+            if normalized_theme == "dark":
+                color = "#86efac" if scenario == "baseline" else "#fb7185" if scenario == "intsevere" else "#d8e1ee"
+            else:
+                color = "#16a34a" if scenario == "baseline" else "#dc2626" if scenario == "intsevere" else "#0f172a"
 
         mev_label = mev_label_map.get(mev_name) or mev_name
         model_label = model_label_map.get(model_name) or model_name
@@ -1199,7 +1362,7 @@ def build_saas_mev_time_series_figure(
         trace_mode = "lines+markers" if reference_lines == "monitoring" or is_history_only else "lines"
         marker_size = 5.8 if reference_lines == "monitoring" else (3.4 if is_history_only and is_primary_run_for else 2.9 if is_history_only else 0)
         marker_line_width = 1.6 if reference_lines == "monitoring" else (0.9 if is_history_only else 0)
-        marker_fill_color = "#ffffff" if reference_lines == "monitoring" or is_history_only else color
+        marker_fill_color = palette["marker_fill"] if reference_lines == "monitoring" or is_history_only else color
         hovertemplate = (
             f"Model: {model_label}<br>"
             f"Run For: {run_for}<br>"
@@ -1325,7 +1488,10 @@ def build_saas_mev_time_series_figure(
     legend_y = -0.38 if ultra_compact_legend else -0.22 if compact_legend else -0.21
     bottom_margin = 198 if ultra_compact_legend else 136 if compact_legend else 130
 
-    shapes: list[dict] = [] if is_projection_only else _saas_history_year_band_shapes(all_axis_values)
+    shapes: list[dict] = [] if is_projection_only else _saas_history_year_band_shapes(
+        all_axis_values,
+        fillcolor=palette["year_band_fill"],
+    )
     annotations: list[dict] = []
     min_max_reference_records = historical_reference_records if historical_reference_records is not None else records
     if primary_run_for:
@@ -1353,12 +1519,12 @@ def build_saas_mev_time_series_figure(
                     yref="paper",
                     y0=0,
                     y1=1,
-                    fillcolor="rgba(148,163,184,0.045)",
+                    fillcolor=palette["projection_band_fill"],
                     line=dict(width=0),
                     layer="below",
                 )
             )
-        shapes.append(_vertical_marker(projection_start_date, xref="x", yref="paper", color="#94a3b8", dash="dash", width=1.6))
+        shapes.append(_vertical_marker(projection_start_date, xref="x", yref="paper", color=palette["projection_marker"], dash="dash", width=1.6))
         annotations.append(
             dict(
                 x=projection_start_date,
@@ -1369,8 +1535,8 @@ def build_saas_mev_time_series_figure(
                 showarrow=False,
                 xanchor="left",
                 yanchor="bottom",
-                font=dict(size=10, color="#64748b"),
-                bgcolor="rgba(255,255,255,0.82)",
+                font=dict(size=10, color=palette["annotation_text"]),
+                bgcolor=palette["annotation_bg"],
             )
         )
 
@@ -1401,7 +1567,7 @@ def build_saas_mev_time_series_figure(
                     xanchor="right",
                     yanchor="bottom",
                     font=dict(size=10, color="#0f766e"),
-                    bgcolor="rgba(255,255,255,0.78)",
+                    bgcolor=palette["annotation_bg"],
                 )
             )
         else:
@@ -1415,7 +1581,7 @@ def build_saas_mev_time_series_figure(
                         yref="y",
                         y0=min_value,
                         y1=max_value,
-                        fillcolor="rgba(37,99,235,0.06)",
+                        fillcolor=palette["minmax_fill"],
                         line=dict(width=0),
                         layer="below",
                     ),
@@ -1453,7 +1619,7 @@ def build_saas_mev_time_series_figure(
                         xanchor="right",
                         yanchor="bottom",
                         font=dict(size=10, color="#0f766e"),
-                        bgcolor="rgba(255,255,255,0.78)",
+                        bgcolor=palette["annotation_bg"],
                     ),
                     dict(
                         xref="paper",
@@ -1465,7 +1631,7 @@ def build_saas_mev_time_series_figure(
                         xanchor="right",
                         yanchor="bottom",
                         font=dict(size=10, color="#b45309"),
-                        bgcolor="rgba(255,255,255,0.78)",
+                        bgcolor=palette["annotation_bg"],
                     ),
                 ]
             )
@@ -1492,7 +1658,7 @@ def build_saas_mev_time_series_figure(
                     dict(type="rect", xref="paper", x0=0, x1=1, yref="y", y0=upper_yellow, y1=axis_high, fillcolor="rgba(239,68,68,0.10)", line=dict(width=0), layer="below"),
                     dict(type="line", xref="paper", x0=0, x1=1, yref="y", y0=green_low, y1=green_low, line=dict(color="#f59e0b", width=1.3, dash="dash")),
                     dict(type="line", xref="paper", x0=0, x1=1, yref="y", y0=green_high, y1=green_high, line=dict(color="#f59e0b", width=1.3, dash="dash")),
-                    dict(type="line", xref="paper", x0=0, x1=1, yref="y", y0=0, y1=0, line=dict(color="#cbd5e1", width=1.3)),
+                    dict(type="line", xref="paper", x0=0, x1=1, yref="y", y0=0, y1=0, line=dict(color=palette["zero_line"], width=1.3)),
                 ]
             )
         else:
@@ -1502,12 +1668,12 @@ def build_saas_mev_time_series_figure(
         if development_date is not None:
             development_marker_x = _saas_quarter_for_date(records, development_date) if is_projection_only else development_date
             if development_marker_x is not None:
-                shapes.append(_vertical_marker(development_marker_x, xref="x", yref="paper", color="#0f172a", dash="dot", width=1.8))
+                shapes.append(_vertical_marker(development_marker_x, xref="x", yref="paper", color=palette["development_marker"], dash="dot", width=1.8))
 
         if current_date is not None:
             current_marker_x = _saas_quarter_for_date(records, current_date) if is_projection_only else current_date
             if current_marker_x is not None:
-                shapes.append(_vertical_marker(current_marker_x, xref="x", yref="paper", color="#dc2626", dash="dash", width=1.8))
+                shapes.append(_vertical_marker(current_marker_x, xref="x", yref="paper", color=palette["scenario_date_marker"], dash="dash", width=1.8))
 
     if is_projection_only:
         tickvals = sorted({value for value in all_axis_values if value is not None})
@@ -1537,15 +1703,15 @@ def build_saas_mev_time_series_figure(
         showlegend=show_bottom_legend,
         hoverdistance=2,
         hoverlabel=dict(
-            bgcolor="rgba(15,23,42,0.95)",
+            bgcolor=palette["hover_bg"],
             bordercolor="rgba(255,255,255,0)",
-            font=dict(size=11, color="#f8fafc"),
+            font=dict(size=11, color=palette["hover_font"]),
         ),
         legend=dict(
             orientation="h",
             title=dict(
                 text=legend_title_text,
-                font=dict(size=10.5, color="#64748b"),
+                font=dict(size=10.5, color=palette["legend_title"]),
             ),
             x=0,
             xanchor="left",
@@ -1553,10 +1719,10 @@ def build_saas_mev_time_series_figure(
             yanchor="top",
             entrywidthmode="pixels",
             entrywidth=125 if ultra_compact_legend else 110 if compact_legend else 100,
-            bgcolor="rgba(255,255,255,0.92)",
-            bordercolor="rgba(203,213,225,0.92)",
+            bgcolor=palette["legend_bg"],
+            bordercolor=palette["legend_border"],
             borderwidth=1,
-            font=dict(size=9 if ultra_compact_legend else 10 if compact_legend else 10.5, color="#334155"),
+            font=dict(size=9 if ultra_compact_legend else 10 if compact_legend else 10.5, color=palette["legend_font"]),
             itemsizing="constant",
             itemwidth=30,
             traceorder="normal",
@@ -1566,34 +1732,34 @@ def build_saas_mev_time_series_figure(
         shapes=shapes,
         annotations=annotations,
         xaxis=dict(
-            title=dict(text=x_axis_title, font=dict(size=12, color="#334155")),
+            title=dict(text=x_axis_title, font=dict(size=12, color=palette["axis_title"])),
             type="linear" if is_projection_only else "date",
             tickmode="array",
             tickvals=tickvals,
             ticktext=ticktext,
-            tickfont=dict(size=11, color="#475569"),
-            gridcolor="#e2e8f0",
+            tickfont=dict(size=11, color=palette["axis_tick"]),
+            gridcolor=palette["grid_color"],
             gridwidth=1,
             showline=True,
-            linecolor=AXIS_LINE_COLOR,
+            linecolor=palette["axis_line"],
             ticks="outside",
             tickangle=0,
             automargin=True,
             showspikes=True,
-            spikecolor="#94a3b8",
+            spikecolor=palette["spike_color"],
             spikedash="dot",
             spikemode="across",
             spikethickness=1,
             range=monitoring_x_range,
         ),
         yaxis=dict(
-            title=dict(text=resolved_y_axis_title, font=dict(size=12, color="#334155")),
-            tickfont=dict(size=11, color="#475569"),
-            gridcolor="#e2e8f0",
+            title=dict(text=resolved_y_axis_title, font=dict(size=12, color=palette["axis_title"])),
+            tickfont=dict(size=11, color=palette["axis_tick"]),
+            gridcolor=palette["grid_color"],
             gridwidth=1,
-            zerolinecolor="#cbd5e1",
+            zerolinecolor=palette["zero_line"],
             showline=True,
-            linecolor=AXIS_LINE_COLOR,
+            linecolor=palette["axis_line"],
             ticks="outside",
             automargin=True,
             range=[axis_low, axis_high] if reference_lines == "monitoring" and 'axis_low' in locals() and axis_low is not None and axis_high is not None else None,

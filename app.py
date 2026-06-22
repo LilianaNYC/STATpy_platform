@@ -1,8 +1,13 @@
-"""Entry point for the multi-page Wholesale Portfolio Model Monitoring Dash app.
+"""Entry point for the multi-dashboard Wholesale Credit Dash app.
 
 Run with::
 
-    python -m pd_performance_dash.app
+    python -m STATpy_platform.app
+
+Wiring is registry-driven: dashboards are declared in
+:mod:`features_registry`, and this module simply builds the shell and loops
+over the registered dashboards to register their callbacks. Adding a dashboard
+or page requires no edits here.
 """
 
 from __future__ import annotations
@@ -11,11 +16,8 @@ import logging
 
 import dash
 
-from . import data_store, shell
-from .callbacks import monitoring_ead_performance_callbacks as ead_performance_callbacks
-from .callbacks import monitoring_lgd_performance_callbacks as lgd_performance_callbacks
-from .callbacks import monitoring_pd_performance_callbacks as pd_performance_callbacks
-from .callbacks import saas_callbacks
+from . import shell
+from .features_registry import DASHBOARDS
 
 logging.basicConfig(level=logging.INFO)
 
@@ -28,10 +30,8 @@ def create_app() -> dash.Dash:
     )
     app.layout = shell.build_app_shell()
 
-    pd_performance_callbacks.register_callbacks(app, data_store.PD_PERFORMANCE_DATA)
-    lgd_performance_callbacks.register_callbacks(app)
-    ead_performance_callbacks.register_callbacks(app)
-    saas_callbacks.register_callbacks(app)
+    for dashboard in DASHBOARDS:
+        dashboard.register_callbacks(app)
     shell.register_callbacks(app)
 
     return app
