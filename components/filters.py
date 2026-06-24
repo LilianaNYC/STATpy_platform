@@ -210,7 +210,7 @@ def build_checkbox_dropdown(
 # ---------------------------------------------------------------------------
 
 
-def build_global_filters(data: dict) -> html.Div:
+def build_global_filters(data: dict, extra_controls=None) -> html.Div:
     """The top filter bar: monitoring point, segment, models."""
     quarters_desc = sorted(data["quarters"], reverse=True)
     latest_quarter = quarters_desc[0] if quarters_desc else ""
@@ -219,60 +219,63 @@ def build_global_filters(data: dict) -> html.Div:
     monitoring_point_options = [{"label": q, "value": q} for q in quarters_desc]
     segment_options = [{"label": "All", "value": "all"}] + [{"label": value, "value": value} for value in segment_values]
 
-    return html.Div(
-        className="monitoring-controls",
-        children=[
-            html.Div(
-                className="monitoring-filter",
-                children=[
-                    html.Label("Monitoring Point", htmlFor=MONITORING_POINT_TOGGLE_ID),
-                    build_single_select_dropdown(
-                        value_id=MONITORING_POINT_ID,
-                        toggle_id=MONITORING_POINT_TOGGLE_ID,
-                        menu_id=MONITORING_POINT_MENU_ID,
-                        filter_key="monitoring-point",
-                        options=monitoring_point_options,
-                        value=latest_quarter,
-                    ),
-                ],
-            ),
-            html.Div(
-                className="monitoring-filter",
-                children=[
-                    html.Label("Segment", htmlFor=PORTFOLIO_SEGMENT_TOGGLE_ID),
-                    build_single_select_dropdown(
-                        value_id=PORTFOLIO_SEGMENT_ID,
-                        toggle_id=PORTFOLIO_SEGMENT_TOGGLE_ID,
-                        menu_id=PORTFOLIO_SEGMENT_MENU_ID,
-                        filter_key="portfolio-segment",
-                        options=segment_options,
-                        value="all",
-                    ),
-                ],
-            ),
-            html.Div(
-                className="monitoring-filter monitoring-model-filter",
-                children=[
-                    html.Label("Specific Models", htmlFor=MODELS_TOGGLE_ID),
-                    build_checkbox_dropdown(
-                        checklist_id=MODELS_ID,
-                        select_all_id=MODELS_SELECT_ALL_ID,
-                        toggle_id=MODELS_TOGGLE_ID,
-                        menu_id=MODELS_MENU_ID,
-                        options=[{"label": name, "value": name} for name in model_names],
-                        value=list(model_names),
-                        toggle_label="All models",
-                    ),
-                ],
-            ),
-            html.Div(
-                "Choose a portfolio segment or specific models. These filters cannot be combined.",
-                id=FILTER_HELP_ID,
-                className="monitoring-filter-help",
-            ),
-            build_section_subnav(),
-        ],
-    )
+    children = [
+        html.Div(
+            className="monitoring-filter",
+            children=[
+                html.Label("Monitoring Point", htmlFor=MONITORING_POINT_TOGGLE_ID),
+                build_single_select_dropdown(
+                    value_id=MONITORING_POINT_ID,
+                    toggle_id=MONITORING_POINT_TOGGLE_ID,
+                    menu_id=MONITORING_POINT_MENU_ID,
+                    filter_key="monitoring-point",
+                    options=monitoring_point_options,
+                    value=latest_quarter,
+                ),
+            ],
+        ),
+        html.Div(
+            className="monitoring-filter",
+            children=[
+                html.Label("Segment", htmlFor=PORTFOLIO_SEGMENT_TOGGLE_ID),
+                build_single_select_dropdown(
+                    value_id=PORTFOLIO_SEGMENT_ID,
+                    toggle_id=PORTFOLIO_SEGMENT_TOGGLE_ID,
+                    menu_id=PORTFOLIO_SEGMENT_MENU_ID,
+                    filter_key="portfolio-segment",
+                    options=segment_options,
+                    value="all",
+                ),
+            ],
+        ),
+        html.Div(
+            className="monitoring-filter monitoring-model-filter",
+            children=[
+                html.Label("Specific Models", htmlFor=MODELS_TOGGLE_ID),
+                build_checkbox_dropdown(
+                    checklist_id=MODELS_ID,
+                    select_all_id=MODELS_SELECT_ALL_ID,
+                    toggle_id=MODELS_TOGGLE_ID,
+                    menu_id=MODELS_MENU_ID,
+                    options=[{"label": name, "value": name} for name in model_names],
+                    value=list(model_names),
+                    toggle_label="All models",
+                ),
+            ],
+        ),
+    ]
+    if extra_controls is not None:
+        children.append(extra_controls)
+    children.extend([
+        html.Div(
+            "Choose a portfolio segment or specific models. These filters cannot be combined.",
+            id=FILTER_HELP_ID,
+            className="monitoring-filter-help",
+        ),
+        build_section_subnav(),
+    ])
+
+    return html.Div(className="monitoring-controls", children=children)
 
 
 # ---------------------------------------------------------------------------

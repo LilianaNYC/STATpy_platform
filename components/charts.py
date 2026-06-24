@@ -137,6 +137,11 @@ def _saas_theme_palette(theme: str | None) -> dict[str, str]:
     return SAAS_THEME_PALETTES[_normalize_saas_theme(theme)]
 
 
+def _monitoring_trend_line_color(theme: str | None) -> str:
+    normalized = _normalize_saas_theme(theme)
+    return "rgba(203,213,225,0.78)" if normalized == "dark" else "rgba(71,85,105,0.75)"
+
+
 def _empty_figure(message: str, height: int = 220, *, theme: str = "light") -> go.Figure:
     palette = _saas_theme_palette(theme)
     fig = go.Figure()
@@ -450,14 +455,18 @@ def build_pd_time_series_xaxis(labels, base=None, density="normal", tick_text_ma
     max_ticks = {"compact": 6, "roomy": 10}.get(density, 8)
     tickvals = _build_tick_values(categories, max_ticks)
     is_dense = len(tickvals) < len(categories)
-    tick_text_map = tick_text_map or {}
+    tick_text_map = {
+        value: format_pd_compact_quarter_label(value)
+        for value in categories
+        if format_pd_compact_quarter_label(value) != value
+    } | (tick_text_map or {})
 
     return {
         **axis,
         "tickmode": "array",
         "tickvals": tickvals,
         "ticktext": [tick_text_map.get(value, value) for value in tickvals],
-        "tickangle": base.get("tickangle", -32 if is_dense else 0),
+        "tickangle": base.get("tickangle", 0),
         "automargin": True,
         "tickfont": {"size": 10 if is_dense else 11, **base_tickfont},
     }
@@ -496,7 +505,7 @@ def _make_dual_panel_figure() -> go.Figure:
 # ---------------------------------------------------------------------------
 
 
-def build_pd_default_rate_trend_figure(performance_trend, monitoring_thresholds, range_value=None) -> go.Figure:
+def build_pd_default_rate_trend_figure(performance_trend, monitoring_thresholds, range_value=None, *, theme: str = "light") -> go.Figure:
     periods = filter_pd_periods_by_range(range_value, [row["quarter"] for row in performance_trend])
     trend = [row for row in performance_trend if row["quarter"] in periods]
     if not trend:
@@ -509,6 +518,9 @@ def build_pd_default_rate_trend_figure(performance_trend, monitoring_thresholds,
     ratios = [row["actual_expected_ratio"] for row in trend]
     ratio_rags = [calculate_pd_metric_rag(thresholds, "Actual / Expected Ratio", ratio) for ratio in ratios]
     ratio_bands = build_pd_ae_ratio_bands(ae_threshold, ratios)
+    ratio_grid_color = "rgba(148,163,184,0.18)"
+    ratio_grid_width = 0.8
+    trend_line_color = _monitoring_trend_line_color(theme)
 
     fig = _make_dual_panel_figure()
     fig.add_trace(go.Scatter(
@@ -526,7 +538,7 @@ def build_pd_default_rate_trend_figure(performance_trend, monitoring_thresholds,
     fig.add_trace(go.Scatter(
         x=quarters, y=ratios,
         mode="lines+markers", name="A/E Ratio", showlegend=False,
-        line=dict(color="#d97706", width=2.5),
+        line=dict(color=trend_line_color, width=2.5),
         marker=dict(size=8, color=[pd_rag_color(rag) for rag in ratio_rags], line=dict(color="#fff", width=1)),
         customdata=ratio_rags,
         hovertemplate="%{x}<br>A/E Ratio: %{y:.3f}<br>RAG: %{customdata}<extra></extra>",
@@ -535,7 +547,7 @@ def build_pd_default_rate_trend_figure(performance_trend, monitoring_thresholds,
     shapes = [{**shape, "xref": "x2 domain", "yref": "y2"} for shape in ratio_bands["shapes"]]
     shapes.append(_vertical_marker(last_quarter, xref="x", yref="y domain"))
     shapes.append(_vertical_marker(last_quarter, xref="x2", yref="y2 domain"))
-    legend_shapes, legend_annotations = _dual_panel_legend("#d97706", "A/E Ratio", _DUAL_PANEL_SECONDARY_DOMAIN)
+    legend_shapes, legend_annotations = _dual_panel_legend(trend_line_color, "A/E Ratio", _DUAL_PANEL_SECONDARY_DOMAIN)
     shapes.extend(legend_shapes)
 
     fig.update_layout(
@@ -546,11 +558,11 @@ def build_pd_default_rate_trend_figure(performance_trend, monitoring_thresholds,
         annotations=legend_annotations,
         shapes=shapes,
     )
-    axis_kwargs = {"title": "Portfolio Quarter", "showline": True, "linecolor": AXIS_LINE_COLOR, "ticks": "outside", "gridcolor": GRID_COLOR}
+    axis_kwargs = {"title": "Portfolio Quarter", "gridcolor": ratio_grid_color, "gridwidth": ratio_grid_width}
     fig.update_xaxes(build_pd_time_series_xaxis(quarters, axis_kwargs, density="compact"), row=1, col=1)
     fig.update_xaxes(build_pd_time_series_xaxis(quarters, axis_kwargs, density="compact"), row=1, col=2)
-    fig.update_yaxes(dict(title="Default Rate", tickformat=".1%", rangemode="tozero", showline=True, linecolor=AXIS_LINE_COLOR, ticks="outside", gridcolor=GRID_COLOR, automargin=True), row=1, col=1)
-    fig.update_yaxes(dict(title=dict(text="A/E Ratio", standoff=8), range=ratio_bands["axis_range"], showline=True, linecolor=AXIS_LINE_COLOR, ticks="outside", gridcolor=GRID_COLOR, automargin=True), row=1, col=2)
+    fig.update_yaxes(dict(title="Default Rate", tickformat=".1%", rangemode="tozero", gridcolor=ratio_grid_color, gridwidth=ratio_grid_width, zeroline=False, automargin=True), row=1, col=1)
+    fig.update_yaxes(dict(title=dict(text="A/E Ratio", standoff=8), range=ratio_bands["axis_range"], gridcolor=ratio_grid_color, gridwidth=ratio_grid_width, zeroline=False, automargin=True), row=1, col=2)
     _apply_transparent_background(fig)
     return fig
 
@@ -691,7 +703,7 @@ def build_pd_balance_sheet_calibration_rag_trend_figure(rag_trend, monitoring_qu
 # ---------------------------------------------------------------------------
 
 
-def build_pd_notching_trend_figure(performance_trend, monitoring_thresholds, range_value=None) -> go.Figure:
+def build_pd_notching_trend_figure(performance_trend, monitoring_thresholds, range_value=None, *, theme: str = "light") -> go.Figure:
     periods = filter_pd_periods_by_range(range_value, [row["quarter"] for row in performance_trend])
     trend = [row for row in performance_trend if row["quarter"] in periods]
     if not trend:
@@ -704,6 +716,10 @@ def build_pd_notching_trend_figure(performance_trend, monitoring_thresholds, ran
     differences = [row["notching_difference"] for row in trend]
     difference_rags = [calculate_pd_metric_rag(thresholds, "Notching Test", value) for value in differences]
     difference_bands = build_pd_threshold_bands(threshold, differences, {"min_axis_max": 2})
+    difference_axis_max = max(difference_bands["axis_range"][1], 0.5)
+    notching_grid_color = "rgba(148,163,184,0.18)"
+    notching_grid_width = 0.8
+    trend_line_color = _monitoring_trend_line_color(theme)
 
     fig = _make_dual_panel_figure()
     fig.add_trace(go.Scatter(
@@ -721,16 +737,43 @@ def build_pd_notching_trend_figure(performance_trend, monitoring_thresholds, ran
     fig.add_trace(go.Scatter(
         x=quarters, y=differences,
         mode="lines+markers", name="Notching Difference", showlegend=False,
-        line=dict(color="#d97706", width=2.5),
+        line=dict(color=trend_line_color, width=2.5),
         marker=dict(size=8, color=[pd_rag_color(rag) for rag in difference_rags], line=dict(color="#fff", width=1)),
         customdata=difference_rags,
         hovertemplate="%{x}<br>Notching Difference: %{y:.0f}<br>RAG: %{customdata}<extra></extra>",
     ), row=1, col=2)
 
     shapes = [{**shape, "xref": "x2 domain", "yref": "y2"} for shape in difference_bands["shapes"]]
+    green_min = threshold.get("green_min")
+    green_max = threshold.get("green_max")
+    amber_max = threshold.get("amber_max")
+    if (
+        threshold.get("red_condition") == "above amber_max"
+        and _finite(green_min)
+        and _finite(green_max)
+        and green_min == 0
+        and green_max == 0
+        and _finite(amber_max)
+    ):
+        green_display_max = green_max + 0.05
+        amber_display_max = amber_max + 0.05
+        shapes = [
+            {
+                "type": "rect", "xref": "x2 domain", "x0": 0, "x1": 1, "yref": "y2",
+                "y0": -0.5, "y1": green_display_max, "fillcolor": "rgba(22,163,74,.10)", "line": {"width": 0}, "layer": "below",
+            },
+            {
+                "type": "rect", "xref": "x2 domain", "x0": 0, "x1": 1, "yref": "y2",
+                "y0": green_display_max, "y1": amber_display_max, "fillcolor": "rgba(217,119,6,.18)", "line": {"width": 0}, "layer": "below",
+            },
+            {
+                "type": "rect", "xref": "x2 domain", "x0": 0, "x1": 1, "yref": "y2",
+                "y0": amber_display_max, "y1": difference_axis_max, "fillcolor": "rgba(220,38,38,.08)", "line": {"width": 0}, "layer": "below",
+            },
+        ]
     shapes.append(_vertical_marker(last_quarter, xref="x", yref="y domain"))
     shapes.append(_vertical_marker(last_quarter, xref="x2", yref="y2 domain"))
-    legend_shapes, legend_annotations = _dual_panel_legend("#d97706", "Notching Difference", _DUAL_PANEL_SECONDARY_DOMAIN)
+    legend_shapes, legend_annotations = _dual_panel_legend(trend_line_color, "Notching Difference", _DUAL_PANEL_SECONDARY_DOMAIN)
     shapes.extend(legend_shapes)
 
     fig.update_layout(
@@ -741,11 +784,11 @@ def build_pd_notching_trend_figure(performance_trend, monitoring_thresholds, ran
         annotations=legend_annotations,
         shapes=shapes,
     )
-    axis_kwargs = {"title": "Portfolio Quarter", "showline": True, "linecolor": AXIS_LINE_COLOR, "ticks": "outside", "gridcolor": GRID_COLOR}
+    axis_kwargs = {"title": "Portfolio Quarter", "gridcolor": notching_grid_color, "gridwidth": notching_grid_width}
     fig.update_xaxes(build_pd_time_series_xaxis(quarters, axis_kwargs, density="compact"), row=1, col=1)
     fig.update_xaxes(build_pd_time_series_xaxis(quarters, axis_kwargs, density="compact"), row=1, col=2)
-    fig.update_yaxes(dict(title="CRR Notch", tickmode="linear", dtick=1, range=[0.5, 9.5], showline=True, linecolor=AXIS_LINE_COLOR, ticks="outside", gridcolor=GRID_COLOR, automargin=True), row=1, col=1)
-    fig.update_yaxes(dict(title=dict(text="Notching Difference", standoff=8), range=difference_bands["axis_range"], tickmode="linear", dtick=1, showline=True, linecolor=AXIS_LINE_COLOR, ticks="outside", gridcolor=GRID_COLOR, automargin=True), row=1, col=2)
+    fig.update_yaxes(dict(title="CRR Notch", tickmode="linear", dtick=1, range=[0.5, 9.5], gridcolor=notching_grid_color, gridwidth=notching_grid_width, zeroline=False, automargin=True), row=1, col=1)
+    fig.update_yaxes(dict(title=dict(text="Notching Difference", standoff=8), range=[-0.5, difference_axis_max], tickmode="linear", dtick=1, gridcolor=notching_grid_color, gridwidth=notching_grid_width, zeroline=False, automargin=True), row=1, col=2)
     _apply_transparent_background(fig)
     return fig
 
@@ -756,7 +799,7 @@ def build_pd_notching_trend_figure(performance_trend, monitoring_thresholds, ran
 # ---------------------------------------------------------------------------
 
 
-def build_pd_confidence_interval_trend_figure(performance_trend, monitoring_thresholds, snapshot_quarter, range_value=None) -> go.Figure:
+def build_pd_confidence_interval_trend_figure(performance_trend, monitoring_thresholds, snapshot_quarter, range_value=None, *, theme: str = "light") -> go.Figure:
     periods = filter_pd_periods_by_range(range_value, [row["quarter"] for row in performance_trend])
     trend = [row for row in performance_trend if row["quarter"] in periods]
     if not trend:
@@ -769,6 +812,7 @@ def build_pd_confidence_interval_trend_figure(performance_trend, monitoring_thre
     confidence_values = [row["confidence_interval"] for row in trend]
     confidence_rags = [calculate_pd_metric_rag(thresholds, "Confidence Interval Test", value) for value in confidence_values]
     confidence_bands = build_pd_threshold_bands(threshold, confidence_values, {"min_axis_max": 1})
+    trend_line_color = _monitoring_trend_line_color(theme)
 
     shapes = list(confidence_bands["shapes"])
     if snapshot_quarter in quarters:
@@ -777,7 +821,7 @@ def build_pd_confidence_interval_trend_figure(performance_trend, monitoring_thre
     fig = go.Figure(go.Scatter(
         x=quarters, y=confidence_values,
         mode="lines+markers", name="Confidence Interval Test",
-        line=dict(color="#16a34a", width=2.5),
+        line=dict(color=trend_line_color, width=2.5),
         marker=dict(size=8, color=[pd_rag_color(rag) for rag in confidence_rags], line=dict(color="#fff", width=1)),
         customdata=confidence_rags,
         hovertemplate="%{x}<br>Confidence Interval Test: %{y:.1%}<br>RAG: %{customdata}<extra></extra>",
@@ -789,7 +833,7 @@ def build_pd_confidence_interval_trend_figure(performance_trend, monitoring_thre
         legend=dict(orientation="h", x=0, y=1.08),
         shapes=shapes,
         xaxis=build_pd_time_series_xaxis(quarters, {"title": "Portfolio Quarter", "gridcolor": GRID_COLOR}, density="compact"),
-        yaxis=dict(title="Confidence Interval Test", tickformat=".0%", range=confidence_bands["axis_range"], gridcolor=GRID_COLOR),
+        yaxis=dict(title="Confidence Interval Test", tickformat=".0%", range=confidence_bands["axis_range"], gridcolor=GRID_COLOR, zeroline=False),
     )
     _apply_transparent_background(fig)
     return fig
@@ -806,7 +850,7 @@ _DISCRIMINATION_TREND_METRICS = [
 ]
 
 
-def build_pd_discrimination_trend_figures(performance_trend, monitoring_thresholds, snapshot_quarter, range_value=None) -> dict[str, go.Figure]:
+def build_pd_discrimination_trend_figures(performance_trend, monitoring_thresholds, snapshot_quarter, range_value=None, *, theme: str = "light") -> dict[str, go.Figure]:
     periods = filter_pd_periods_by_range(range_value, [row["quarter"] for row in performance_trend])
     trend = [row for row in performance_trend if row["quarter"] in periods]
     if not trend:
@@ -816,6 +860,7 @@ def build_pd_discrimination_trend_figures(performance_trend, monitoring_threshol
     quarters = [row["quarter"] for row in trend]
     thresholds = get_pd_thresholds(monitoring_thresholds)
     figures: dict[str, go.Figure] = {}
+    trend_line_color = _monitoring_trend_line_color(theme)
     for metric in _DISCRIMINATION_TREND_METRICS:
         values = [row[metric["key"]] for row in trend]
         rags = [calculate_pd_metric_rag(thresholds, metric["name"], value) for value in values]
@@ -828,7 +873,7 @@ def build_pd_discrimination_trend_figures(performance_trend, monitoring_threshol
         fig = go.Figure(go.Scatter(
             x=quarters, y=values,
             mode="lines+markers", name=metric["name"], connectgaps=False,
-            line=dict(color=metric["color"], width=2.5, dash=metric["dash"]),
+            line=dict(color=trend_line_color, width=2.5, dash=metric["dash"]),
             marker=dict(size=8, color=[pd_rag_color(rag) for rag in rags], line=dict(color="#fff", width=1)),
             customdata=rags,
             hovertemplate=f"%{{x}}<br>{metric['name']}: %{{y:.3f}}<br>RAG: %{{customdata}}<extra></extra>",
@@ -840,7 +885,7 @@ def build_pd_discrimination_trend_figures(performance_trend, monitoring_threshol
             showlegend=False,
             shapes=shapes,
             xaxis=build_pd_time_series_xaxis(quarters, {"title": "Portfolio Quarter", "gridcolor": GRID_COLOR}, density="compact"),
-            yaxis=dict(title=metric["name"], range=bands["axis_range"], gridcolor=GRID_COLOR, zerolinecolor=AXIS_LINE_COLOR),
+            yaxis=dict(title=metric["name"], range=bands["axis_range"], gridcolor=GRID_COLOR, zeroline=False),
         )
         _apply_transparent_background(fig)
         figures[metric["key"]] = fig
@@ -853,7 +898,7 @@ def build_pd_discrimination_trend_figures(performance_trend, monitoring_threshol
 # ---------------------------------------------------------------------------
 
 
-def build_pd_go_live_accuracy_trend_figure(performance_trend, monitoring_thresholds, go_live_quarter, range_value=None) -> go.Figure:
+def build_pd_go_live_accuracy_trend_figure(performance_trend, monitoring_thresholds, go_live_quarter, range_value=None, *, theme: str = "light") -> go.Figure:
     if not go_live_quarter:
         return _empty_figure("No go-live quarter between 2019Q2 and 2019Q4 is available for the selected population.")
 
@@ -870,6 +915,9 @@ def build_pd_go_live_accuracy_trend_figure(performance_trend, monitoring_thresho
     delta_values = [row["delta_accuracy_ratio"] for row in trend]
     delta_rags = [calculate_pd_metric_rag(thresholds, "Delta Accuracy Ratio", value) for value in delta_values]
     delta_bands = build_pd_threshold_bands(delta_threshold, delta_values, {"min_axis_max": 0.3})
+    delta_grid_color = "rgba(148,163,184,0.18)"
+    delta_grid_width = 0.8
+    trend_line_color = _monitoring_trend_line_color(theme)
 
     fig = _make_dual_panel_figure()
     fig.add_trace(go.Scatter(
@@ -887,7 +935,7 @@ def build_pd_go_live_accuracy_trend_figure(performance_trend, monitoring_thresho
     fig.add_trace(go.Scatter(
         x=quarters, y=delta_values,
         mode="lines+markers", name="Delta Accuracy Ratio", showlegend=False,
-        line=dict(color="#d97706", width=2.5),
+        line=dict(color=trend_line_color, width=2.5),
         marker=dict(size=8, color=[pd_rag_color(rag) for rag in delta_rags], line=dict(color="#fff", width=1)),
         customdata=delta_rags,
         hovertemplate="%{x}<br>Delta Accuracy Ratio: %{y:.3f}<br>RAG: %{customdata}<extra></extra>",
@@ -896,7 +944,7 @@ def build_pd_go_live_accuracy_trend_figure(performance_trend, monitoring_thresho
     shapes = [{**shape, "xref": "x2 domain", "yref": "y2"} for shape in delta_bands["shapes"]]
     shapes.append(_vertical_marker(last_quarter, xref="x", yref="y domain"))
     shapes.append(_vertical_marker(last_quarter, xref="x2", yref="y2 domain"))
-    legend_shapes, legend_annotations = _dual_panel_legend("#d97706", "Delta Accuracy Ratio", _DUAL_PANEL_SECONDARY_DOMAIN)
+    legend_shapes, legend_annotations = _dual_panel_legend(trend_line_color, "Delta Accuracy Ratio", _DUAL_PANEL_SECONDARY_DOMAIN)
     shapes.extend(legend_shapes)
 
     fig.update_layout(
@@ -907,10 +955,10 @@ def build_pd_go_live_accuracy_trend_figure(performance_trend, monitoring_thresho
         annotations=legend_annotations,
         shapes=shapes,
     )
-    fig.update_xaxes(build_pd_time_series_xaxis(quarters, {"title": "Portfolio Quarter", "showline": True, "linecolor": AXIS_LINE_COLOR, "ticks": "outside", "gridcolor": GRID_COLOR}, density="compact"), row=1, col=1)
-    fig.update_xaxes(build_pd_time_series_xaxis(quarters, {"title": f"Portfolio Quarter (from {go_live_quarter})", "showline": True, "linecolor": AXIS_LINE_COLOR, "ticks": "outside", "gridcolor": GRID_COLOR}, density="compact"), row=1, col=2)
-    fig.update_yaxes(dict(title="Accuracy Ratio", showline=True, linecolor=AXIS_LINE_COLOR, ticks="outside", gridcolor=GRID_COLOR, zerolinecolor=AXIS_LINE_COLOR, automargin=True), row=1, col=1)
-    fig.update_yaxes(dict(title=dict(text="Delta Accuracy Ratio", standoff=8), range=delta_bands["axis_range"], showline=True, linecolor=AXIS_LINE_COLOR, ticks="outside", gridcolor=GRID_COLOR, zerolinecolor=AXIS_LINE_COLOR, automargin=True), row=1, col=2)
+    fig.update_xaxes(build_pd_time_series_xaxis(quarters, {"title": "Portfolio Quarter", "gridcolor": delta_grid_color, "gridwidth": delta_grid_width}, density="compact"), row=1, col=1)
+    fig.update_xaxes(build_pd_time_series_xaxis(quarters, {"title": f"Portfolio Quarter (from {go_live_quarter})", "gridcolor": delta_grid_color, "gridwidth": delta_grid_width}, density="compact"), row=1, col=2)
+    fig.update_yaxes(dict(title="Accuracy Ratio", gridcolor=delta_grid_color, gridwidth=delta_grid_width, zeroline=False, automargin=True), row=1, col=1)
+    fig.update_yaxes(dict(title=dict(text="Delta Accuracy Ratio", standoff=8), range=delta_bands["axis_range"], gridcolor=delta_grid_color, gridwidth=delta_grid_width, zeroline=False, automargin=True), row=1, col=2)
     _apply_transparent_background(fig)
     return fig
 

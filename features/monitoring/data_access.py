@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from ...config.settings import settings
-from ...data.monitoring.loader import load_pd_performance_data
+from ...data.monitoring.loader import load_pd_performance_data_from_aggregated as load_pd_performance_data
 
 
 def _with_app_meta(data: dict) -> dict:
