@@ -4,14 +4,19 @@ from __future__ import annotations
 from ...shared.registration import already_registered
 from ...shared.types import DashboardDefinition
 from . import data_access, page_registry, stores
+from .callbacks import export
 
 
 def register_callbacks(app) -> None:
-    """Register every DQ page's callbacks (idempotent)."""
+    """Register every DQ page's callbacks (idempotent), plus each page's
+    top-right Export menu (this-page PDF / all-pages HTML / all-pages Excel)."""
     if already_registered(app, "dashboard:dq"):
         return
+    quarter = data_access.DATA.get("latest_quarter") or ""
     for page in page_registry.PAGES:
         page.register_callbacks(app)
+        export.register_export(app, page.key, quarter,
+                               data_access.export_html, data_access.export_excel)
 
 
 DASHBOARD = DashboardDefinition(

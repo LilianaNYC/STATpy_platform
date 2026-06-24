@@ -1,27 +1,29 @@
-"""Stable data interface for the DQ Wholesale dashboard.
+"""Stable data interface for the DQ Wholesale dashboard (thin facade).
 
-Loads the prebuilt metrics payload once at import into :data:`DATA`. The
-in-app "Update data" button calls :func:`recompute_into`, which re-runs the
-bundled pipeline against the Excel in ``source_data/`` and swaps the result
-into the dict IN PLACE, so every page/callback holding ``DATA`` sees the new
-data without re-importing. :func:`get_app_meta` surfaces snapshot/run info for
-the shell sidebar/footer.
+Public surface consumed by the platform and this feature's callbacks:
+``DATA`` (loaded once), ``get_metrics``, ``recompute_into`` / ``refresh`` (the
+in-app "Update data" button), ``get_app_meta`` (sidebar/footer), and
+``export_html`` / ``export_excel`` (the per-page Export menu). All real work is
+delegated to ``services`` + ``repositories`` so the rest of the feature never
+imports the compute/IO layers directly:
+
+  - the seed payload is loaded/saved by ``repositories.results_store``;
+  - recompute + report generation run through ``services.report_service``
+    (which lazily pulls the heavy compute engine only when actually recomputing).
 """
 from __future__ import annotations
 
-import json
 import threading
-from pathlib import Path
 
 from ...config.settings import settings
+from .repositories import results_store
+from .services import report_service
 
-_HERE = Path(__file__).resolve().parent
-_SEED = _HERE / "data_seed" / "metrics.json"
-_PIPE_CONFIG = _HERE / "_pipeline" / "config.yaml"
 _BUILD_LOCK = threading.Lock()
 
-# Loaded once at import time; refreshed in place by recompute_into().
-DATA: dict = json.loads(_SEED.read_text(encoding="utf-8"))
+# Loaded once at import time; refreshed IN PLACE by recompute_into() so every
+# page/callback holding ``DATA`` sees new data without re-importing.
+DATA: dict = results_store.load_metrics()
 
 
 def get_metrics() -> dict:
@@ -29,12 +31,13 @@ def get_metrics() -> dict:
 
 
 def recompute_into(metrics: dict) -> str:
-    """Rebuild from the Excel in source_data/ and swap into ``metrics`` in place."""
+    """Rebuild from the Excel in ``settings.source_data_dir`` and swap into
+    ``metrics`` in place, persisting the result as the new seed."""
     with _BUILD_LOCK:
-        fresh, run_id = _build_fresh()
+        fresh, run_id = report_service.compute_fresh(settings.source_data_dir)
     metrics.clear()
     metrics.update(fresh)
-    _SEED.write_text(json.dumps(fresh, default=str, indent=2), encoding="utf-8")
+    results_store.save_metrics(fresh)
     return run_id
 
 
@@ -43,27 +46,21 @@ def refresh() -> str:
     return recompute_into(DATA)
 
 
-def _build_fresh():
-    from datetime import datetime
-
-    from ._pipeline.build import compute_full_metrics
-    from ._pipeline.config.load_config import load_config
-    from ._pipeline.data_manager import load_portfolio, load_schema
-
-    cfg = load_config(_PIPE_CONFIG)
-    base = settings.source_data_dir           # the 3 Excel files live here
-    df = load_portfolio(cfg, base)
-    df24 = load_portfolio(cfg, base, key="portfolio_2024")
-    schema_df = load_schema(cfg, base)
-    run_id = f"DQ_{datetime.now():%Y%m%d_%H%M%S}"
-    return compute_full_metrics(df, df24, schema_df, cfg, run_id), run_id
-
-
 def get_app_meta() -> dict:
     """Sidebar/footer metadata the shell surfaces for this dashboard."""
     return {
-        "latest_snapshot": DATA.get("data_as_of") or DATA.get("latest_quarter") or "\u2014",
-        "last_refresh": DATA.get("last_refresh") or "\u2014",
-        "source_file": DATA.get("source") or "\u2014",
+        "latest_snapshot": DATA.get("data_as_of") or DATA.get("latest_quarter") or "—",
+        "last_refresh": DATA.get("last_refresh") or "—",
+        "source_file": DATA.get("source") or "—",
         "run_id": DATA.get("run_id") or "DQ",
     }
+
+
+def export_html() -> str:
+    """Full self-contained HTML report (every tab) — see report_service."""
+    return report_service.export_html(DATA)
+
+
+def export_excel() -> bytes:
+    """Metrics workbook (.xlsx) — see report_service."""
+    return report_service.export_excel(DATA)

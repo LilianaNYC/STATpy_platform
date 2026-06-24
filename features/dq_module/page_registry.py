@@ -2,14 +2,18 @@
 from __future__ import annotations
 
 from ...shared.types import PageDefinition
-from .pages.overview import callbacks as overview_cb, page as overview_page
-from .pages.schema import callbacks as schema_cb, page as schema_page
-from .pages.completeness import callbacks as completeness_cb, page as completeness_page
-from .pages.rules import callbacks as rules_cb, page as rules_page
-from .pages.population import callbacks as population_cb, page as population_page
-from .pages.balance import callbacks as balance_cb, page as balance_page
-from .pages.drift import callbacks as drift_cb, page as drift_page
-from .pages.timeseries import callbacks as timeseries_cb, page as timeseries_page
+from .ui.pages import (
+    overview as overview_page, schema as schema_page,
+    completeness as completeness_page, rules as rules_page,
+    population as population_page, balance as balance_page,
+    drift as drift_page, timeseries as timeseries_page,
+)
+from .callbacks import (
+    overview as overview_cb, schema as schema_cb,
+    completeness as completeness_cb, rules as rules_cb,
+    population as population_cb, balance as balance_cb,
+    drift as drift_cb, timeseries as timeseries_cb,
+)
 
 PAGES: tuple[PageDefinition, ...] = (
     PageDefinition(key="overview", label="Overview", path="/dq-overview", icon="\U0001f4cb",
