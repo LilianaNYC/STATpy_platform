@@ -600,6 +600,8 @@ def load_pd_performance_data_from_aggregated() -> dict[str, Any]:
     agg_df = pd.read_excel(config.PORTFOLIO_FILE, sheet_name=PD_AGGREGATED_SHEET_NAME)
     agg_df = agg_df.dropna(how="all")
 
+    portfolio = load_portfolio()
+
     quarters = sorted(agg_df["quarter"].dropna().unique())
     latest_quarter = quarters[-1] if quarters else ""
     previous_quarter = quarters[-2] if len(quarters) > 1 else ""
@@ -619,7 +621,7 @@ def load_pd_performance_data_from_aggregated() -> dict[str, Any]:
     mev_catalog, mev_mnemonic_map, mev_description_map = load_pd_mev_catalog()
 
     return {
-        "portfolio": agg_df,
+        "portfolio": portfolio,
         "quarters": quarters,
         "latest_quarter": latest_quarter,
         "previous_quarter": previous_quarter,
