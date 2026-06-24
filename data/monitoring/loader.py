@@ -116,6 +116,8 @@ def load_monitoring_thresholds() -> dict[str, list[dict[str, Any]]]:
         ("pd_thresholds", config.PD_THRESHOLDS_SHEET_NAME),
         ("crr_master_scale", config.CRR_MASTER_SCALE_SHEET_NAME),
         ("rag_assignment_pd", config.RAG_ASSIGNMENT_PD_SHEET_NAME),
+        ("lgd_thresholds", config.LGD_THRESHOLDS_SHEET_NAME),
+        ("loss_thresholds", config.LOSS_THRESHOLDS_SHEET_NAME),
     ):
         try:
             df = pd.read_excel(config.MONITORING_THRESHOLDS_FILE, sheet_name=sheet_name)

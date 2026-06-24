@@ -1,4 +1,8 @@
-"""Callbacks for the LGD Performance page."""
+"""Callbacks for the monitoring overview page.
+
+Ported from ``integrated:callbacks/monitoring_overview_callbacks.py`` into
+the main-branch page structure.
+"""
 
 from __future__ import annotations
 
@@ -6,26 +10,29 @@ from dash import ALL, Input, Output, State, ctx, no_update
 
 from . import page as layout
 from .....components import filters
-from .....data.analytics.lgd import (
-    get_lgd_monitoring_point_options,
-    get_lgd_segments_for_model,
-    resolve_lgd_segment,
-)
+from .....data.analytics.overview import build_overview_rows, overview_filter_options
 from .....shared.registration import already_registered
 from ...data_access import PD_PERFORMANCE_DATA
+
+_OVERVIEW_ROWS = build_overview_rows(PD_PERFORMANCE_DATA)
 
 _RANGE_PRESET_COUNTS = {"last-4": 4, "last-8": 8, "last-12": 12}
 
 
-def _dropdown_options(values: list[str]) -> list[dict[str, str]]:
+def _dropdown_options(values: list[str]) -> list[dict]:
     return [{"label": value, "value": value} for value in values]
 
 
+def _keep_valid(value: str | None, values: list[str]) -> str:
+    return value if value in values else "All"
+
+
 def register_callbacks(app) -> None:
-    """Register LGD Performance callbacks against ``app`` (idempotent)."""
-    if already_registered(app, "page:monitoring.lgd_performance"):
+    """Register all Overview callbacks against *app* (idempotent)."""
+    if already_registered(app, "page:monitoring.overview"):
         return
 
+    overview_rows = _OVERVIEW_ROWS
     data = PD_PERFORMANCE_DATA
 
     @app.callback(
@@ -39,13 +46,12 @@ def register_callbacks(app) -> None:
         State({"type": filters.RANGE_FROM_ID, "key": ALL}, "options"),
         State(layout.RANGE_STORE_ID, "data"),
         prevent_initial_call=True,
-        allow_duplicate=True,
     )
-    def update_lgd_range_store(
+    def update_overview_range_store(
         window_values, from_values, to_values, window_ids, from_ids, to_ids, from_options_list, range_store,
     ):
         triggered = ctx.triggered_id
-        if not triggered:
+        if not triggered or triggered.get("key") != layout.RAG_TREND_RANGE_KEY:
             return no_update
 
         range_key = triggered["key"]
@@ -53,10 +59,7 @@ def register_callbacks(app) -> None:
 
         if triggered["type"] == filters.RANGE_WINDOW_ID:
             preset = window_values[window_ids.index(triggered)]
-            from_id = {"type": filters.RANGE_FROM_ID, "key": range_key}
-            if from_id not in from_ids:
-                return no_update
-            from_idx = from_ids.index(from_id)
+            from_idx = from_ids.index({"type": filters.RANGE_FROM_ID, "key": range_key})
             periods = [option["value"] for option in from_options_list[from_idx] if option["value"]]
             if preset == "all":
                 range_store[range_key] = {"from": "", "to": ""}
@@ -69,8 +72,6 @@ def register_callbacks(app) -> None:
             boundary = "from" if triggered["type"] == filters.RANGE_FROM_ID else "to"
             ids = from_ids if boundary == "from" else to_ids
             values = from_values if boundary == "from" else to_values
-            if triggered not in ids:
-                return no_update
             value = values[ids.index(triggered)]
 
             current = dict(range_store.get(range_key) or {"from": "", "to": ""})
@@ -87,44 +88,35 @@ def register_callbacks(app) -> None:
         return range_store
 
     @app.callback(
-        Output(layout.SEGMENT_DROPDOWN_ID, "options"),
-        Output(layout.SEGMENT_DROPDOWN_ID, "value"),
-        Input(layout.MODEL_DROPDOWN_ID, "value"),
-        Input(layout.SEGMENT_DROPDOWN_ID, "value"),
+        Output(layout.MODEL_ID, "options"),
+        Output(layout.MODEL_ID, "value"),
+        Input(layout.MODEL_GROUP_ID, "value"),
+        Input(layout.MODEL_ID, "value"),
     )
-    def sync_lgd_segment_dropdown(selected_model, selected_segment):
-        segments = get_lgd_segments_for_model(data, selected_model)
-        value = resolve_lgd_segment(data, selected_model, selected_segment)
-        return _dropdown_options(segments), value
-
-    @app.callback(
-        Output(layout.MONITORING_POINT_DROPDOWN_ID, "options"),
-        Output(layout.MONITORING_POINT_DROPDOWN_ID, "value"),
-        Input(layout.MODEL_DROPDOWN_ID, "value"),
-        Input(layout.SEGMENT_DROPDOWN_ID, "value"),
-        Input(layout.MONITORING_POINT_DROPDOWN_ID, "value"),
-    )
-    def sync_lgd_monitoring_point_dropdown(selected_model, selected_segment, selected_monitoring_point):
-        segment = resolve_lgd_segment(data, selected_model, selected_segment)
-        options = get_lgd_monitoring_point_options(data, selected_model, segment)
-        if selected_monitoring_point in options:
-            value = selected_monitoring_point
-        else:
-            value = "Latest" if "Latest" in options else (options[0] if options else "")
-        return _dropdown_options(options), value
+    def sync_overview_model_options(model_group, model):
+        options = overview_filter_options(overview_rows, model_group or "All")
+        model_values = options["models"]
+        return _dropdown_options(model_values), _keep_valid(model, model_values)
 
     @app.callback(
         Output(layout.CONTENT_ID, "children"),
-        Input(layout.MODEL_DROPDOWN_ID, "value"),
-        Input(layout.SEGMENT_DROPDOWN_ID, "value"),
-        Input(layout.MONITORING_POINT_DROPDOWN_ID, "value"),
+        Input(layout.PERIOD_ID, "value"),
+        Input(layout.MODEL_GROUP_ID, "value"),
+        Input(layout.MODEL_ID, "value"),
+        Input(layout.SEGMENT_ID, "value"),
+        Input(layout.RAG_TREND_METRIC_ID, "value"),
         Input(layout.RANGE_STORE_ID, "data"),
     )
-    def update_lgd_content(selected_model, selected_segment, selected_monitoring_point, range_store):
-        return layout.render_lgd_performance_content(
+    def update_overview_content(monitoring_period, model_group, model, segment, rag_trend_metric, range_store):
+        model_options = overview_filter_options(overview_rows, model_group or "All")["models"]
+        model = _keep_valid(model, model_options)
+        return layout.render_overview_content(
             data,
-            selected_model,
-            selected_segment,
-            selected_monitoring_point,
+            overview_rows,
+            monitoring_period or "All",
+            model_group or "All",
+            model,
+            segment or "All",
+            rag_trend_metric or "Overall RAG",
             range_store or {},
         )

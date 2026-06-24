@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
+import polars as pl
+
 from ...config.settings import settings
 from ...data.monitoring.loader import load_pd_performance_data
 
@@ -24,8 +26,15 @@ def _with_app_meta(data: dict) -> dict:
     return data
 
 
-# PD Performance tab data (Chapter 1 & 2), loaded once at import time.
-PD_PERFORMANCE_DATA = _with_app_meta(load_pd_performance_data())
+def _with_polars_portfolio(data: dict) -> dict:
+    portfolio = data.get("portfolio")
+    if portfolio is not None and not isinstance(portfolio, pl.DataFrame):
+        data["portfolio"] = pl.from_pandas(portfolio)
+    return data
+
+
+# Monitoring data, loaded once at import time.
+PD_PERFORMANCE_DATA = _with_polars_portfolio(_with_app_meta(load_pd_performance_data()))
 
 
 def get_app_meta() -> dict:

@@ -234,7 +234,7 @@ body{background:#f8fafc;overflow:hidden}
 /* ---------------------------------------------------------------------
    Section sub-navigation
    --------------------------------------------------------------------- */
-#pd-subnav.monitoring-section-subnav,#saas-subnav.monitoring-section-subnav{flex-basis:100%;display:flex;flex-direction:column;gap:8px;margin-top:2px;padding:10px 12px;border:1px solid #dbe4f0;border-radius:12px;background:linear-gradient(135deg,#f8fbff 0%,#ffffff 42%,#f8fafc 100%);box-shadow:0 6px 18px rgba(15,23,42,.045)}
+#pd-subnav.monitoring-section-subnav,#saas-subnav.monitoring-section-subnav,#overview-subnav.monitoring-section-subnav,#lgd-subnav.monitoring-section-subnav,#ead-subnav.monitoring-section-subnav,#loss-subnav.monitoring-section-subnav{flex-basis:100%;display:flex;flex-direction:column;gap:8px;margin-top:2px;padding:10px 12px;border:1px solid #dbe4f0;border-radius:12px;background:linear-gradient(135deg,#f8fbff 0%,#ffffff 42%,#f8fafc 100%);box-shadow:0 6px 18px rgba(15,23,42,.045)}
 #saas-subnav.monitoring-section-subnav{margin-top:12px;padding:6px 12px}
 .monitoring-section-subnav-group{display:flex;align-items:flex-start;gap:12px}
 .monitoring-section-subnav-group+.monitoring-section-subnav-group{padding-top:8px;border-top:1px solid #e2e8f0}
@@ -816,6 +816,10 @@ tr:last-child td{border-bottom:none}
 .monitoring-shell.theme-dark .section-card,
 .monitoring-shell.theme-dark #pd-subnav.monitoring-section-subnav,
 .monitoring-shell.theme-dark #saas-subnav.monitoring-section-subnav,
+.monitoring-shell.theme-dark #overview-subnav.monitoring-section-subnav,
+.monitoring-shell.theme-dark #lgd-subnav.monitoring-section-subnav,
+.monitoring-shell.theme-dark #ead-subnav.monitoring-section-subnav,
+.monitoring-shell.theme-dark #loss-subnav.monitoring-section-subnav,
 .monitoring-shell.theme-dark .pd-live-section,
 .monitoring-shell.theme-dark .pd-placeholder-section,
 .monitoring-shell.theme-dark .pd-placeholder-card,

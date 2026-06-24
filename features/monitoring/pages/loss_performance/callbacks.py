@@ -1,9 +1,4 @@
-"""Callbacks for the EAD Performance page.
-
-Ports ``monitoring_ead_performance_callbacks.py`` from the integrated branch,
-adapting imports to the ``features/monitoring/pages/`` package structure and
-using the idempotent callback-guard pattern from ``main``.
-"""
+"""Callbacks for the Loss Performance page."""
 
 from __future__ import annotations
 
@@ -11,10 +6,10 @@ from dash import ALL, Input, Output, State, ctx, no_update
 
 from . import page as layout
 from .....components import filters
-from .....data.analytics.ead import (
-    get_ead_monitoring_point_options,
-    get_ead_segments_for_model,
-    resolve_ead_segment,
+from .....data.analytics.loss import (
+    get_loss_monitoring_point_options,
+    get_loss_segments_for_model,
+    resolve_loss_segment,
 )
 from .....shared.registration import already_registered
 from ...data_access import PD_PERFORMANCE_DATA
@@ -27,15 +22,12 @@ def _dropdown_options(values: list[str]) -> list[dict[str, str]]:
 
 
 def register_callbacks(app) -> None:
-    """Register all EAD Performance callbacks against ``app`` (idempotent)."""
-    if already_registered(app, "page:monitoring.ead_performance"):
+    """Register Loss Performance callbacks against ``app`` (idempotent)."""
+    if already_registered(app, "page:monitoring.loss_performance"):
         return
 
     data = PD_PERFORMANCE_DATA
 
-    # -----------------------------------------------------------------
-    # Range-window store (calibration / discrimination RAG trend ranges)
-    # -----------------------------------------------------------------
     @app.callback(
         Output(layout.RANGE_STORE_ID, "data"),
         Input({"type": filters.RANGE_WINDOW_ID, "key": ALL}, "value"),
@@ -49,7 +41,7 @@ def register_callbacks(app) -> None:
         prevent_initial_call=True,
         allow_duplicate=True,
     )
-    def update_ead_range_store(
+    def update_loss_range_store(
         window_values,
         from_values,
         to_values,
@@ -101,23 +93,17 @@ def register_callbacks(app) -> None:
 
         return range_store
 
-    # -----------------------------------------------------------------
-    # Segment dropdown syncs with model selection
-    # -----------------------------------------------------------------
     @app.callback(
         Output(layout.SEGMENT_DROPDOWN_ID, "options"),
         Output(layout.SEGMENT_DROPDOWN_ID, "value"),
         Input(layout.MODEL_DROPDOWN_ID, "value"),
         Input(layout.SEGMENT_DROPDOWN_ID, "value"),
     )
-    def sync_ead_segment_dropdown(selected_model, selected_segment):
-        segments = get_ead_segments_for_model(data, selected_model)
-        value = resolve_ead_segment(data, selected_model, selected_segment)
+    def sync_loss_segment_dropdown(selected_model, selected_segment):
+        segments = get_loss_segments_for_model(data, selected_model)
+        value = resolve_loss_segment(data, selected_model, selected_segment)
         return _dropdown_options(segments), value
 
-    # -----------------------------------------------------------------
-    # Monitoring-point dropdown syncs with model + segment
-    # -----------------------------------------------------------------
     @app.callback(
         Output(layout.MONITORING_POINT_DROPDOWN_ID, "options"),
         Output(layout.MONITORING_POINT_DROPDOWN_ID, "value"),
@@ -125,18 +111,15 @@ def register_callbacks(app) -> None:
         Input(layout.SEGMENT_DROPDOWN_ID, "value"),
         Input(layout.MONITORING_POINT_DROPDOWN_ID, "value"),
     )
-    def sync_ead_monitoring_point_dropdown(selected_model, selected_segment, selected_monitoring_point):
-        segment = resolve_ead_segment(data, selected_model, selected_segment)
-        options = get_ead_monitoring_point_options(data, selected_model, segment)
+    def sync_loss_monitoring_point_dropdown(selected_model, selected_segment, selected_monitoring_point):
+        segment = resolve_loss_segment(data, selected_model, selected_segment)
+        options = get_loss_monitoring_point_options(data, selected_model, segment)
         if selected_monitoring_point in options:
             value = selected_monitoring_point
         else:
             value = "Latest" if "Latest" in options else (options[0] if options else "")
         return _dropdown_options(options), value
 
-    # -----------------------------------------------------------------
-    # Main content re-render on any filter change
-    # -----------------------------------------------------------------
     @app.callback(
         Output(layout.CONTENT_ID, "children"),
         Input(layout.MODEL_DROPDOWN_ID, "value"),
@@ -144,8 +127,8 @@ def register_callbacks(app) -> None:
         Input(layout.MONITORING_POINT_DROPDOWN_ID, "value"),
         Input(layout.RANGE_STORE_ID, "data"),
     )
-    def update_ead_content(selected_model, selected_segment, selected_monitoring_point, range_store):
-        return layout.render_ead_performance_content(
+    def update_loss_content(selected_model, selected_segment, selected_monitoring_point, range_store):
+        return layout.render_loss_performance_content(
             data,
             selected_model,
             selected_segment,
