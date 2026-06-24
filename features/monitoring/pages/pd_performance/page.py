@@ -35,15 +35,10 @@ from .....components.charts import (
     build_pd_rank_ordering_figure,
 )
 from .....components.filters import (
-    MEV_MODEL_FILTER_ID,
-    MEV_MODEL_MENU_ID,
-    MEV_MODEL_TOGGLE_ID,
-    MEV_RESET_ID,
     build_chart_header,
     build_frozen_horizon_control,
     build_global_filters,
     build_range_controls,
-    build_single_select_dropdown,
     build_trend_horizon_control,
 )
 from .cards import (
@@ -52,7 +47,6 @@ from .cards import (
     build_pd_overview_heatmap,
     build_pd_section_heading,
     build_pd_section_rag_card,
-    build_pd_static_info_card,
     build_pd_test_card,
 )
 from .....data.analytics.mev_range import (
@@ -116,6 +110,8 @@ CONTENT_ID = "pd-performance-content"
 RANGE_STORE_ID = "pd-range-store"
 TREND_HORIZON_STORE_ID = "pd-trend-horizon-store"
 MEV_FILTER_STORE_ID = "pd-mev-filter-store"
+APPLY_FILTERS_ID = "pd-apply-filters"
+APPLIED_FILTERS_STORE_ID = "pd-applied-filters-store"
 
 # Maps each per-panel trend-horizon control to the shared store group it
 # reads/writes. Ports the JS PD_CALIBRATION_TREND_HORIZON /
@@ -137,6 +133,21 @@ _GRAPH_CONFIG = {"displayModeBar": False, "responsive": True}
 def _trend_horizon_value(trend_horizon_store: dict | None, group: str) -> str:
     value = (trend_horizon_store or {}).get(group)
     return value if value in ("1y", "2y") else "1y"
+
+
+def _chart_surface(graph_id: str, figure, class_name: str) -> html.Div:
+    """Wrap chapter-one charts in a contained surface so they align with cards."""
+    return html.Div(
+        className="pd-chart-card-surface",
+        children=[
+            dcc.Graph(
+                id=graph_id,
+                figure=figure,
+                config=_GRAPH_CONFIG,
+                className=f"{class_name} pd-chart-card-graph".strip(),
+            )
+        ],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -395,18 +406,6 @@ def _mev_rag_sort_weight(rag: str) -> int:
     return {"Red": 0, "Amber": 1, "Green": 2}.get(rag, 3)
 
 
-def _build_mev_rag_tag_list(mev_rags: list[dict]):
-    if not mev_rags:
-        return html.Div(html.Span("No MEVs in scope", className="pd-mev-rag-tag pd-mev-rag-tag-neutral"), className="pd-mev-rag-tags")
-
-    tone_map = {"Green": "green", "Amber": "amber", "Red": "red"}
-    tags = []
-    for entry in mev_rags:
-        tone = tone_map.get(entry["rag"], "neutral")
-        title = f"{entry['name']}: {entry['rag']}"
-        tags.append(html.Span(entry["name"], className=f"pd-mev-rag-tag pd-mev-rag-tag-{tone}", title=title, **{"aria-label": title}))
-    return html.Div(tags, className="pd-mev-rag-tags")
-
 
 def _format_mev_quarter(value: str | None) -> str:
     """Format a development/quarter value as ``YYYYQn``."""
@@ -415,153 +414,113 @@ def _format_mev_quarter(value: str | None) -> str:
     return str(value).replace("-Q", "Q")
 
 
-def _build_mev_rag_summary_card(selected_models: list[str], catalog: dict, monitoring_point: str | None) -> html.Article:
+def _build_mev_rag_summary_panel(selected_models: list[str], catalog: dict, monitoring_point: str | None) -> html.Div:
     summaries = []
     for model_name in selected_models:
         model_data = catalog.get(model_name, {})
         severe_quarter = iso_date_to_pd_quarter(model_data.get("severe_scenario_date"))
+        dev_dates = get_pd_mev_model_development_dates(model_data)
+        contributions = model_data.get("contributions") or {}
         mev_rags = []
         for mev_name, mev_data in (model_data.get("mevs") or {}).items():
             rag = calculate_pd_mev_worst_rag_after_quarter(mev_data, severe_quarter)
-            mev_rags.append({"name": mev_name, "rag": rag})
-        mev_rags.sort(key=lambda entry: (_mev_rag_sort_weight(entry["rag"]), entry["name"]))
+            contrib = contributions.get(mev_name)
+            mev_rags.append({"name": mev_name, "rag": rag, "contribution": contrib})
+        mev_rags.sort(key=lambda entry: (-(entry.get("contribution") or 0), entry["name"]))
+        worst = min(mev_rags, key=lambda e: _mev_rag_sort_weight(e["rag"]))["rag"] if mev_rags else "N/A"
         summaries.append({
             "model_name": model_name,
             "severe_quarter": severe_quarter,
-            "development_dates": get_pd_mev_model_development_dates(model_data),
+            "development_dates": dev_dates,
             "mev_rags": mev_rags,
+            "worst_rag": worst,
+            "segments": model_data.get("segments") or [],
         })
 
-    if summaries:
-        summary_children = [
+    if not summaries:
+        return html.Div(
+            className="section-card pd-mev-rag-panel pd-mev-rag-panel-empty",
+            children=[
+                html.Div("No PD models in scope", className="pd-mev-chart-title"),
+                html.P("Adjust the dashboard filters above to bring models into scope.", className="pd-section-subtitle"),
+            ],
+        )
+
+    model_rows = []
+    for summary in summaries:
+        worst = summary["worst_rag"]
+        worst_tone = worst.lower() if worst in ("Green", "Amber", "Red") else "na"
+        dev_label = " / ".join(_format_mev_quarter(d) for d in summary["development_dates"]) if summary["development_dates"] else "—"
+        severe_label = _format_mev_quarter(summary["severe_quarter"]) if summary["severe_quarter"] else (monitoring_point or "—")
+
+        strip_segments = []
+        for entry in summary["mev_rags"]:
+            contrib = entry.get("contribution")
+            if contrib is None or contrib <= 0:
+                continue
+            tone = entry["rag"].lower() if entry["rag"] in ("Green", "Amber", "Red") else "na"
+            pct_val = contrib * 100
+            pct_label = f"{pct_val:.0f}%"
+            seg_children = [
+                html.Span(entry["name"], className="pd-mev-strip-name"),
+                html.Span(pct_label, className="pd-mev-strip-pct"),
+            ]
+            strip_segments.append(
+                html.Div(
+                    className=f"pd-mev-strip-seg pd-mev-strip-seg-{tone}",
+                    style={"flex": str(contrib)},
+                    title=f"{entry['name']}: {pct_label} — RAG {entry['rag']}",
+                    children=seg_children,
+                )
+            )
+
+        model_rows.append(
             html.Div(
-                className="pd-mev-rag-model",
+                className="pd-mev-summary-row",
                 children=[
-                    html.Div(html.Strong(summary["model_name"]), className="pd-mev-rag-model-header"),
                     html.Div(
-                        className="pd-mev-rag-model-details",
+                        className="pd-mev-summary-row-sidebar",
                         children=[
-                            html.Span(f"Scenario window starts: {_format_mev_quarter(summary['severe_quarter']) if summary['severe_quarter'] else (monitoring_point or 'Unavailable')}", className="pd-mev-rag-model-meta"),
-                            html.Span(
-                                "Development date: "
-                                + (" / ".join(_format_mev_quarter(d) for d in summary["development_dates"]) if summary["development_dates"] else "—"),
-                                className="pd-mev-rag-model-meta",
+                            html.Div(summary["model_name"], className="pd-mev-summary-row-name"),
+                            html.Div(
+                                className="pd-mev-summary-row-meta",
+                                children=[
+                                    html.Div([html.Span("Segments: "), html.Strong(", ".join(summary["segments"]) if summary["segments"] else "—")]),
+                                    html.Div([html.Span("Development date: "), html.Strong(dev_label)]),
+                                    html.Div([html.Span("Severe scenario: "), html.Strong(severe_label)]),
+                                ],
                             ),
                         ],
                     ),
-                    _build_mev_rag_tag_list(summary["mev_rags"]),
+                    html.Div(
+                        className="pd-mev-summary-row-body",
+                        children=[
+                            html.Div(strip_segments, className="pd-mev-strip"),
+                        ],
+                    ),
                 ],
             )
-            for summary in summaries
-        ]
-    else:
-        summary_children = [html.Div("No PD models are currently in scope for MEV evaluation.", className="pd-test-meta")]
-
-    return html.Article(
-        className="pd-test-card pd-mev-rag-summary-card",
-        children=[
-            html.Div(
-                className="pd-test-card-heading",
-                children=[html.Div([html.Span("Post-scenario RAG"), html.Div(html.H4("MEV RAG by model"), className="pd-card-title-row")])],
-            ),
-            html.Div(monitoring_point or "—", className="pd-test-value"),
-            html.Div(f"Evaluation window: monitoring point onward", className="pd-test-meta"),
-            html.Div("Method: each MEV is colored by its worst observed post-scenario RAG", className="pd-test-meta"),
-            html.Div(summary_children, className="pd-mev-rag-summary-list"),
-        ],
-    )
-
-
-def _build_mev_development_dates_card(selected_models: list[str], catalog: dict) -> html.Article:
-    model_dates = [{"model_name": m, "dates": get_pd_mev_model_development_dates(catalog.get(m, {}))} for m in selected_models]
-    distinct_count = len({d for item in model_dates for d in item["dates"]})
-
-    if model_dates:
-        rows = [
-            html.Div(
-                className="pd-mev-development-row",
-                children=[
-                    html.Strong(item["model_name"]),
-                    html.Span(" / ".join(_format_mev_quarter(d) for d in item["dates"]) if item["dates"] else "—"),
-                ],
-            )
-            for item in model_dates
-        ]
-    else:
-        rows = [html.Div("No development dates in scope.", className="pd-test-meta")]
-
-    return html.Article(
-        className="pd-test-card pd-mev-development-card",
-        children=[
-            html.Div(
-                className="pd-test-card-heading",
-                children=[html.Div([html.Span("Reference"), html.Div(html.H4("Development dates"), className="pd-card-title-row")])],
-            ),
-            html.Div(rows, className="pd-mev-development-list"),
-            html.Div(f"Distinct checkpoints: {distinct_count}", className="pd-test-meta"),
-            html.Div("Purpose: Green range reference", className="pd-test-meta"),
-        ],
-    )
-
-
-def _build_mev_filter_row(
-    available_model_names: list[str],
-    chart_model_names: list[str],
-    mev_periods: list[str],
-    range_store: dict,
-    ctx: PdFilterContext,
-) -> html.Div:
-    selected_model_value = (
-        "all"
-        if (not available_model_names or len(chart_model_names) == len(available_model_names))
-        else (chart_model_names[0] if chart_model_names else "all")
-    )
-    range_value = range_store.get("mev")
-    has_mev_range_selection = bool((range_value or {}).get("from") or (range_value or {}).get("to"))
-    has_model_selection = len(chart_model_names) != len(available_model_names)
-    can_reset = has_model_selection or has_mev_range_selection
-
-    model_options = [{"label": "All", "value": "all"}] + [{"label": m, "value": m} for m in available_model_names]
+        )
 
     return html.Div(
-        className="pd-mev-filter-row",
+        className="section-card pd-mev-summary-panel",
         children=[
             html.Div(
-                className="pd-mev-filter-copy",
+                className="pd-mev-summary-panel-header",
                 children=[
-                    html.Div("Chart Filters", className="pd-content-kicker"),
-                    html.P("Refine the MEV charts below by PD model."),
-                ],
-            ),
-            html.Div(
-                className="pd-mev-filter-controls",
-                children=[
-                    html.Div(
-                        className="pd-mev-filter-group",
-                        children=[
-                            html.Label("PD Model"),
-                            build_single_select_dropdown(
-                                value_id=MEV_MODEL_FILTER_ID,
-                                toggle_id=MEV_MODEL_TOGGLE_ID,
-                                menu_id=MEV_MODEL_MENU_ID,
-                                filter_key="mev-model",
-                                options=model_options,
-                                value=selected_model_value,
-                                disabled=not available_model_names,
-                            ),
-                        ],
-                    ),
-                    *([build_range_controls("mev", mev_periods, range_value)] if mev_periods else []),
-                    html.Div(
-                        className="pd-mev-filter-actions",
-                        children=[
-                            html.Button("Reset chart filters", id=MEV_RESET_ID, className="btn pd-mev-filter-reset", disabled=not can_reset, n_clicks=0),
-                        ],
+                    html.H4("Post-Scenario MEV Summary", className="pd-mev-summary-panel-title"),
+                    html.Span(
+                        f"{len(summaries)} model{'s' if len(summaries) != 1 else ''} in scope"
+                        f" — contribution weights at development, colored by post-scenario RAG",
+                        className="pd-mev-summary-panel-subtitle",
                     ),
                 ],
             ),
+            html.Div(model_rows, className="pd-mev-summary-rows"),
         ],
     )
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -580,10 +539,6 @@ def _build_mev_range_section(data: dict, ctx: PdFilterContext, range_store: dict
     chart_mev_names = resolve_pd_mev_chart_names(available_mev_names, mev_filter_store.get("names"))
     mev_periods = get_pd_mev_visible_periods(catalog, chart_model_names, chart_mev_names)
 
-    total_mevs = sum(len((catalog.get(m, {}).get("mevs") or {})) for m in selected_models)
-    severe_scenario_dates = [catalog.get(m, {}).get("severe_scenario_date") for m in selected_models]
-    severe_scenario_dates = [d for d in severe_scenario_dates if d]
-    model_scope_label = ", ".join(selected_models) if selected_models else "No models matched the current filters"
 
     model_panels = []
     for model_index, model_name in enumerate(chart_model_names):
@@ -641,10 +596,19 @@ def _build_mev_range_section(data: dict, ctx: PdFilterContext, range_store: dict
                                 ],
                             ),
                             html.Div(
-                                className="pd-mev-model-badges",
+                                className="pd-mev-model-meta",
                                 children=[
-                                    html.Span(f"{len(mev_entries)} MEVs", className="pd-mev-model-badge"),
-                                    html.Span(f"Severe scenario: {format_pd_short_date(model_data.get('severe_scenario_date'))}", className="pd-mev-model-badge"),
+                                    html.Div([
+                                        html.Span("MEVs", className="pd-mev-model-meta-label"),
+                                        html.Span(f"{len(mev_entries)}", className="pd-mev-model-meta-value"),
+                                    ], className="pd-mev-model-meta-item"),
+                                    html.Div([
+                                        html.Span("Severe scenario", className="pd-mev-model-meta-label"),
+                                        html.Span(
+                                            format_pd_short_date(model_data.get("severe_scenario_date")),
+                                            className="pd-mev-model-meta-value pd-mev-model-meta-value-scenario",
+                                        ),
+                                    ], className="pd-mev-model-meta-item"),
                                 ],
                             ),
                         ],
@@ -674,56 +638,18 @@ def _build_mev_range_section(data: dict, ctx: PdFilterContext, range_store: dict
             build_pd_section_heading(
                 "2.6 MEV Range",
                 "MEV Range",
-                "Plot the selected PD models against their development green range, amber two-standard-deviation "
-                "buffers, and red out-of-range zones.",
+                [
+                    "Checks whether stress scenario MEVs remain within the range observed during model development. "
+                    "Green marks the development min/max, amber extends two standard deviations beyond, and red flags "
+                    "values outside amber — indicating key drivers have moved beyond the model's trained operating range. "
+                    "For detailed MEV time series and scenario comparisons, see the ",
+                    html.Strong("SAAS"),
+                    " tab.",
+                ],
                 "N/A",
                 options={"show_rag": False},
             ),
-            html.Div(
-                className="pd-performance-note",
-                children=[
-                    "Each chart uses the model-specific development min/max as the green band, extends amber by "
-                    "two standard deviations beyond that development range, and marks the model development date "
-                    "and severe scenario date directly on the timeline. Source: ",
-                    html.Strong(data.get("mev_source_file") or "dummy_mev_data.xlsx"),
-                    ".",
-                ],
-            ),
-            html.Div(
-                className="pd-test-grid pd-mev-summary-grid",
-                children=[
-                    _build_mev_rag_summary_card(selected_models, catalog, ctx.monitoring_point),
-                    build_pd_static_info_card(
-                        "Models in scope",
-                        f"{len(selected_models)}",
-                        [
-                            {"label": "Segment filter", "value": "All segments" if ctx.segment == "all" else ctx.segment},
-                            {"label": "Model scope", "value": model_scope_label},
-                        ],
-                        options={"test_label": "Filters"},
-                    ),
-                    build_pd_static_info_card(
-                        "MEV charts",
-                        f"{total_mevs}",
-                        [
-                            {"label": "Rendered panels", "value": f"{total_mevs} charts" if total_mevs else "No charts in scope"},
-                            {"label": "Catalog models", "value": f"{len(catalog)}"},
-                        ],
-                        options={"test_label": "Coverage"},
-                    ),
-                    _build_mev_development_dates_card(selected_models, catalog),
-                    build_pd_static_info_card(
-                        "Severe scenario",
-                        format_pd_date_summary(severe_scenario_dates),
-                        [
-                            {"label": "Distinct checkpoints", "value": f"{len(set(severe_scenario_dates))}"},
-                            {"label": "Purpose", "value": "Scenario marker"},
-                        ],
-                        options={"test_label": "Scenario"},
-                    ),
-                ],
-            ),
-            _build_mev_filter_row(selected_models, chart_model_names, mev_periods, range_store, ctx),
+            _build_mev_rag_summary_panel(selected_models, catalog, ctx.monitoring_point),
             *body,
         ],
     )
@@ -735,6 +661,7 @@ def _build_mev_range_section(data: dict, ctx: PdFilterContext, range_store: dict
 
 
 def render_pd_performance_content(data: dict, ctx: PdFilterContext, range_store: dict, trend_horizon_store: dict, mev_filter_store: dict, theme_value: str | None = None) -> list:
+    theme = normalize_theme_value(theme_value)
     observations = data["performance_observations"]
     rating_observations = data["rating_migration_observations"]
     monitoring_thresholds = data["monitoring_thresholds"]
@@ -1046,11 +973,10 @@ def render_pd_performance_content(data: dict, ctx: PdFilterContext, range_store:
                                 get_pd_range_periods(ctx.quarters, cq),
                                 range_store.get("calibration_rag"),
                             ),
-                            dcc.Graph(
-                                id="pd-calibration-rag-trend-chart",
-                                figure=build_pd_calibration_rag_trend_figure(calibration_rag_trend, cq, range_store.get("calibration_rag")),
-                                config=_GRAPH_CONFIG,
-                                className="pd-default-rate-trend-chart pd-default-rate-trend-chart-compact pd-default-rate-trend-chart-axis-room-compact",
+                            _chart_surface(
+                                "pd-calibration-rag-trend-chart",
+                                build_pd_calibration_rag_trend_figure(calibration_rag_trend, cq, range_store.get("calibration_rag")),
+                                "pd-default-rate-trend-chart pd-default-rate-trend-chart-compact pd-default-rate-trend-chart-axis-room-compact",
                             ),
                         ],
                     ),
@@ -1067,13 +993,12 @@ def render_pd_performance_content(data: dict, ctx: PdFilterContext, range_store:
                                 range_store.get("calibration_ci"),
                                 extra_controls=build_trend_horizon_control("calibration_ci", calibration_trend_horizon_key),
                             ),
-                            dcc.Graph(
-                                id="pd-confidence-interval-trend-chart",
-                                figure=build_pd_confidence_interval_trend_figure(
-                                    calibration_performance_trend, monitoring_thresholds, calibration_trend_context["snapshot_quarter"], range_store.get("calibration_ci"),
+                            _chart_surface(
+                                "pd-confidence-interval-trend-chart",
+                                build_pd_confidence_interval_trend_figure(
+                                    calibration_performance_trend, monitoring_thresholds, calibration_trend_context["snapshot_quarter"], range_store.get("calibration_ci"), theme=theme,
                                 ),
-                                config=_GRAPH_CONFIG,
-                                className="pd-default-rate-trend-chart pd-default-rate-trend-chart-medium pd-default-rate-trend-chart-axis-room-medium",
+                                "pd-default-rate-trend-chart pd-default-rate-trend-chart-medium pd-default-rate-trend-chart-axis-room-medium",
                             ),
                         ],
                     ),
@@ -1092,11 +1017,10 @@ def render_pd_performance_content(data: dict, ctx: PdFilterContext, range_store:
                         range_store.get("calibration_notching"),
                         extra_controls=build_trend_horizon_control("calibration_notching", calibration_trend_horizon_key),
                     ),
-                    dcc.Graph(
-                        id="pd-notching-trend-chart",
-                        figure=build_pd_notching_trend_figure(calibration_performance_trend, monitoring_thresholds, range_store.get("calibration_notching")),
-                        config=_GRAPH_CONFIG,
-                        className="pd-default-rate-trend-chart pd-notching-trend-chart",
+                    _chart_surface(
+                        "pd-notching-trend-chart",
+                        build_pd_notching_trend_figure(calibration_performance_trend, monitoring_thresholds, range_store.get("calibration_notching"), theme=theme),
+                        "pd-default-rate-trend-chart pd-notching-trend-chart",
                     ),
                 ],
             ),
@@ -1113,11 +1037,10 @@ def render_pd_performance_content(data: dict, ctx: PdFilterContext, range_store:
                         range_store.get("calibration_default_rate"),
                         extra_controls=build_trend_horizon_control("calibration_default_rate", calibration_trend_horizon_key),
                     ),
-                    dcc.Graph(
-                        id="pd-default-rate-trend-chart",
-                        figure=build_pd_default_rate_trend_figure(calibration_performance_trend, monitoring_thresholds, range_store.get("calibration_default_rate")),
-                        config=_GRAPH_CONFIG,
-                        className="pd-default-rate-trend-chart pd-calibration-trend-chart",
+                    _chart_surface(
+                        "pd-default-rate-trend-chart",
+                        build_pd_default_rate_trend_figure(calibration_performance_trend, monitoring_thresholds, range_store.get("calibration_default_rate"), theme=theme),
+                        "pd-default-rate-trend-chart pd-calibration-trend-chart",
                     ),
                 ],
             ),
@@ -1135,7 +1058,7 @@ def render_pd_performance_content(data: dict, ctx: PdFilterContext, range_store:
         observations, rating_observations, go_live_context["snapshot_quarter"], go_live_horizon_key, ctx, crr_scale,
     )
     discrimination_trend_figures = build_pd_discrimination_trend_figures(
-        discrimination_performance_trend, monitoring_thresholds, discrimination_trend_context["snapshot_quarter"], range_store.get("discrimination_trend"),
+        discrimination_performance_trend, monitoring_thresholds, discrimination_trend_context["snapshot_quarter"], range_store.get("discrimination_trend"), theme=theme,
     )
 
     section_1_3 = html.Section(
@@ -1195,11 +1118,10 @@ def render_pd_performance_content(data: dict, ctx: PdFilterContext, range_store:
                         get_pd_range_periods(ctx.quarters, cq),
                         range_store.get("discrimination_rag"),
                     ),
-                    dcc.Graph(
-                        id="pd-discrimination-rag-trend-chart",
-                        figure=build_pd_discrimination_rag_trend_figure(discrimination_rag_trend, cq, range_store.get("discrimination_rag")),
-                        config=_GRAPH_CONFIG,
-                        className="pd-default-rate-trend-chart pd-default-rate-trend-chart-compact",
+                    _chart_surface(
+                        "pd-discrimination-rag-trend-chart",
+                        build_pd_discrimination_rag_trend_figure(discrimination_rag_trend, cq, range_store.get("discrimination_rag")),
+                        "pd-default-rate-trend-chart pd-default-rate-trend-chart-compact",
                     ),
                 ],
             ),
@@ -1217,11 +1139,10 @@ def render_pd_performance_content(data: dict, ctx: PdFilterContext, range_store:
                         range_store.get("discrimination_accuracy"),
                         extra_controls=build_frozen_horizon_control("Accuracy trend PD horizon"),
                     ),
-                    dcc.Graph(
-                        id="pd-go-live-accuracy-trend-chart",
-                        figure=build_pd_go_live_accuracy_trend_figure(go_live_performance_trend, monitoring_thresholds, go_live_start, range_store.get("discrimination_accuracy")),
-                        config=_GRAPH_CONFIG,
-                        className="pd-default-rate-trend-chart pd-go-live-accuracy-trend-chart",
+                    _chart_surface(
+                        "pd-go-live-accuracy-trend-chart",
+                        build_pd_go_live_accuracy_trend_figure(go_live_performance_trend, monitoring_thresholds, go_live_start, range_store.get("discrimination_accuracy"), theme=theme),
+                        "pd-default-rate-trend-chart pd-go-live-accuracy-trend-chart",
                     ),
                 ],
             ),
@@ -1243,9 +1164,21 @@ def render_pd_performance_content(data: dict, ctx: PdFilterContext, range_store:
                         id="pd-discrimination-trend-grid",
                         className="pd-discrimination-trend-grid",
                         children=[
-                            dcc.Graph(id="pd-discrimination-trend-gini-coefficient", figure=discrimination_trend_figures["gini_coefficient"], config=_GRAPH_CONFIG, className="pd-discrimination-trend-chart"),
-                            dcc.Graph(id="pd-discrimination-trend-ks-statistic", figure=discrimination_trend_figures["ks_statistic"], config=_GRAPH_CONFIG, className="pd-discrimination-trend-chart"),
-                            dcc.Graph(id="pd-discrimination-trend-kendall-tau", figure=discrimination_trend_figures["kendall_tau"], config=_GRAPH_CONFIG, className="pd-discrimination-trend-chart"),
+                            _chart_surface(
+                                "pd-discrimination-trend-gini-coefficient",
+                                discrimination_trend_figures["gini_coefficient"],
+                                "pd-discrimination-trend-chart",
+                            ),
+                            _chart_surface(
+                                "pd-discrimination-trend-ks-statistic",
+                                discrimination_trend_figures["ks_statistic"],
+                                "pd-discrimination-trend-chart",
+                            ),
+                            _chart_surface(
+                                "pd-discrimination-trend-kendall-tau",
+                                discrimination_trend_figures["kendall_tau"],
+                                "pd-discrimination-trend-chart",
+                            ),
                         ],
                     ),
                 ],
@@ -1317,11 +1250,10 @@ def render_pd_performance_content(data: dict, ctx: PdFilterContext, range_store:
                                 range_store.get("balance_sheet_calibration_rag"),
                                 extra_controls=build_frozen_horizon_control("Balance sheet calibration RAG PD horizon"),
                             ),
-                            dcc.Graph(
-                                id="pd-balance-sheet-calibration-rag-trend-chart",
-                                figure=build_pd_balance_sheet_calibration_rag_trend_figure(balance_sheet_rag_trend, balance_sheet_context["snapshot_quarter"], range_store.get("balance_sheet_calibration_rag")),
-                                config=_GRAPH_CONFIG,
-                                className="pd-default-rate-trend-chart pd-default-rate-trend-chart-compact pd-default-rate-trend-chart-axis-room-compact",
+                            _chart_surface(
+                                "pd-balance-sheet-calibration-rag-trend-chart",
+                                build_pd_balance_sheet_calibration_rag_trend_figure(balance_sheet_rag_trend, balance_sheet_context["snapshot_quarter"], range_store.get("balance_sheet_calibration_rag")),
+                                "pd-default-rate-trend-chart pd-default-rate-trend-chart-compact pd-default-rate-trend-chart-axis-room-compact",
                             ),
                         ],
                     ),
@@ -1338,11 +1270,10 @@ def render_pd_performance_content(data: dict, ctx: PdFilterContext, range_store:
                                 range_store.get("balance_sheet_ci"),
                                 extra_controls=build_frozen_horizon_control("Balance sheet calibration PD horizon"),
                             ),
-                            dcc.Graph(
-                                id="pd-balance-sheet-confidence-interval-trend-chart",
-                                figure=build_pd_confidence_interval_trend_figure(balance_sheet_performance_trend, monitoring_thresholds, balance_sheet_context["snapshot_quarter"], range_store.get("balance_sheet_ci")),
-                                config=_GRAPH_CONFIG,
-                                className="pd-default-rate-trend-chart pd-default-rate-trend-chart-medium pd-default-rate-trend-chart-axis-room-medium",
+                            _chart_surface(
+                                "pd-balance-sheet-confidence-interval-trend-chart",
+                                build_pd_confidence_interval_trend_figure(balance_sheet_performance_trend, monitoring_thresholds, balance_sheet_context["snapshot_quarter"], range_store.get("balance_sheet_ci"), theme=theme),
+                                "pd-default-rate-trend-chart pd-default-rate-trend-chart-medium pd-default-rate-trend-chart-axis-room-medium",
                             ),
                         ],
                     ),
@@ -1361,11 +1292,10 @@ def render_pd_performance_content(data: dict, ctx: PdFilterContext, range_store:
                         range_store.get("balance_sheet_notching"),
                         extra_controls=build_frozen_horizon_control("Balance sheet calibration PD horizon"),
                     ),
-                    dcc.Graph(
-                        id="pd-balance-sheet-notching-trend-chart",
-                        figure=build_pd_notching_trend_figure(balance_sheet_performance_trend, monitoring_thresholds, range_store.get("balance_sheet_notching")),
-                        config=_GRAPH_CONFIG,
-                        className="pd-default-rate-trend-chart pd-notching-trend-chart",
+                    _chart_surface(
+                        "pd-balance-sheet-notching-trend-chart",
+                        build_pd_notching_trend_figure(balance_sheet_performance_trend, monitoring_thresholds, range_store.get("balance_sheet_notching"), theme=theme),
+                        "pd-default-rate-trend-chart pd-notching-trend-chart",
                     ),
                 ],
             ),
@@ -1383,11 +1313,10 @@ def render_pd_performance_content(data: dict, ctx: PdFilterContext, range_store:
                         range_store.get("balance_sheet_default_rate"),
                         extra_controls=build_frozen_horizon_control("Balance sheet calibration PD horizon"),
                     ),
-                    dcc.Graph(
-                        id="pd-balance-sheet-default-rate-trend-chart",
-                        figure=build_pd_default_rate_trend_figure(balance_sheet_performance_trend, monitoring_thresholds, range_store.get("balance_sheet_default_rate")),
-                        config=_GRAPH_CONFIG,
-                        className="pd-default-rate-trend-chart pd-calibration-trend-chart",
+                    _chart_surface(
+                        "pd-balance-sheet-default-rate-trend-chart",
+                        build_pd_default_rate_trend_figure(balance_sheet_performance_trend, monitoring_thresholds, range_store.get("balance_sheet_default_rate"), theme=theme),
+                        "pd-default-rate-trend-chart pd-calibration-trend-chart",
                     ),
                 ],
             ),
@@ -1528,6 +1457,27 @@ def default_filter_context(data: dict) -> PdFilterContext:
     )
 
 
+def _build_apply_button() -> html.Div:
+    return html.Div(
+        className="monitoring-filter saas-top-filter-action",
+        children=[
+            html.Div(
+                className="pd-mev-filter-actions",
+                children=[
+                    html.Button(
+                        "Apply filters",
+                        id=APPLY_FILTERS_ID,
+                        className="btn pd-mev-filter-reset saas-top-filter-reset saas-top-filter-apply",
+                        n_clicks=0,
+                        type="button",
+                        title="Load the dashboard using the selected filters.",
+                    ),
+                ],
+            ),
+        ],
+    )
+
+
 def _build_top_bar(data: dict) -> html.Div:
     return html.Div(
         className="top-bar",
@@ -1539,7 +1489,7 @@ def _build_top_bar(data: dict) -> html.Div:
                         "Wholesale Portfolio Model Monitoring Dashboard",
                         className="monitoring-dashboard-title",
                     ),
-                    build_global_filters(data),
+                    build_global_filters(data, extra_controls=_build_apply_button()),
                 ],
             ),
         ],
@@ -1556,6 +1506,7 @@ def build_stores() -> list:
         dcc.Store(id=RANGE_STORE_ID, data={}),
         dcc.Store(id=TREND_HORIZON_STORE_ID, data=dict(DEFAULT_TREND_HORIZON_STORE)),
         dcc.Store(id=MEV_FILTER_STORE_ID, data=dict(DEFAULT_MEV_FILTER_STORE)),
+        dcc.Store(id=APPLIED_FILTERS_STORE_ID),
     ]
 
 

@@ -14,7 +14,7 @@ from datetime import datetime
 import polars as pl
 
 from ...config.settings import settings
-from ...data.monitoring.loader import load_pd_performance_data
+from ...data.monitoring.loader import load_pd_performance_data_from_aggregated as load_pd_performance_data
 
 
 def _with_app_meta(data: dict) -> dict:

@@ -349,12 +349,14 @@ def load_pd_mev_catalog() -> dict[str, Any]:
     mev_long_names: dict[str, str] = {}
     mev_descriptions: dict[str, str] = {}
     model_transformed_mevs: dict[str, set[str]] = {}
+    model_mev_contributions: dict[str, dict[str, float]] = {}
     for _, row in desc_df.iterrows():
         model_key = str(row.get("Model Name", "")).strip()
         segment = str(row.get("Segment", "")).strip()
         mnemonic = str(row.get("US Mnemonic", "")).strip()
         long_name = str(row.get("Long Name", "")).strip()
         description = str(row.get("Description", "")).strip()
+        contribution = row.get("Model controbution", row.get("Model contribution"))
         if model_key and segment:
             model_segments.setdefault(model_key, [])
             if segment not in model_segments[model_key]:
@@ -365,6 +367,11 @@ def load_pd_mev_catalog() -> dict[str, Any]:
             mev_descriptions[mnemonic] = description
         if model_key and mnemonic:
             model_transformed_mevs.setdefault(model_key, set()).add(mnemonic)
+        if model_key and mnemonic and contribution is not None:
+            try:
+                model_mev_contributions.setdefault(model_key, {})[mnemonic] = float(contribution)
+            except (TypeError, ValueError):
+                pass
 
     # -- mev_data (baseline scenario only): time series per model+MEV
     ts_df = pd.read_excel(
@@ -425,10 +432,17 @@ def load_pd_mev_catalog() -> dict[str, Any]:
                 "time_series": time_series,
             }
 
+        contributions = {}
+        raw_contribs = model_mev_contributions.get(model_key, {})
+        for mnemonic, value in raw_contribs.items():
+            display_name = mev_long_names.get(mnemonic, mnemonic)
+            contributions[display_name] = value
+
         catalog[model_name] = {
             "segments": model_segments.get(model_key, []),
             "severe_scenario_date": "",
             "mevs": mevs,
+            "contributions": contributions,
         }
 
     return catalog, mev_mnemonic_map, mev_description_map
@@ -497,6 +511,133 @@ def load_pd_rank_ordering_facilities() -> dict[str, Any]:
         }
 
     return facilities
+
+
+# ---------------------------------------------------------------------------
+# Aggregated-sheet loader
+# ---------------------------------------------------------------------------
+
+PD_AGGREGATED_SHEET_NAME = "PD_Performance_Metrics"
+
+
+def _build_observations_from_aggregated(agg_df: pd.DataFrame) -> tuple[dict, list[dict], list[str], list[dict]]:
+    """Synthesize facility-level observations from the pre-aggregated metrics sheet.
+
+    Returns ``(performance_horizons, performance_observations,
+    rating_values, rating_migration_observations)``.
+
+    For each model × quarter × horizon row in the aggregated data, two
+    synthetic facility rows are created whose average observed/predicted
+    values and EAD reproduce the aggregated metrics. The existing
+    calculation pipeline processes these rows identically to real
+    facility-level data.
+    """
+    performance_horizons = config.PD_HORIZON_COLUMNS
+
+    obs_map: dict[tuple[str, str, str], dict] = {}
+
+    for _, row in agg_df.iterrows():
+        quarter = str(row["quarter"]).strip()
+        model = _normalize_model_name(row.get("model"))
+        segments = [s.strip() for s in str(row.get("segment", "")).split(",") if s.strip()]
+        horizon = str(row.get("horizon", "")).strip()
+        if not quarter or not model or not horizon or not segments:
+            continue
+
+        predicted = row.get("predicted_default_rate")
+        observed_dr = row.get("observed_default_rate")
+        ead = row.get("ead")
+        n_segments = len(segments)
+
+        for segment in segments:
+            key = (quarter, model, segment)
+            if key not in obs_map:
+                obs_map[key] = {"quarter": quarter, "model": model, "segment": segment, "rating": "5", "horizons": {}}
+
+            if pd.notna(predicted) and pd.notna(observed_dr):
+                n = max(int(row.get("default_count_1y", 20) or 20), 2) if horizon == "1y" else 20
+                n_defaults = max(1, round(observed_dr * n))
+                n_non_defaults = max(1, n - n_defaults)
+                total = n_defaults + n_non_defaults
+                segment_ead = float(ead) / n_segments if pd.notna(ead) else None
+                facility_ead = segment_ead / total if segment_ead is not None else None
+
+                obs_map[key]["horizons"][horizon] = {
+                    "observed_dr": float(observed_dr),
+                    "predicted": float(predicted),
+                    "ead": facility_ead,
+                    "n_defaults": n_defaults,
+                    "n_non_defaults": n_non_defaults,
+                }
+
+    observations = []
+    for key, entry in obs_map.items():
+        for horizon_key, h_data in entry["horizons"].items():
+            for i in range(h_data["n_defaults"]):
+                obs = {"quarter": entry["quarter"], "model": entry["model"],
+                       "segment": entry["segment"], "rating": entry["rating"], "horizons": {}}
+                obs["horizons"][horizon_key] = {
+                    "observed": 1, "predicted": round(h_data["predicted"], 8),
+                    "ead": round(h_data["ead"], 2) if h_data["ead"] else None,
+                }
+                observations.append(obs)
+            for i in range(h_data["n_non_defaults"]):
+                obs = {"quarter": entry["quarter"], "model": entry["model"],
+                       "segment": entry["segment"], "rating": entry["rating"], "horizons": {}}
+                obs["horizons"][horizon_key] = {
+                    "observed": 0, "predicted": round(h_data["predicted"], 8),
+                    "ead": round(h_data["ead"], 2) if h_data["ead"] else None,
+                }
+                observations.append(obs)
+
+    return performance_horizons, observations, [], []
+
+
+def load_pd_performance_data_from_aggregated() -> dict[str, Any]:
+    """Load from the PD_Performance_Metrics sheet instead of facility-level data."""
+    log.info("Loading PD aggregated metrics from %s [%s]", config.PORTFOLIO_FILE, PD_AGGREGATED_SHEET_NAME)
+
+    agg_df = pd.read_excel(config.PORTFOLIO_FILE, sheet_name=PD_AGGREGATED_SHEET_NAME)
+    agg_df = agg_df.dropna(how="all")
+
+    quarters = sorted(agg_df["quarter"].dropna().unique())
+    latest_quarter = quarters[-1] if quarters else ""
+    previous_quarter = quarters[-2] if len(quarters) > 1 else ""
+
+    model_names = sorted(agg_df["model"].dropna().map(_normalize_model_name).unique())
+    segment_values = sorted({
+        s.strip()
+        for raw in agg_df["segment"].dropna().unique()
+        for s in str(raw).split(",")
+        if s.strip()
+    })
+
+    monitoring_thresholds = load_monitoring_thresholds()
+    performance_horizons, performance_observations, rating_values, rating_migration_observations = (
+        _build_observations_from_aggregated(agg_df)
+    )
+    mev_catalog, mev_mnemonic_map, mev_description_map = load_pd_mev_catalog()
+
+    return {
+        "portfolio": agg_df,
+        "quarters": quarters,
+        "latest_quarter": latest_quarter,
+        "previous_quarter": previous_quarter,
+        "latest_snapshot_date": latest_quarter,
+        "previous_snapshot_date": previous_quarter,
+        "source_file": config.PORTFOLIO_FILE.name,
+        "model_names": model_names,
+        "segment_values": segment_values,
+        "monitoring_thresholds": monitoring_thresholds,
+        "performance_horizons": performance_horizons,
+        "performance_observations": performance_observations,
+        "rating_values": rating_values,
+        "rating_migration_observations": rating_migration_observations,
+        "mev_catalog": mev_catalog,
+        "mev_mnemonic_map": mev_mnemonic_map,
+        "mev_description_map": mev_description_map,
+        "rank_ordering_facilities": load_pd_rank_ordering_facilities(),
+    }
 
 
 # ---------------------------------------------------------------------------

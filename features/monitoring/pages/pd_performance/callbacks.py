@@ -148,17 +148,6 @@ def register_callbacks(app) -> None:
             return "checkbox-dropdown-menu single-select-menu"
         return "checkbox-dropdown-menu single-select-menu open"
 
-    @app.callback(
-        Output(filters.MEV_MODEL_MENU_ID, "className"),
-        Input(filters.MEV_MODEL_TOGGLE_ID, "n_clicks"),
-        State(filters.MEV_MODEL_MENU_ID, "className"),
-        prevent_initial_call=True,
-    )
-    def toggle_mev_model_menu(_n_clicks, current_class):
-        if "open" in (current_class or "").split():
-            return "checkbox-dropdown-menu single-select-menu"
-        return "checkbox-dropdown-menu single-select-menu open"
-
     # -----------------------------------------------------------------
     # Single-select dropdown option clicks -> value + close
     # Each filter_key routes to its own hidden dcc.Dropdown value.
@@ -182,18 +171,6 @@ def register_callbacks(app) -> None:
         prevent_initial_call=True,
     )
     def select_segment(_clicks):
-        triggered = ctx.triggered_id
-        if not triggered:
-            return no_update, no_update
-        return triggered["value"], "checkbox-dropdown-menu single-select-menu"
-
-    @app.callback(
-        Output(filters.MEV_MODEL_FILTER_ID, "value"),
-        Output(filters.MEV_MODEL_MENU_ID, "className", allow_duplicate=True),
-        Input({"type": filters.SINGLE_SELECT_OPTION_ID, "filter": "mev-model", "value": ALL}, "n_clicks"),
-        prevent_initial_call=True,
-    )
-    def select_mev_model(_clicks):
         triggered = ctx.triggered_id
         if not triggered:
             return no_update, no_update
@@ -224,25 +201,6 @@ def register_callbacks(app) -> None:
     )
     def sync_segment_shell(value, option_ids):
         label = segment_labels.get(value, value or "Select")
-        classes = [
-            "single-select-option is-selected" if option_id["value"] == value else "single-select-option"
-            for option_id in option_ids
-        ]
-        return label, classes
-
-    @app.callback(
-        Output(filters.MEV_MODEL_TOGGLE_ID, "children"),
-        Output({"type": filters.SINGLE_SELECT_OPTION_ID, "filter": "mev-model", "value": ALL}, "className"),
-        Input(filters.MEV_MODEL_FILTER_ID, "value"),
-        State({"type": filters.SINGLE_SELECT_OPTION_ID, "filter": "mev-model", "value": ALL}, "id"),
-    )
-    def sync_mev_model_shell(value, option_ids):
-        label = next(
-            (option_id["value"] for option_id in option_ids if option_id["value"] == value),
-            value or "All",
-        )
-        if not label or label == "all":
-            label = "All"
         classes = [
             "single-select-option is-selected" if option_id["value"] == value else "single-select-option"
             for option_id in option_ids
@@ -330,53 +288,45 @@ def register_callbacks(app) -> None:
         return trend_horizon_store
 
     # -----------------------------------------------------------------
-    # MEV Range chart filters (model select / reset) -> pd-mev-filter-store
+    # Apply filters: snapshot current filter values into the applied store
     # -----------------------------------------------------------------
     @app.callback(
-        Output(layout.MEV_FILTER_STORE_ID, "data"),
-        Output(layout.RANGE_STORE_ID, "data", allow_duplicate=True),
-        Input(filters.MEV_MODEL_FILTER_ID, "value"),
-        Input(filters.MEV_RESET_ID, "n_clicks"),
-        State(layout.MEV_FILTER_STORE_ID, "data"),
-        State(layout.RANGE_STORE_ID, "data"),
+        Output(layout.APPLIED_FILTERS_STORE_ID, "data"),
+        Input(layout.APPLY_FILTERS_ID, "n_clicks"),
+        State(filters.MONITORING_POINT_ID, "value"),
+        State(filters.PORTFOLIO_SEGMENT_ID, "value"),
+        State(filters.MODELS_ID, "value"),
         prevent_initial_call=True,
-        allow_duplicate=True,
     )
-    def update_pd_mev_filters(model_value, _reset_clicks, mev_filter_store, range_store):
-        triggered = ctx.triggered_id
-        mev_filter_store = dict(mev_filter_store or {})
-
-        if triggered == filters.MEV_RESET_ID:
-            range_store = dict(range_store or {})
-            range_store.pop("mev", None)
-            return dict(layout.DEFAULT_MEV_FILTER_STORE), range_store
-
-        if triggered == filters.MEV_MODEL_FILTER_ID:
-            mev_filter_store["model"] = model_value
-        else:
-            return no_update, no_update
-
-        return mev_filter_store, no_update
+    def apply_pd_filters(_n_clicks, monitoring_point, segment, models):
+        """Snapshot the current top filters so the content renders only on Apply."""
+        return {
+            "monitoring_point": monitoring_point,
+            "segment": segment,
+            "models": models,
+        }
 
     # -----------------------------------------------------------------
-    # Master re-render: global filters + stores -> pd-performance-content
+    # Master re-render: applied store + per-chart stores -> pd-performance-content
     # -----------------------------------------------------------------
     @app.callback(
         Output(layout.CONTENT_ID, "children"),
-        Input(filters.MONITORING_POINT_ID, "value"),
-        Input(filters.PORTFOLIO_SEGMENT_ID, "value"),
-        Input(filters.MODELS_ID, "value"),
+        Input(layout.APPLIED_FILTERS_STORE_ID, "data"),
         Input(layout.RANGE_STORE_ID, "data"),
         Input(layout.TREND_HORIZON_STORE_ID, "data"),
         Input(layout.MEV_FILTER_STORE_ID, "data"),
         Input(layout.APP_THEME_ID, "value"),
     )
     def render_pd_performance_content(
-        monitoring_point, segment, models, range_store, trend_horizon_store, mev_filter_store, theme_value,
+        applied, range_store, trend_horizon_store, mev_filter_store, theme_value,
     ):
+        applied = applied or {}
+        monitoring_point = applied.get("monitoring_point") or data.get("latest_quarter") or ""
+        segment = applied.get("segment") or "all"
+        models = applied.get("models") or data["model_names"]
         filter_ctx = PdFilterContext(
             quarters=data["quarters"],
-            models=set(models or []),
+            models=set(models),
             segment=segment,
             monitoring_point=monitoring_point,
         )

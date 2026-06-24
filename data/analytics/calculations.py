@@ -1307,10 +1307,6 @@ def build_pd_ae_ratio_bands(threshold, ratios):
             band(green_min, green_max, "rgba(22,163,74,.10)"),
             band(green_max, amber_max, "rgba(217,119,6,.18)"),
             band(amber_max, axis_max, "rgba(220,38,38,.08)"),
-            {
-                "type": "line", "xref": "paper", "x0": 0, "x1": 1, "yref": "y2",
-                "y0": 1, "y1": 1, "line": {"color": "#16a34a", "width": 1.5, "dash": "dash"},
-            },
         ],
     }
 
