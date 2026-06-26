@@ -7,6 +7,7 @@ from typing import Any
 from dash import dcc, html
 
 from .....components.charts import build_loss_metric_trend_figure, build_loss_rag_trend_figure
+from .....components import filters as shared_filters
 from .....components.filters import build_chart_header
 from .....data.analytics.calculations import (
     format_pd_compact_amount,
@@ -32,12 +33,27 @@ from ..pd_performance.cards import (
 )
 
 CONTENT_ID = "loss-dashboard-content"
+REPORTING_CYCLE_ID = "loss-reporting-cycle"
+REPORTING_CYCLE_TOGGLE_ID = "loss-reporting-cycle-toggle"
+REPORTING_CYCLE_MENU_ID = "loss-reporting-cycle-menu"
+REPORTING_CYCLE_FILTER_KEY = "loss-reporting-cycle"
 MODEL_DROPDOWN_ID = "loss-model-dropdown"
 SEGMENT_DROPDOWN_ID = "loss-segment-dropdown"
 MONITORING_POINT_DROPDOWN_ID = "loss-monitoring-point-dropdown"
+MODEL_TOGGLE_ID = "loss-model-toggle"
+MODEL_MENU_ID = "loss-model-menu"
+MODEL_SELECT_ALL_ID = "loss-model-select-all"
+SEGMENT_TOGGLE_ID = "loss-segment-toggle"
+SEGMENT_MENU_ID = "loss-segment-menu"
+MONITORING_POINT_TOGGLE_ID = "loss-monitoring-point-toggle"
+MONITORING_POINT_MENU_ID = "loss-monitoring-point-menu"
+MODEL_FILTER_KEY = "loss-model"
+SEGMENT_FILTER_KEY = "loss-segment"
+MONITORING_POINT_FILTER_KEY = "loss-monitoring-point"
 LOSS_SUBNAV_ID = "loss-subnav"
 RANGE_STORE_ID = "loss-range-store"
 PERFORMANCE_RAG_RANGE_KEY = "loss_performance_rag"
+ME_PCT_RANGE_KEY = "loss_me_pct"
 
 _GRAPH_CONFIG = {"displayModeBar": False, "responsive": True}
 
@@ -51,7 +67,7 @@ def _dropdown_options(values: list[str]) -> list[dict[str, str]]:
     return [{"label": value, "value": value} for value in values]
 
 
-def _build_filter(label: str, component: dcc.Dropdown) -> html.Div:
+def _build_filter(label: str, component) -> html.Div:
     return html.Div(className="monitoring-filter", children=[html.Label(label), component])
 
 
@@ -206,41 +222,53 @@ def _build_loss_subnav() -> html.Div:
 
 
 def _build_loss_overview_flow(summary: dict) -> html.Div:
+    from .....components.kpis import (
+        build_pd_overview_flow_input,
+        build_pd_overview_flow_metric,
+        build_pd_overview_flow_stage,
+        build_pd_overview_flow_test_stack,
+    )
+
+    me_pct_rag = summary["metric_rags"].get("ME %", "N/A")
+    performance_rag = summary["performance_rag"]
+
+    flow_children = [
+        html.Div(build_pd_overview_flow_stage("1.", "Component"), className="loss-flow-stage-input"),
+        html.Div(build_pd_overview_flow_stage("2.", "Test"), className="loss-flow-stage-tests"),
+        html.Div(build_pd_overview_flow_stage("3.", "Performance RAG"), className="loss-flow-stage-performance"),
+
+        html.Div(
+            build_pd_overview_flow_input("Loss", {"note": "1 year monitoring"}),
+            className="loss-flow-input",
+        ),
+
+        build_pd_overview_flow_test_stack(
+            [
+                build_pd_overview_flow_metric(
+                    "Mean Error % 1 year", summary["current"].get("ME %"), "percent", me_pct_rag,
+                    {"href": "#loss-performance"},
+                ),
+            ],
+            {"incoming": True, "outgoing": True, "extra_class": "loss-flow-tests"},
+        ),
+
+        html.Div(
+            className="loss-flow-performance",
+            children=html.Article(
+                className=f"pd-overview-flow-performance pd-overview-flow-performance-{pd_tone_class(performance_rag)}",
+                children=[
+                    html.Span("Performance RAG", className="pd-overview-flow-performance-title"),
+                    html.Strong([pd_rag_dot(performance_rag), f" {performance_rag}"]),
+                ],
+            ),
+        ),
+    ]
+
     return html.Div(
         className="pd-overview-flow-wrap",
         children=html.Div(
-            className="lgd-overview-flow loss-overview-flow",
-            children=[
-                html.Div(_flow_stage("1. Component"), className="loss-flow-stage-input"),
-                html.Div(_flow_stage("2. Test"), className="loss-flow-stage-tests"),
-                html.Div(_flow_stage("3. Performance RAG"), className="loss-flow-stage-performance"),
-                html.Div(
-                    className="pd-overview-flow-input lgd-flow-input loss-flow-input",
-                    children=[html.Strong("Loss"), html.Span("1 year monitoring")],
-                ),
-                html.Div(
-                    className="pd-overview-flow-test-stack loss-flow-tests",
-                    children=[
-                        *_flow_connector_spans(incoming=True, outgoing=True),
-                        _flow_metric(
-                            "ME % 1 year",
-                            summary["current"].get("ME %"),
-                            "ME",
-                            summary["metric_rags"].get("ME %", "N/A"),
-                            "#loss-performance",
-                            previous_value=summary["previous"].get("ME %"),
-                            previous_period=summary["previous_monitoring_point"],
-                        ),
-                    ],
-                ),
-                html.Div(
-                    className=f"pd-overview-flow-performance pd-overview-flow-performance-{pd_tone_class(summary['performance_rag'])} loss-flow-performance",
-                    children=[
-                        html.Span("Performance RAG", className="pd-overview-flow-performance-title"),
-                        html.Strong([pd_rag_dot(summary["performance_rag"]), f" {summary['performance_rag']}"]),
-                    ],
-                ),
-            ],
+            flow_children,
+            className="loss-overview-flow",
             **{"aria-label": "Loss monitoring overview process flow"},
         ),
     )
@@ -285,6 +313,13 @@ def render_loss_performance_content(
     rag_periods = [row["quarter"] for row in rag_trend]
 
     performance_cards = [
+        build_pd_section_rag_card(
+            "Performance RAG",
+            summary["performance_rag"],
+            summary["previous_performance_rag"],
+            context,
+            {"hide_status": True, "hide_comparison": True, "meta_label": "Monitoring point"},
+        ),
         build_pd_test_card(
             "ME %",
             summary["current"],
@@ -293,20 +328,13 @@ def render_loss_performance_content(
             context,
             {
                 "format": "percent",
-                "card_title": "ME % 1 year",
+                "card_title": "Mean Error % 1 year",
                 "extra_meta_rows": [
                     {"label": "Mean Error", "value": _money(current.get("ME"))},
                     {"label": "Predicted Loss", "value": _money(current.get("Predicted Loss"))},
                     {"label": "Actual Loss", "value": _money(current.get("Actual Loss"))},
                 ],
             },
-        ),
-        build_pd_section_rag_card(
-            "Performance RAG",
-            summary["performance_rag"],
-            summary["previous_performance_rag"],
-            context,
-            {"hide_status": True, "hide_comparison": True, "meta_label": "Monitoring point"},
         ),
     ]
 
@@ -317,7 +345,7 @@ def render_loss_performance_content(
             build_pd_chapter_heading(
                 "1.",
                 "RAG Assignment",
-                "Core monitoring view for Loss model health, where ME % feeds directly into the Performance RAG.",
+                "Core monitoring view for Loss model health, where Mean Error % feeds directly into the Performance RAG.",
                 options={"note": f"Monitoring point {monitoring_point}"},
             ),
         ],
@@ -329,10 +357,10 @@ def render_loss_performance_content(
         children=[
             build_pd_section_heading(
                 "1.1 Overview",
-                "RAG Assignment Overview",
-                "At-a-glance summary of the 1 year Loss monitoring flow from ME % to Performance RAG.",
+                "Loss RAG Assignment Overview",
+                "At-a-glance summary of the 1 year Loss monitoring flow from Mean Error % to Performance RAG.",
                 summary["performance_rag"],
-                {"status_label": "Performance RAG"},
+                {"show_rag": False},
             ),
             _build_loss_overview_flow(summary),
         ],
@@ -345,38 +373,57 @@ def render_loss_performance_content(
             build_pd_section_heading(
                 "1.2 Performance",
                 "Performance",
-                "Assess predicted loss against the observed loss proxy using ME %.",
+                "Assess predicted loss against the observed loss proxy using Mean Error %.",
                 summary["performance_rag"],
                 {"show_rag": False},
             ),
-            html.Div(className="pd-test-grid pd-discrimination-test-grid", children=performance_cards),
+            html.Div(className="pd-test-grid", style={"gridTemplateColumns": "repeat(2, minmax(0, 1fr))"}, children=performance_cards),
             html.Div(
-                id="loss-performance-rag-trend-panel",
-                className="section-card pd-default-rate-trend-section",
+                className="pd-trend-detail-grid",
                 children=[
-                    build_chart_header(
-                        "Performance RAG Trend",
-                        "Quarter-by-quarter Performance RAG shown as a simple color-coded dot timeline.",
-                        PERFORMANCE_RAG_RANGE_KEY,
-                        rag_periods,
-                        range_store.get(PERFORMANCE_RAG_RANGE_KEY),
+                    html.Div(
+                        id="loss-performance-rag-trend-panel",
+                        className="section-card pd-default-rate-trend-section",
+                        children=[
+                            build_chart_header(
+                                "Performance RAG Trend",
+                                "Quarter-by-quarter Performance RAG shown as a simple color-coded dot timeline.",
+                                PERFORMANCE_RAG_RANGE_KEY,
+                                rag_periods,
+                                range_store.get(PERFORMANCE_RAG_RANGE_KEY),
+                            ),
+                            dcc.Graph(
+                                id="loss-performance-rag-trend-chart",
+                                figure=build_loss_rag_trend_figure(
+                                    rag_trend,
+                                    monitoring_point,
+                                    range_store.get(PERFORMANCE_RAG_RANGE_KEY),
+                                ),
+                                config=_GRAPH_CONFIG,
+                                className="pd-default-rate-trend-chart pd-default-rate-trend-chart-compact pd-default-rate-trend-chart-axis-room-compact",
+                            ),
+                        ],
                     ),
-                    dcc.Graph(
-                        id="loss-performance-rag-trend-chart",
-                        figure=build_loss_rag_trend_figure(
-                            rag_trend,
-                            monitoring_point,
-                            range_store.get(PERFORMANCE_RAG_RANGE_KEY),
-                        ),
-                        config=_GRAPH_CONFIG,
-                        className="pd-default-rate-trend-chart pd-default-rate-trend-chart-compact pd-default-rate-trend-chart-axis-room-compact",
+                    html.Div(
+                        id="loss-me-pct-trend-panel",
+                        className="section-card pd-default-rate-trend-section",
+                        children=[
+                            build_chart_header(
+                                "Mean Error % Trend",
+                                "Mean error percentage by monitoring point with Loss threshold shading.",
+                                ME_PCT_RANGE_KEY,
+                                rag_periods,
+                                range_store.get(ME_PCT_RANGE_KEY),
+                            ),
+                            dcc.Graph(
+                                id="loss-me-pct-trend-chart",
+                                figure=build_loss_metric_trend_figure(metric_rows, data["monitoring_thresholds"], monitoring_point),
+                                config=_GRAPH_CONFIG,
+                                className="pd-default-rate-trend-chart pd-default-rate-trend-chart-compact pd-default-rate-trend-chart-axis-room-compact",
+                            ),
+                        ],
                     ),
                 ],
-            ),
-            _build_chart_panel(
-                "ME % Trend",
-                "Mean error percentage by monitoring point with Loss threshold shading.",
-                build_loss_metric_trend_figure(metric_rows, data["monitoring_thresholds"], monitoring_point),
             ),
         ],
     )
@@ -400,11 +447,24 @@ def build_layout() -> list:
 
 def page_layout(data: dict) -> list:
     """Build the Loss page with top controls and live content."""
-    model_options = get_loss_model_options(data)
-    default_model = model_options[0] if model_options else get_loss_default_model(data)
-    segment_options = get_loss_segments_for_model(data, default_model)
-    monitoring_options = get_loss_monitoring_point_options(data, default_model, "All")
-    default_monitoring_point = monitoring_options[1] if monitoring_options[:1] == ["Latest"] and len(monitoring_options) > 1 else (monitoring_options[0] if monitoring_options else "")
+    from .....data.monitoring.filters_config import load_filter_config, model_names, segment_values
+    from .....data.analytics.loss import set_loss_metrics
+    cfg = load_filter_config()
+    model_options = model_names("loss")
+    default_model = "all"
+    segment_options = ["All", *segment_values()]
+    reporting_cycle_options = [{"label": c["label"], "value": c["value"]} for c in cfg["reporting_cycles"]]
+    default_cycle = reporting_cycle_options[0]["value"] if reporting_cycle_options else "CCAR 2026"
+    cycle_data = (data.get("loss_observations_by_cycle") or {}).get(default_cycle)
+    if cycle_data:
+        set_loss_metrics(cycle_data.get("metrics_store"), cycle_data.get("quarters"))
+    else:
+        set_loss_metrics(None, [])
+    cycle_quarters = shared_filters.REPORTING_CYCLE_QUARTERS.get(default_cycle, [])
+    monitoring_options = cycle_quarters if cycle_quarters else get_loss_monitoring_point_options(data, None, "All")
+    default_monitoring_point = monitoring_options[0] if monitoring_options else ""
+
+    model_select_options = [{"label": "All models", "value": "all"}] + [{"label": name, "value": name} for name in model_options]
 
     return [
         dcc.Store(id=RANGE_STORE_ID, data={}),
@@ -419,33 +479,47 @@ def page_layout(data: dict) -> list:
                             className="monitoring-controls",
                             children=[
                                 _build_filter(
+                                    "Reporting Cycle",
+                                    shared_filters.build_single_select_dropdown(
+                                        value_id=REPORTING_CYCLE_ID,
+                                        toggle_id=REPORTING_CYCLE_TOGGLE_ID,
+                                        menu_id=REPORTING_CYCLE_MENU_ID,
+                                        filter_key=REPORTING_CYCLE_FILTER_KEY,
+                                        options=reporting_cycle_options,
+                                        value=default_cycle,
+                                    ),
+                                ),
+                                _build_filter(
                                     "Monitoring Point",
-                                    dcc.Dropdown(
-                                        id=MONITORING_POINT_DROPDOWN_ID,
-                                        options=_dropdown_options(monitoring_options),
+                                    shared_filters.build_single_select_dropdown(
+                                        value_id=MONITORING_POINT_DROPDOWN_ID,
+                                        toggle_id=MONITORING_POINT_TOGGLE_ID,
+                                        menu_id=MONITORING_POINT_MENU_ID,
+                                        filter_key=MONITORING_POINT_FILTER_KEY,
+                                        options=[{"label": q, "value": q} for q in monitoring_options],
                                         value=default_monitoring_point,
-                                        clearable=False,
-                                        className="monitoring-top-select monitoring-point-select",
                                     ),
                                 ),
                                 _build_filter(
                                     "Segment",
-                                    dcc.Dropdown(
-                                        id=SEGMENT_DROPDOWN_ID,
+                                    shared_filters.build_single_select_dropdown(
+                                        value_id=SEGMENT_DROPDOWN_ID,
+                                        toggle_id=SEGMENT_TOGGLE_ID,
+                                        menu_id=SEGMENT_MENU_ID,
+                                        filter_key=SEGMENT_FILTER_KEY,
                                         options=_dropdown_options(segment_options),
                                         value="All",
-                                        clearable=False,
-                                        className="monitoring-top-select",
                                     ),
                                 ),
                                 _build_filter(
                                     "Specific Models",
-                                    dcc.Dropdown(
-                                        id=MODEL_DROPDOWN_ID,
-                                        options=_dropdown_options(model_options),
-                                        value=default_model,
-                                        clearable=False,
-                                        className="monitoring-top-select",
+                                    shared_filters.build_single_select_dropdown(
+                                        value_id=MODEL_DROPDOWN_ID,
+                                        toggle_id=MODEL_TOGGLE_ID,
+                                        menu_id=MODEL_MENU_ID,
+                                        filter_key=MODEL_FILTER_KEY,
+                                        options=model_select_options,
+                                        value="all",
                                     ),
                                 ),
                             ],

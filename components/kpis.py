@@ -28,7 +28,7 @@ def _info_chip(tooltip: str | None):
     if not tooltip:
         return None
     return html.Span(
-        "i",
+        "?",
         className="pd-info-chip",
         role="img",
         **{"aria-label": tooltip, "title": tooltip},

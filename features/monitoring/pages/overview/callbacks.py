@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dash import ALL, Input, Output, State, ctx, no_update
 
+from .. import filter_shell
 from . import page as layout
 from .....components import filters
 from .....data.analytics.overview import build_overview_rows, overview_filter_options
@@ -34,6 +35,31 @@ def register_callbacks(app) -> None:
 
     overview_rows = _OVERVIEW_ROWS
     data = PD_PERFORMANCE_DATA
+
+    for value_id, toggle_id, menu_id, filter_key in (
+        (layout.PERIOD_ID, layout.PERIOD_TOGGLE_ID, layout.PERIOD_MENU_ID, layout.PERIOD_FILTER_KEY),
+        (layout.SEGMENT_ID, layout.SEGMENT_TOGGLE_ID, layout.SEGMENT_MENU_ID, layout.SEGMENT_FILTER_KEY),
+        (
+            layout.MODEL_GROUP_ID,
+            layout.MODEL_GROUP_TOGGLE_ID,
+            layout.MODEL_GROUP_MENU_ID,
+            layout.MODEL_GROUP_FILTER_KEY,
+        ),
+    ):
+        filter_shell.register_single_select_callbacks(
+            app,
+            value_id=value_id,
+            toggle_id=toggle_id,
+            menu_id=menu_id,
+            filter_key=filter_key,
+        )
+    filter_shell.register_checkbox_dropdown_callbacks(
+        app,
+        checklist_id=layout.MODEL_ID,
+        select_all_id=layout.MODEL_SELECT_ALL_ID,
+        toggle_id=layout.MODEL_TOGGLE_ID,
+        menu_id=layout.MODEL_MENU_ID,
+    )
 
     @app.callback(
         Output(layout.RANGE_STORE_ID, "data"),
@@ -89,14 +115,12 @@ def register_callbacks(app) -> None:
 
     @app.callback(
         Output(layout.MODEL_ID, "options"),
-        Output(layout.MODEL_ID, "value"),
         Input(layout.MODEL_GROUP_ID, "value"),
-        Input(layout.MODEL_ID, "value"),
     )
-    def sync_overview_model_options(model_group, model):
+    def sync_overview_model_options(model_group):
         options = overview_filter_options(overview_rows, model_group or "All")
-        model_values = options["models"]
-        return _dropdown_options(model_values), _keep_valid(model, model_values)
+        model_values = [value for value in options["models"] if value != "All"]
+        return _dropdown_options(model_values)
 
     @app.callback(
         Output(layout.CONTENT_ID, "children"),
@@ -108,8 +132,6 @@ def register_callbacks(app) -> None:
         Input(layout.RANGE_STORE_ID, "data"),
     )
     def update_overview_content(monitoring_period, model_group, model, segment, rag_trend_metric, range_store):
-        model_options = overview_filter_options(overview_rows, model_group or "All")["models"]
-        model = _keep_valid(model, model_options)
         return layout.render_overview_content(
             data,
             overview_rows,

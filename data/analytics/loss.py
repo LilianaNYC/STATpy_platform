@@ -14,6 +14,39 @@ LOSS_METRICS = ["ME %"]
 LOSS_MODEL_LABEL = "Loss model"
 
 
+# ---------------------------------------------------------------------------
+# Precomputed-metrics store
+# ---------------------------------------------------------------------------
+# The Loss tab reads metric rows straight from ``Loss_Performance_Metrics`` via
+# a store keyed by ``(level, value)``. There is a single loss model, so the
+# model-level entity is ``"Loss model"``. The cycle callback installs the
+# selected reporting cycle's store and quarters here.
+
+_LOSS_STORE: dict | None = None
+_LOSS_QUARTERS: list[str] = []
+
+
+def set_loss_metrics(store: dict | None, quarters: list[str] | None = None) -> None:
+    """Install (or clear) the precomputed Loss metrics store and its quarters."""
+    global _LOSS_STORE, _LOSS_QUARTERS
+    _LOSS_STORE = store
+    _LOSS_QUARTERS = list(quarters or [])
+
+
+def _loss_store_key(selected_model, selected_segment) -> tuple[str, str]:
+    """Map a (model, segment) selection to a ``(level, value)`` store key."""
+    segment = selected_segment if isinstance(selected_segment, str) else None
+    if segment and segment not in ("All", "all", ""):
+        return "segment", segment
+    return "model", LOSS_MODEL_LABEL
+
+
+def _loss_store_rows(selected_model, selected_segment) -> list[dict] | None:
+    if _LOSS_STORE is None:
+        return None
+    return _LOSS_STORE.get(_loss_store_key(selected_model, selected_segment), [])
+
+
 def _is_finite(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
@@ -53,12 +86,14 @@ def resolve_loss_model(data: dict, selected_model: str | None) -> str:
 
 
 def get_loss_segments_for_model(data: dict, selected_model: str | None) -> list[str]:
-    portfolio: pl.DataFrame = data["portfolio"]
-    if config.SEGMENT_COLUMN not in portfolio.columns:
+    from ..monitoring.filters_config import segment_values
+    segments = segment_values()
+    if segments:
+        return ["All", *segments]
+    portfolio: pl.DataFrame = data.get("portfolio")
+    if portfolio is None or config.SEGMENT_COLUMN not in portfolio.columns:
         return ["All"]
-
-    df = portfolio
-    values = df.select(config.SEGMENT_COLUMN).to_series().to_list()
+    values = portfolio.select(config.SEGMENT_COLUMN).to_series().to_list()
     segments = sorted({text for value in values if (text := _clean_text(value))}, key=str.lower)
     return ["All", *segments]
 
@@ -134,6 +169,9 @@ def build_loss_observations(data: dict, selected_model: str | None, selected_seg
 
 
 def get_loss_periods(data: dict, selected_model: str | None, selected_segment: str | None = "All") -> list[str]:
+    rows = _loss_store_rows(selected_model, selected_segment)
+    if rows is not None:
+        return sorted({str(r["Monitoring Period"]) for r in rows if r.get("Monitoring Period")}, key=_quarter_sort_key)
     observations = build_loss_observations(data, selected_model, selected_segment)
     if observations.is_empty():
         return []
@@ -161,6 +199,10 @@ def resolve_loss_monitoring_point(
 
 
 def loss_metrics_by_period(data: dict, selected_model: str | None, selected_segment: str | None = "All") -> list[dict[str, Any]]:
+    rows = _loss_store_rows(selected_model, selected_segment)
+    if rows is not None:
+        return sorted((dict(r) for r in rows), key=lambda r: _quarter_sort_key(r["Monitoring Period"]))
+
     observations = build_loss_observations(data, selected_model, selected_segment)
     if observations.is_empty():
         return []

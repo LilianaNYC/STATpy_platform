@@ -16,6 +16,7 @@ from .....components.charts import (
     build_ead_discrimination_rag_trend_figure,
     build_ead_metric_trend_figure,
 )
+from .....components import filters as shared_filters
 from .....components.filters import build_chart_header
 from .....data.analytics.calculations import (
     fmt_n,
@@ -43,13 +44,30 @@ from ..pd_performance.cards import (
 )
 
 CONTENT_ID = "ead-dashboard-content"
+REPORTING_CYCLE_ID = "ead-reporting-cycle"
+REPORTING_CYCLE_TOGGLE_ID = "ead-reporting-cycle-toggle"
+REPORTING_CYCLE_MENU_ID = "ead-reporting-cycle-menu"
+REPORTING_CYCLE_FILTER_KEY = "ead-reporting-cycle"
 MODEL_DROPDOWN_ID = "ead-model-dropdown"
 SEGMENT_DROPDOWN_ID = "ead-segment-dropdown"
 MONITORING_POINT_DROPDOWN_ID = "ead-monitoring-point-dropdown"
+MODEL_TOGGLE_ID = "ead-model-toggle"
+MODEL_MENU_ID = "ead-model-menu"
+MODEL_SELECT_ALL_ID = "ead-model-select-all"
+SEGMENT_TOGGLE_ID = "ead-segment-toggle"
+SEGMENT_MENU_ID = "ead-segment-menu"
+MONITORING_POINT_TOGGLE_ID = "ead-monitoring-point-toggle"
+MONITORING_POINT_MENU_ID = "ead-monitoring-point-menu"
+MODEL_FILTER_KEY = "ead-model"
+SEGMENT_FILTER_KEY = "ead-segment"
+MONITORING_POINT_FILTER_KEY = "ead-monitoring-point"
 EAD_SUBNAV_ID = "ead-subnav"
 RANGE_STORE_ID = "ead-range-store"
 CALIBRATION_RAG_RANGE_KEY = "ead_calibration_rag"
 DISCRIMINATION_RAG_RANGE_KEY = "ead_discrimination_rag"
+ME_RANGE_KEY = "ead_me"
+RMSE_RANGE_KEY = "ead_rmse"
+KENDALL_RANGE_KEY = "ead_kendall"
 
 _GRAPH_CONFIG = {"displayModeBar": False, "responsive": True}
 
@@ -97,7 +115,7 @@ def _format_delta(metric: str, current_value: Any, previous_value: Any) -> tuple
     return formatted, tone
 
 
-def _build_filter(label: str, component: dcc.Dropdown) -> html.Div:
+def _build_filter(label: str, component) -> html.Div:
     return html.Div(className="monitoring-filter", children=[html.Label(label), component])
 
 
@@ -259,74 +277,94 @@ def _build_ead_subnav() -> html.Div:
 
 
 def _build_ead_overview_flow(summary: dict) -> html.Div:
+    from .....components.kpis import (
+        build_pd_overview_flow_input,
+        build_pd_overview_flow_metric,
+        build_pd_overview_flow_stage,
+        build_pd_overview_flow_test_stack,
+    )
+
+    me_rag = summary["metric_rags"].get("ME", "N/A")
+    rmse_rag = summary["metric_rags"].get("RMSE", "N/A")
+    tau_rag = summary["metric_rags"].get("Kendall's Tau", "N/A")
+    calibration_rag = summary["calibration_rag"]
+    discrimination_rag = summary["discrimination_rag"]
+    performance_rag = summary["performance_rag"]
+
+    flow_children = [
+        html.Div(build_pd_overview_flow_stage("1.", "Component"), className="lgd-flow-stage-input"),
+        html.Div(build_pd_overview_flow_stage("2.", "Tests"), className="lgd-flow-stage-tests"),
+        html.Div(build_pd_overview_flow_stage("3.", "Monitoring Dimension RAG"), className="lgd-flow-stage-dimension"),
+        html.Div(build_pd_overview_flow_stage("4.", "Performance RAG"), className="lgd-flow-stage-performance"),
+
+        html.Div(
+            build_pd_overview_flow_input("EAD", {"note": "1 year monitoring"}),
+            className="lgd-flow-input",
+        ),
+
+        build_pd_overview_flow_test_stack(
+            [
+                build_pd_overview_flow_metric(
+                    "Mean Error 1 year", summary["current"].get("ME"), "percent", me_rag,
+                    {"href": "#ead-calibration"},
+                ),
+                build_pd_overview_flow_metric(
+                    "RMSE 1 year", summary["current"].get("RMSE"), "percent", rmse_rag,
+                    {"href": "#ead-calibration"},
+                ),
+            ],
+            {"incoming": True, "extra_class": "lgd-flow-tests-calibration"},
+        ),
+
+        build_pd_overview_flow_test_stack(
+            [
+                build_pd_overview_flow_metric(
+                    "Kendall's Tau 1 year", summary["current"].get("Kendall's Tau"), "ratio", tau_rag,
+                    {"href": "#ead-discrimination"},
+                ),
+            ],
+            {"incoming": True, "extra_class": "lgd-flow-tests-discrimination"},
+        ),
+
+        build_pd_overview_flow_metric(
+            "Calibration Conservatism RAG", calibration_rag, "rag", calibration_rag,
+            {
+                "is_rag": True,
+                "href": "#ead-calibration",
+                "incoming": True,
+                "outgoing": True,
+                "extra_class": "lgd-flow-dimension-calibration",
+            },
+        ),
+
+        build_pd_overview_flow_metric(
+            "Discriminatory Power RAG", discrimination_rag, "rag", discrimination_rag,
+            {
+                "is_rag": True,
+                "href": "#ead-discrimination",
+                "incoming": True,
+                "outgoing": True,
+                "extra_class": "lgd-flow-dimension-discrimination",
+            },
+        ),
+
+        html.Div(
+            className="lgd-flow-performance",
+            children=html.Article(
+                className=f"pd-overview-flow-performance pd-overview-flow-performance-{pd_tone_class(performance_rag)}",
+                children=[
+                    html.Span("Performance RAG", className="pd-overview-flow-performance-title"),
+                    html.Strong([pd_rag_dot(performance_rag), f" {performance_rag}"]),
+                ],
+            ),
+        ),
+    ]
+
     return html.Div(
         className="pd-overview-flow-wrap",
         children=html.Div(
+            flow_children,
             className="lgd-overview-flow",
-            children=[
-                html.Div(_flow_stage("1. Component"), className="lgd-flow-stage-input"),
-                html.Div(_flow_stage("2. Tests"), className="lgd-flow-stage-tests"),
-                html.Div(_flow_stage("3. Monitoring Dimension RAG"), className="lgd-flow-stage-dimension"),
-                html.Div(_flow_stage("4. Performance RAG"), className="lgd-flow-stage-performance"),
-                html.Div(
-                    className="pd-overview-flow-input lgd-flow-input",
-                    children=[html.Strong("EAD"), html.Span("1 year monitoring")],
-                ),
-                html.Div(
-                    className="pd-overview-flow-test-stack lgd-flow-tests-calibration",
-                    children=[
-                        *_flow_connector_spans(incoming=True, outgoing=True),
-                        _flow_metric(
-                            "ME 1 year",
-                            summary["current"].get("ME"),
-                            "ME",
-                            summary["metric_rags"].get("ME", "N/A"),
-                            "#ead-calibration",
-                            previous_value=summary["previous"].get("ME"),
-                            previous_period=summary["previous_monitoring_point"],
-                        ),
-                        _flow_metric(
-                            "RMSE 1 year",
-                            summary["current"].get("RMSE"),
-                            "RMSE",
-                            summary["metric_rags"].get("RMSE", "N/A"),
-                            "#ead-calibration",
-                            previous_value=summary["previous"].get("RMSE"),
-                            previous_period=summary["previous_monitoring_point"],
-                        ),
-                    ],
-                ),
-                html.Div(
-                    className="pd-overview-flow-test-stack lgd-flow-tests-discrimination",
-                    children=[
-                        *_flow_connector_spans(incoming=True, outgoing=True),
-                        _flow_metric(
-                            "Kendall's Tau 1 year",
-                            summary["current"].get("Kendall's Tau"),
-                            "Kendall's Tau",
-                            summary["metric_rags"].get("Kendall's Tau", "N/A"),
-                            "#ead-discrimination",
-                            previous_value=summary["previous"].get("Kendall's Tau"),
-                            previous_period=summary["previous_monitoring_point"],
-                        ),
-                    ],
-                ),
-                html.Div(
-                    _flow_rag("Calibration Conservatism RAG", summary["calibration_rag"], "#ead-calibration", incoming=True, outgoing=True),
-                    className="lgd-flow-dimension-calibration",
-                ),
-                html.Div(
-                    _flow_rag("Discriminatory Power RAG", summary["discrimination_rag"], "#ead-discrimination", incoming=True, outgoing=True),
-                    className="lgd-flow-dimension-discrimination",
-                ),
-                html.Div(
-                    className=f"pd-overview-flow-performance pd-overview-flow-performance-{pd_tone_class(summary['performance_rag'])} lgd-flow-performance",
-                    children=[
-                        html.Span("Performance RAG", className="pd-overview-flow-performance-title"),
-                        html.Strong([pd_rag_dot(summary["performance_rag"]), f" {summary['performance_rag']}"]),
-                    ],
-                ),
-            ],
             **{"aria-label": "EAD monitoring overview process flow"},
         ),
     )
@@ -365,26 +403,38 @@ def render_ead_performance_content(
         ]
 
     calibration_cards = [
-        build_pd_test_card(
-            metric,
-            summary["current"],
-            summary["previous"],
-            thresholds,
-            context,
-            {"format": "percent", "card_title": f"{metric} 1 year"},
-        )
-        for metric in EAD_CALIBRATION_METRICS
-    ]
-    calibration_cards.append(
         build_pd_section_rag_card(
             "Calibration Conservatism RAG",
             summary["calibration_rag"],
             summary["previous_calibration_rag"],
             context,
             {"hide_status": True, "hide_comparison": True, "meta_label": "Monitoring point"},
-        )
-    )
+        ),
+        build_pd_test_card(
+            "RMSE",
+            summary["current"],
+            summary["previous"],
+            thresholds,
+            context,
+            {"format": "percent", "card_title": "RMSE 1 year"},
+        ),
+        build_pd_test_card(
+            "ME",
+            summary["current"],
+            summary["previous"],
+            thresholds,
+            context,
+            {"format": "percent", "card_title": "Mean Error 1 year"},
+        ),
+    ]
     discrimination_cards = [
+        build_pd_section_rag_card(
+            "Discriminatory Power RAG",
+            summary["discrimination_rag"],
+            summary["previous_discrimination_rag"],
+            context,
+            {"hide_status": True, "hide_comparison": True, "meta_label": "Monitoring point"},
+        ),
         build_pd_test_card(
             "Kendall's Tau",
             summary["current"],
@@ -392,13 +442,6 @@ def render_ead_performance_content(
             thresholds,
             context,
             {"format": "ratio", "card_title": "Kendall's Tau 1 year"},
-        ),
-        build_pd_section_rag_card(
-            "Discriminatory Power RAG",
-            summary["discrimination_rag"],
-            summary["previous_discrimination_rag"],
-            context,
-            {"hide_status": True, "hide_comparison": True, "meta_label": "Monitoring point"},
         ),
     ]
 
@@ -432,7 +475,7 @@ def render_ead_performance_content(
                 "EAD RAG Assignment Overview",
                 "At-a-glance summary of the 1 year EAD monitoring flow from metric tests to dimension RAGs and Performance RAG.",
                 summary["performance_rag"],
-                {"status_label": "Performance RAG"},
+                {"show_rag": False},
             ),
             _build_ead_overview_flow(summary),
         ],
@@ -449,7 +492,7 @@ def render_ead_performance_content(
                 summary["calibration_rag"],
                 {"show_rag": False},
             ),
-            html.Div(className="pd-test-grid pd-calibration-test-grid", children=calibration_cards),
+            html.Div(className="pd-test-grid pd-test-grid-3", children=calibration_cards),
             html.Div(
                 id="ead-calibration-rag-trend-panel",
                 className="section-card pd-default-rate-trend-section",
@@ -476,8 +519,44 @@ def render_ead_performance_content(
             html.Div(
                 className="pd-trend-detail-grid",
                 children=[
-                    _build_chart_panel("ME Trend", "Mean error by monitoring point with EAD threshold shading.", build_ead_metric_trend_figure(metric_rows, data["monitoring_thresholds"], "ME", monitoring_point)),
-                    _build_chart_panel("RMSE Trend", "Root mean squared error by monitoring point with EAD threshold shading.", build_ead_metric_trend_figure(metric_rows, data["monitoring_thresholds"], "RMSE", monitoring_point)),
+                    html.Div(
+                        id="ead-me-trend-panel",
+                        className="section-card pd-default-rate-trend-section",
+                        children=[
+                            build_chart_header(
+                                "Mean Error Trend",
+                                "Mean error by monitoring point with EAD threshold shading.",
+                                ME_RANGE_KEY,
+                                calibration_rag_periods,
+                                range_store.get(ME_RANGE_KEY),
+                            ),
+                            dcc.Graph(
+                                id="ead-me-trend-chart",
+                                figure=build_ead_metric_trend_figure(metric_rows, data["monitoring_thresholds"], "ME", monitoring_point),
+                                config=_GRAPH_CONFIG,
+                                className="pd-default-rate-trend-chart pd-default-rate-trend-chart-compact pd-default-rate-trend-chart-axis-room-compact",
+                            ),
+                        ],
+                    ),
+                    html.Div(
+                        id="ead-rmse-trend-panel",
+                        className="section-card pd-default-rate-trend-section",
+                        children=[
+                            build_chart_header(
+                                "RMSE Trend",
+                                "Root mean squared error by monitoring point with EAD threshold shading.",
+                                RMSE_RANGE_KEY,
+                                calibration_rag_periods,
+                                range_store.get(RMSE_RANGE_KEY),
+                            ),
+                            dcc.Graph(
+                                id="ead-rmse-trend-chart",
+                                figure=build_ead_metric_trend_figure(metric_rows, data["monitoring_thresholds"], "RMSE", monitoring_point),
+                                config=_GRAPH_CONFIG,
+                                className="pd-default-rate-trend-chart pd-default-rate-trend-chart-compact pd-default-rate-trend-chart-axis-room-compact",
+                            ),
+                        ],
+                    ),
                 ],
             ),
         ],
@@ -494,34 +573,53 @@ def render_ead_performance_content(
                 summary["discrimination_rag"],
                 {"show_rag": False},
             ),
-            html.Div(className="pd-test-grid pd-discrimination-test-grid", children=discrimination_cards),
+            html.Div(className="pd-test-grid", style={"gridTemplateColumns": "repeat(2, minmax(0, 1fr))"}, children=discrimination_cards),
             html.Div(
-                id="ead-discrimination-rag-trend-panel",
-                className="section-card pd-default-rate-trend-section",
+                className="pd-trend-detail-grid",
                 children=[
-                    build_chart_header(
-                        "Discriminatory Power RAG Trend",
-                        "Quarter-by-quarter Discriminatory Power RAG shown as a simple color-coded dot timeline.",
-                        DISCRIMINATION_RAG_RANGE_KEY,
-                        discrimination_rag_periods,
-                        range_store.get(DISCRIMINATION_RAG_RANGE_KEY),
+                    html.Div(
+                        id="ead-discrimination-rag-trend-panel",
+                        className="section-card pd-default-rate-trend-section",
+                        children=[
+                            build_chart_header(
+                                "Discriminatory Power RAG Trend",
+                                "Quarter-by-quarter Discriminatory Power RAG shown as a simple color-coded dot timeline.",
+                                DISCRIMINATION_RAG_RANGE_KEY,
+                                discrimination_rag_periods,
+                                range_store.get(DISCRIMINATION_RAG_RANGE_KEY),
+                            ),
+                            dcc.Graph(
+                                id="ead-discrimination-rag-trend-chart",
+                                figure=build_ead_discrimination_rag_trend_figure(
+                                    discrimination_rag_trend,
+                                    monitoring_point,
+                                    range_store.get(DISCRIMINATION_RAG_RANGE_KEY),
+                                ),
+                                config=_GRAPH_CONFIG,
+                                className="pd-default-rate-trend-chart pd-default-rate-trend-chart-compact pd-default-rate-trend-chart-axis-room-compact",
+                            ),
+                        ],
                     ),
-                    dcc.Graph(
-                        id="ead-discrimination-rag-trend-chart",
-                        figure=build_ead_discrimination_rag_trend_figure(
-                            discrimination_rag_trend,
-                            monitoring_point,
-                            range_store.get(DISCRIMINATION_RAG_RANGE_KEY),
-                        ),
-                        config=_GRAPH_CONFIG,
-                        className="pd-default-rate-trend-chart pd-default-rate-trend-chart-compact pd-default-rate-trend-chart-axis-room-compact",
+                    html.Div(
+                        id="ead-kendall-trend-panel",
+                        className="section-card pd-default-rate-trend-section",
+                        children=[
+                            build_chart_header(
+                                "Kendall's Tau Trend",
+                                "Rank-ordering strength by monitoring point with EAD threshold shading.",
+                                KENDALL_RANGE_KEY,
+                                discrimination_rag_periods,
+                                range_store.get(KENDALL_RANGE_KEY),
+                            ),
+                            dcc.Graph(
+                                id="ead-kendall-trend-chart",
+                                figure=build_ead_metric_trend_figure(metric_rows, data["monitoring_thresholds"], "Kendall's Tau", monitoring_point),
+                                config=_GRAPH_CONFIG,
+                                className="pd-default-rate-trend-chart pd-default-rate-trend-chart-compact pd-default-rate-trend-chart-axis-room-compact",
+                            ),
+                        ],
                     ),
                 ],
-            ),
-            _build_chart_panel(
-                "Kendall's Tau Trend",
-                "Rank-ordering strength by monitoring point with EAD threshold shading.",
-                build_ead_metric_trend_figure(metric_rows, data["monitoring_thresholds"], "Kendall's Tau", monitoring_point),
             ),
         ],
     )
@@ -611,12 +709,25 @@ def render_ead_performance_content(
 
 def page_layout() -> list:
     """Build the EAD page with top controls and live content."""
+    from .....data.monitoring.filters_config import load_filter_config, model_names, segment_values
+    from .....data.analytics.ead import set_ead_metrics
     data = PD_PERFORMANCE_DATA
-    model_options = get_ead_model_options(data)
-    default_model = model_options[0] if model_options else get_ead_default_model(data)
-    segment_options = get_ead_segments_for_model(data, default_model)
-    monitoring_options = get_ead_monitoring_point_options(data, default_model, "All")
-    default_monitoring_point = monitoring_options[1] if monitoring_options[:1] == ["Latest"] and len(monitoring_options) > 1 else (monitoring_options[0] if monitoring_options else "")
+    cfg = load_filter_config()
+    model_options = model_names("ead")
+    default_model = "all"
+    segment_options = ["All", *segment_values()]
+    reporting_cycle_options = [{"label": c["label"], "value": c["value"]} for c in cfg["reporting_cycles"]]
+    default_cycle = reporting_cycle_options[0]["value"] if reporting_cycle_options else "CCAR 2026"
+    cycle_data = (data.get("ead_observations_by_cycle") or {}).get(default_cycle)
+    if cycle_data:
+        set_ead_metrics(cycle_data.get("metrics_store"), cycle_data.get("quarters"))
+    else:
+        set_ead_metrics(None, [])
+    cycle_quarters = shared_filters.REPORTING_CYCLE_QUARTERS.get(default_cycle, [])
+    monitoring_options = cycle_quarters if cycle_quarters else get_ead_monitoring_point_options(data, None, "All")
+    default_monitoring_point = monitoring_options[0] if monitoring_options else ""
+
+    model_select_options = [{"label": "All models", "value": "all"}] + [{"label": name, "value": name} for name in model_options]
 
     return [
         dcc.Store(id=RANGE_STORE_ID, data={}),
@@ -631,33 +742,47 @@ def page_layout() -> list:
                             className="monitoring-controls",
                             children=[
                                 _build_filter(
+                                    "Reporting Cycle",
+                                    shared_filters.build_single_select_dropdown(
+                                        value_id=REPORTING_CYCLE_ID,
+                                        toggle_id=REPORTING_CYCLE_TOGGLE_ID,
+                                        menu_id=REPORTING_CYCLE_MENU_ID,
+                                        filter_key=REPORTING_CYCLE_FILTER_KEY,
+                                        options=reporting_cycle_options,
+                                        value=default_cycle,
+                                    ),
+                                ),
+                                _build_filter(
                                     "Monitoring Point",
-                                    dcc.Dropdown(
-                                        id=MONITORING_POINT_DROPDOWN_ID,
-                                        options=_dropdown_options(monitoring_options),
+                                    shared_filters.build_single_select_dropdown(
+                                        value_id=MONITORING_POINT_DROPDOWN_ID,
+                                        toggle_id=MONITORING_POINT_TOGGLE_ID,
+                                        menu_id=MONITORING_POINT_MENU_ID,
+                                        filter_key=MONITORING_POINT_FILTER_KEY,
+                                        options=[{"label": q, "value": q} for q in monitoring_options],
                                         value=default_monitoring_point,
-                                        clearable=False,
-                                        className="monitoring-top-select monitoring-point-select",
                                     ),
                                 ),
                                 _build_filter(
                                     "Segment",
-                                    dcc.Dropdown(
-                                        id=SEGMENT_DROPDOWN_ID,
+                                    shared_filters.build_single_select_dropdown(
+                                        value_id=SEGMENT_DROPDOWN_ID,
+                                        toggle_id=SEGMENT_TOGGLE_ID,
+                                        menu_id=SEGMENT_MENU_ID,
+                                        filter_key=SEGMENT_FILTER_KEY,
                                         options=_dropdown_options(segment_options),
                                         value="All",
-                                        clearable=False,
-                                        className="monitoring-top-select",
                                     ),
                                 ),
                                 _build_filter(
                                     "Specific Models",
-                                    dcc.Dropdown(
-                                        id=MODEL_DROPDOWN_ID,
-                                        options=_dropdown_options(model_options),
-                                        value=default_model,
-                                        clearable=False,
-                                        className="monitoring-top-select",
+                                    shared_filters.build_single_select_dropdown(
+                                        value_id=MODEL_DROPDOWN_ID,
+                                        toggle_id=MODEL_TOGGLE_ID,
+                                        menu_id=MODEL_MENU_ID,
+                                        filter_key=MODEL_FILTER_KEY,
+                                        options=model_select_options,
+                                        value="all",
                                     ),
                                 ),
                             ],

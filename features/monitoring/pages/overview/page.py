@@ -6,10 +6,20 @@ main-branch page structure.
 
 from __future__ import annotations
 
+from collections import Counter
+
 import plotly.graph_objects as go
 from dash import dcc, html
 
-from .....components.charts import build_pd_time_series_xaxis
+from .....components.charts import (
+    build_pd_time_series_xaxis,
+    _rag_score_band_shapes,
+    _rag_score_yaxis,
+    _vertical_marker,
+    _apply_transparent_background,
+)
+from .....data.analytics.constants import pd_rag_color
+from .....components import filters as shared_filters
 from .....components.filters import build_range_controls
 from .....data.analytics.calculations import filter_pd_periods_by_range, pd_tone_class
 from .....data.analytics.overview import (
@@ -30,6 +40,19 @@ PERIOD_ID = "overview-monitoring-period"
 MODEL_GROUP_ID = "overview-model-group"
 MODEL_ID = "overview-model"
 SEGMENT_ID = "overview-segment"
+PERIOD_TOGGLE_ID = "overview-monitoring-period-toggle"
+PERIOD_MENU_ID = "overview-monitoring-period-menu"
+MODEL_GROUP_TOGGLE_ID = "overview-model-group-toggle"
+MODEL_GROUP_MENU_ID = "overview-model-group-menu"
+MODEL_TOGGLE_ID = "overview-model-toggle"
+MODEL_MENU_ID = "overview-model-menu"
+MODEL_SELECT_ALL_ID = "overview-model-select-all"
+SEGMENT_TOGGLE_ID = "overview-segment-toggle"
+SEGMENT_MENU_ID = "overview-segment-menu"
+PERIOD_FILTER_KEY = "overview-monitoring-period"
+MODEL_GROUP_FILTER_KEY = "overview-model-group"
+MODEL_FILTER_KEY = "overview-model"
+SEGMENT_FILTER_KEY = "overview-segment"
 RAG_TREND_METRIC_ID = "overview-rag-trend-metric"
 OVERVIEW_SUBNAV_ID = "overview-subnav"
 RANGE_STORE_ID = "overview-range-store"
@@ -37,6 +60,14 @@ RAG_TREND_RANGE_KEY = "overview_rag_trend"
 
 RAG_LABELS = {
     "Overall RAG": "Model RAG (Post Subjective Review)",
+}
+HEATMAP_LABELS = {
+    "Calibration Conservatism RAG": "Calibration",
+    "Discriminatory Power RAG": "Discrimination",
+    "Performance RAG": "Performance",
+    "Overall RAG": "Model RAG",
+    "Pre-Mitigation RAG": "Pre-Mitigation",
+    "Post-Mitigation RAG": "Post-Mitigation",
 }
 RAG_TREND_OPTIONS = list(RAG_COLUMNS)
 _GRAPH_CONFIG = {"displayModeBar": False, "responsive": True}
@@ -54,6 +85,38 @@ RAG_MARKER_COLORS = {
     "Red": "#dc2626",
     "N/A": "#94a3b8",
 }
+MONITORING_WORKSTREAMS = (
+    {
+        "path": "/overview",
+        "label": "Overview",
+        "eyebrow": "Portfolio Pulse",
+        "description": "Cross-model RAG comparison, trend context, and governance-ready findings.",
+    },
+    {
+        "path": "/",
+        "label": "PD Performance",
+        "eyebrow": "Core Monitoring",
+        "description": "Calibration, discrimination, rank ordering, and MEV range diagnostics.",
+    },
+    {
+        "path": "/lgd-performance",
+        "label": "LGD Performance",
+        "eyebrow": "Recovery Lens",
+        "description": "Loss-given-default overview flow and recovery behavior checkpoints.",
+    },
+    {
+        "path": "/ead-performance",
+        "label": "EAD Performance",
+        "eyebrow": "Exposure Lens",
+        "description": "Exposure-at-default monitoring with utilization and conversion coverage.",
+    },
+    {
+        "path": "/loss-performance",
+        "label": "Loss Performance",
+        "eyebrow": "Loss Lens",
+        "description": "Portfolio loss flow, realized loss signals, and performance summary.",
+    },
+)
 
 
 # ---------------------------------------------------------------------------
@@ -158,76 +221,217 @@ def _rag_header(column: str) -> html.Th:
         html.Span(
             className="overview-rag-header",
             children=[
-                html.Span(_rag_label(column)),
+                html.Span(HEATMAP_LABELS[column], title=_rag_label(column)),
                 html.Span(
-                    className="overview-help",
-                    children=[
-                        html.Span("?", className="overview-help-chip", title=description, **{"aria-label": description}),
-                        html.Span(description, className="overview-help-tooltip", role="tooltip"),
-                    ],
+                    "?",
+                    className="pd-info-chip",
+                    role="img",
+                    **{"aria-label": description, "title": description},
                 ),
             ],
         )
     )
 
 
-def _summary_card(
-    title: str,
-    value: int | str,
-    subtitle: str,
-    rag: str | None = "N/A",
-    visual_rag: str | None = None,
-) -> html.Article:
-    tone_class = pd_tone_class(rag) if rag else None
-    card_class = f"pd-test-card pd-test-{tone_class} overview-summary-card" if tone_class else "pd-test-card overview-summary-card overview-summary-card-neutral"
-    marker_rag = visual_rag or rag
-    status = (
-        html.Div(
-            _rag_badge(marker_rag),
-            className=f"pd-test-status pd-test-status-{pd_tone_class(effective_rag(rag))}",
-        )
-        if rag
-        else None
+def _hero_kpi(value: int | str, label: str, rag: str | None = None) -> html.Div:
+    tone = pd_tone_class(rag) if rag else "neutral"
+    return html.Div(
+        className=f"overview-hero-kpi overview-hero-kpi-{tone}",
+        children=[
+            html.Div(str(value), className="overview-hero-kpi-value"),
+            html.Div(label, className="overview-hero-kpi-label"),
+        ],
     )
-    return html.Article(
-        className=card_class,
+
+
+def _scope_chip(label: str, value: str) -> html.Div:
+    return html.Div(
+        className="overview-scope-chip",
+        children=[
+            html.Span(label, className="overview-scope-chip-label"),
+            html.Strong(value),
+        ],
+    )
+
+
+def _review_queue_row(rag: str, value: int, label: str, description: str) -> html.Div:
+    tone = pd_tone_class(rag)
+    return html.Div(
+        className=f"overview-review-row overview-review-row-{tone}",
         children=[
             html.Div(
-                className="pd-test-card-heading",
+                className="overview-review-row-main",
                 children=[
-                    html.Div([
-                        html.Span("Overview"),
-                        html.Div(html.H4(title), className="pd-card-title-row"),
-                    ]),
-                    status,
+                    _rag_badge(rag),
+                    html.Div(
+                        children=[
+                            html.Strong(label),
+                            html.Span(description),
+                        ],
+                    ),
                 ],
             ),
-            html.Div(str(value), className="pd-test-value"),
-            html.Div(subtitle, className="pd-test-meta"),
+            html.Div(str(value), className="overview-review-row-value"),
+        ],
+    )
+
+
+def _rag_mix_bar(summary: dict) -> html.Div:
+    segments = []
+    for rag, key, label in (("Red", "red", "Red"), ("Amber", "amber", "Amber"), ("Green", "green", "Green")):
+        value = summary[key]
+        if value:
+            segments.append(
+                html.Span(
+                    className=f"overview-rag-mix-segment overview-rag-mix-{pd_tone_class(rag)}",
+                    style={"flex": str(value)},
+                    title=f"{label}: {value} model(s)",
+                    **{"aria-label": f"{label}: {value} model(s)"},
+                )
+            )
+
+    if not segments:
+        segments = [html.Span(className="overview-rag-mix-segment overview-rag-mix-empty")]
+
+    return html.Div(className="overview-rag-mix-bar", children=segments)
+
+
+def _insight_card(title: str, value: str, body: str, tone: str = "neutral") -> html.Div:
+    return html.Div(
+        className=f"overview-insight-card overview-insight-card-{tone}",
+        children=[
+            html.Div(title, className="overview-insight-card-kicker"),
+            html.Div(value, className="overview-insight-card-value"),
+            html.P(body, className="overview-insight-card-body"),
+        ],
+    )
+
+
+def _workstream_card(path: str, eyebrow: str, label: str, description: str, *, active: bool = False):
+    return dcc.Link(
+        href=path,
+        className=f"overview-workstream-card{' active' if active else ''}",
+        children=[
+            html.Div(eyebrow, className="overview-workstream-card-kicker"),
+            html.Div(label, className="overview-workstream-card-title"),
+            html.P(description, className="overview-workstream-card-body"),
+            html.Span("Open tab", className="overview-workstream-card-cta"),
+        ],
+    )
+
+
+def _scope_value(selection: str | list[str], all_label: str, current_label: str | None = None) -> str:
+    if isinstance(selection, list):
+        if not selection:
+            return "No models selected"
+        if len(selection) == 1:
+            return selection[0]
+        return f"{len(selection)} models selected"
+    if selection == "All":
+        return current_label or all_label
+    return selection
+
+
+def _leading_metric(findings: list[dict]) -> tuple[str, int]:
+    metric_counts = Counter(_rag_label(row["Metric"]) for row in findings)
+    return metric_counts.most_common(1)[0] if metric_counts else ("No active findings", 0)
+
+
+def _risk_group(findings: list[dict], heat_rows: list[dict]) -> tuple[str, int]:
+    finding_counts = Counter(row["Model Group"] for row in findings)
+    if finding_counts:
+        return finding_counts.most_common(1)[0]
+
+    model_counts = Counter(row["Model Group"] for row in heat_rows)
+    return model_counts.most_common(1)[0] if model_counts else ("No grouped models", 0)
+
+
+def _heatmap_rag_counts(rows: list[dict]) -> Counter:
+    return Counter(row[column] for row in rows for column in RAG_COLUMNS)
+
+
+def _heatmap_stat(rag: str, label: str, value: int) -> html.Div:
+    return html.Div(
+        className=f"overview-heatmap-stat overview-heatmap-stat-{_rag_visual_tone(rag)}",
+        children=[
+            html.Div(
+                className="overview-heatmap-stat-label",
+                children=[_rag_badge(rag), html.Span(label)],
+            ),
+            html.Strong(str(value)),
+        ],
+    )
+
+
+def _rag_heatmap_cell(column: str, rag: str) -> html.Div:
+    label = display_rag(rag)
+    return html.Div(
+        className=f"overview-heatmap-cell overview-heatmap-cell-{_rag_visual_tone(rag)}",
+        title=f"{_rag_label(column)}: {label}",
+        **{"aria-label": f"{_rag_label(column)}: {label}"},
+        children=[
+            _rag_badge(rag),
+            html.Span(label),
         ],
     )
 
 
 def _rag_heatmap_table(rows: list[dict]) -> html.Div:
     columns = ["Model Group", "Model", *RAG_COLUMNS]
+    counts = _heatmap_rag_counts(rows)
     return html.Div(
-        className="overview-table-wrap",
+        className="overview-heatmap-panel",
         children=[
-            html.Table(
+            html.Div(
+                className="overview-heatmap-summary",
                 children=[
-                    html.Thead(html.Tr([_rag_header(column) for column in columns])),
-                    html.Tbody(
-                        [
-                            html.Tr(
-                                [
-                                    html.Td(row[column]) if column not in RAG_COLUMNS else html.Td(_rag_badge(row[column]))
-                                    for column in columns
-                                ]
-                            )
-                            for row in rows
-                        ]
+                    html.Div(
+                        className="overview-heatmap-summary-copy",
+                        children=[
+                            html.Div("Heatmap status", className="overview-heatmap-summary-kicker"),
+                            html.H4("RAG cells by status"),
+                            html.P("Use the matrix below to scan which model and dimension is driving the review queue."),
+                        ],
                     ),
-                ]
+                    html.Div(
+                        className="overview-heatmap-stat-grid",
+                        children=[
+                            _heatmap_stat("Red", "Red", counts.get("Red", 0)),
+                            _heatmap_stat("Amber", "Amber", counts.get("Amber", 0)),
+                            _heatmap_stat("N/A", "Fallback Amber", counts.get("N/A", 0)),
+                            _heatmap_stat("Green", "Green", counts.get("Green", 0)),
+                        ],
+                    ),
+                ],
+            ),
+            html.Div(
+                className="overview-table-wrap overview-heatmap-table-wrap",
+                children=[
+                    html.Table(
+                        className="overview-heatmap-table",
+                        children=[
+                            html.Thead(html.Tr([_rag_header(column) for column in columns])),
+                            html.Tbody(
+                                [
+                                    html.Tr(
+                                        [
+                                            html.Td(row["Model Group"], className="overview-heatmap-model-group"),
+                                            html.Td(row["Model"], className="overview-heatmap-model-name"),
+                                            *[
+                                                html.Td(
+                                                    _rag_heatmap_cell(column, row[column]),
+                                                    className="overview-heatmap-rag-td",
+                                                )
+                                                for column in RAG_COLUMNS
+                                            ],
+                                        ]
+                                    )
+                                    for row in rows
+                                ]
+                            ),
+                        ],
+                    ),
+                ],
             ),
             _rag_heatmap_legend(),
         ],
@@ -279,42 +483,39 @@ def _worst_period_rag(rows: list[dict], rag_column: str) -> str:
     )
 
 
+_PD_RAG_SCORE = {"Red": 1, "Amber": 2, "Green": 3}
+
+
 def _rag_trend_figure(rows: list[dict], rag_column: str, model_group: str, model_name: str, visible_periods: list[str]) -> go.Figure:
-    fig = go.Figure()
     model_rows = [row for row in rows if row["Model Group"] == model_group and row["Model"] == model_name]
     model_periods = {row["Monitoring Period"] for row in model_rows}
     periods = [period for period in visible_periods if period in model_periods]
     rags = [_worst_period_rag([row for row in model_rows if row["Monitoring Period"] == period], rag_column) for period in periods]
-    y_values = [RAG_SCORE.get(effective_rag(rag), 0) for rag in rags]
-    fig.add_trace(
-        go.Scatter(
-            x=periods,
-            y=y_values,
-            customdata=[display_rag(rag) for rag in rags],
-            mode="lines+markers",
-            name=model_name,
-            line=dict(width=2.4),
-            marker=dict(size=8, color=[_rag_marker_color(rag) for rag in rags], line=dict(color="#ffffff", width=1)),
-            hovertemplate="Period: %{x}<br>RAG: %{customdata}<extra></extra>",
-        )
-    )
+    rag_scores = [_PD_RAG_SCORE.get(effective_rag(rag)) for rag in rags]
 
+    shapes = _rag_score_band_shapes()
+    if periods:
+        shapes.append(_vertical_marker(periods[-1]))
+
+    fig = go.Figure(go.Scatter(
+        x=periods,
+        y=rag_scores,
+        mode="markers",
+        name="RAG",
+        marker=dict(color=[pd_rag_color(effective_rag(rag)) for rag in rags], size=16, opacity=0.95, line=dict(color="#ffffff", width=1)),
+        customdata=[display_rag(rag) for rag in rags],
+        hovertemplate="%{x}<br>RAG: %{customdata}<extra></extra>",
+    ))
     fig.update_layout(
-        title=f"{model_group}: {model_name}",
-        height=310,
-        margin=dict(l=48, r=18, t=52, b=54),
+        height=290,
+        margin=dict(t=18, r=28, b=54, l=78),
+        hovermode="closest",
         showlegend=False,
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        xaxis=build_pd_time_series_xaxis(periods, {"gridcolor": "#e5e7eb"}, density="compact"),
-        yaxis=dict(
-            tickmode="array",
-            tickvals=[1, 2, 3],
-            ticktext=["Green", "Amber / Fallback", "Red"],
-            range=[0.8, 3.2],
-            gridcolor="#e5e7eb",
-        ),
+        shapes=shapes,
+        xaxis=build_pd_time_series_xaxis(periods, {"title": "Monitoring Point", "gridcolor": "#e5e7eb"}, density="tight"),
+        yaxis=_rag_score_yaxis(_rag_label(rag_column)),
     )
+    _apply_transparent_background(fig)
     return fig
 
 
@@ -326,12 +527,23 @@ def _rag_trend_graphs(rows: list[dict], rag_column: str, range_store: dict | Non
         className="overview-trend-grid",
         children=[
             html.Div(
-                className="section-card overview-trend-panel",
+                className="section-card pd-default-rate-trend-section",
                 children=[
+                    html.Div(
+                        className="pd-chart-heading",
+                        children=html.Div(
+                            className="pd-chart-heading-copy",
+                            children=[
+                                html.Div(f"{model_group}: {model_name}", className="section-title"),
+                                html.Div(f"{_rag_label(rag_column)} trend across monitoring points.", className="pd-section-subtitle"),
+                            ],
+                        ),
+                    ),
                     dcc.Graph(
                         figure=_rag_trend_figure(rows, rag_column, model_group, model_name, visible_periods),
                         config=_GRAPH_CONFIG,
-                    )
+                        className="pd-default-rate-trend-chart pd-default-rate-trend-chart-medium",
+                    ),
                 ],
             )
             for model_group, model_name in model_keys
@@ -375,88 +587,328 @@ def render_overview_content(
     findings_rag = _findings_summary_rag(findings)
     trend_periods = sorted({row["Monitoring Period"] for row in rows})
     range_store = range_store or {}
+    leading_metric, leading_metric_count = _leading_metric(findings)
+    risk_group, _ = _risk_group(findings, heat_rows)
+    model_group_counts = Counter(row["Model Group"] for row in heat_rows)
+    largest_workstream, largest_workstream_count = (
+        model_group_counts.most_common(1)[0] if model_group_counts else ("No workstreams", 0)
+    )
 
-    return [
-        html.Div(
-            id="overview-summary",
-            children=[
-                html.Div(f"Monitoring point: {latest_period}", className="overview-section-context"),
-                html.Div(
-                    className="overview-summary-grid",
-                    children=[
-                        _summary_card("Models Monitored", summary["models"], "Filtered view", None),
-                        _summary_card("Red Models", summary["red"], f"Current period: {latest_period}", "Red"),
-                        _summary_card("Amber Models", summary["amber"], f"Current period: {latest_period}", "Amber"),
-                        _summary_card("Green Models", summary["green"], f"Current period: {latest_period}", "Green"),
-                        _summary_card(
-                            "Findings",
-                            len(findings),
-                            "Red + Amber heatmap RAGs",
-                            findings_rag,
-                            "Neutral" if not findings else None,
+    breaches = summary["red"] + summary["amber"]
+    selected_period = _scope_value(monitoring_period, "Latest available", latest_period)
+    selected_group = _scope_value(model_group, "All monitoring workstreams")
+    selected_segment = _scope_value(segment, "All segments")
+    selected_model = _scope_value(model, "All models in scope")
+
+    summary_section = html.Section(
+        id="overview-summary",
+        className="pd-content-section pd-overview-section pd-live-section",
+        children=[
+            html.Div(
+                className="pd-content-heading",
+                children=[
+                    html.Div("Monitoring Status", className="pd-content-kicker"),
+                    html.H3("Model Monitoring Summary"),
+                    html.P(f"At-a-glance view of all monitored models for {latest_period}."),
+                ],
+            ),
+            html.Div(
+                className="overview-command-grid",
+                children=[
+                    html.Div(
+                        className="overview-command-hero",
+                        children=[
+                            html.Div(
+                                className="overview-command-hero-copy",
+                                children=[
+                                    html.Div("Monitoring command center", className="overview-command-hero-kicker"),
+                                    html.H4("Current RAG posture across the Monitoring workstreams."),
+                                    html.P(
+                                        "The summary keeps the current filter scope visible, separates Red and Amber pressure, "
+                                        "and preserves a path into the detailed workstream tabs."
+                                    ),
+                                ],
+                            ),
+                            html.Div(
+                                className="overview-scope-chip-row",
+                                children=[
+                                    _scope_chip("Monitoring point", selected_period),
+                                    _scope_chip("Workstream", selected_group),
+                                    _scope_chip("Segment", selected_segment),
+                                    _scope_chip("Model", selected_model),
+                                ],
+                            ),
+                            html.Div(
+                                className="overview-hero-kpis",
+                                children=[
+                                    _hero_kpi(summary["models"], "Models Monitored"),
+                                    _hero_kpi(summary["red"], "Red", "Red"),
+                                    _hero_kpi(summary["amber"], "Amber", "Amber"),
+                                    _hero_kpi(summary["green"], "Green", "Green"),
+                                    _hero_kpi(len(findings), "Findings", findings_rag if findings else None),
+                                ],
+                            ),
+                        ],
+                    ),
+                    html.Div(
+                        className="overview-review-card",
+                        children=[
+                            html.Div(
+                                className="overview-review-card-heading",
+                                children=[
+                                    html.Div("Review queue", className="overview-review-card-kicker"),
+                                    html.H4("What needs attention"),
+                                    html.P("Counts reflect the current filter scope and the latest selected monitoring point."),
+                                ],
+                            ),
+                            html.Div(
+                                className="overview-review-card-body",
+                                children=[
+                                    html.Div(
+                                        className="overview-rag-mix",
+                                        children=[
+                                            html.Div(
+                                                className="overview-rag-mix-heading",
+                                                children=[
+                                                    html.Span("RAG assignment mix"),
+                                                    html.Strong(f"{summary['models']} model(s)"),
+                                                ],
+                                            ),
+                                            _rag_mix_bar(summary),
+                                        ],
+                                    ),
+                                    _review_queue_row("Red", summary["red"], "Escalate", "Models with Red overall RAG."),
+                                    _review_queue_row("Amber", summary["amber"], "Review", "Models with Amber overall RAG."),
+                                    _review_queue_row("Green", summary["green"], "In tolerance", "Models without active RAG pressure."),
+                                    html.Div(
+                                        className="overview-review-focus",
+                                        children=[
+                                            html.Div(
+                                                children=[
+                                                    html.Span("Priority dimension"),
+                                                    html.Strong(leading_metric),
+                                                ],
+                                            ),
+                                            html.Div(
+                                                children=[
+                                                    html.Span("Workstream pressure"),
+                                                    html.Strong(risk_group),
+                                                ],
+                                            ),
+                                        ],
+                                    ),
+                                ],
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+            html.Div(
+                className="overview-insight-grid",
+                children=[
+                    _insight_card(
+                        "Review load",
+                        str(breaches),
+                        (
+                            "No monitored models are currently in Amber or Red."
+                            if breaches == 0
+                            else f"{breaches} model(s) currently need review attention across the selected scope."
                         ),
-                    ],
-                ),
-            ],
-        ),
-        html.Div(
-            id="overview-heatmap",
-            className="section-card",
-            children=[
-                html.Div("Model RAG Heatmap", className="section-title"),
-                html.Div(f"RAG by model for {latest_period}.", className="pd-section-subtitle"),
-                _rag_heatmap_table(heat_rows),
-            ],
-        ),
-        html.Div(
-            id="overview-rag-trend",
-            className="section-card",
-            children=[
-                html.Div(
-                    className="overview-card-heading-row",
-                    children=[
-                        html.Div([
-                            html.Div("RAG Trend Analysis", className="section-title"),
-                            html.Div(f"Period-over-period comparison of {_rag_label(rag_trend_metric)} by model.", className="pd-section-subtitle"),
-                        ]),
-                        dcc.Dropdown(
-                            id=RAG_TREND_METRIC_ID,
-                            options=_dropdown_options(RAG_TREND_OPTIONS, RAG_LABELS),
-                            value=rag_trend_metric,
-                            clearable=False,
-                            className="monitoring-top-select overview-compact-dropdown",
+                        "green" if breaches == 0 else "red" if summary["red"] else "amber",
+                    ),
+                    _insight_card(
+                        "Primary hotspot",
+                        leading_metric,
+                        (
+                            "No active findings are present in the current selection."
+                            if leading_metric_count == 0
+                            else f"{leading_metric_count} finding(s) are concentrated in this RAG dimension."
                         ),
-                        build_range_controls(RAG_TREND_RANGE_KEY, trend_periods, range_store.get(RAG_TREND_RANGE_KEY)),
-                    ],
-                ),
-                _rag_trend_graphs(rows, rag_trend_metric, range_store),
-            ],
-        ),
-        html.Div(
-            id="overview-top-findings",
-            className="section-card",
-            children=[
-                html.Div("Top Findings", className="section-title"),
-                html.Div(f"Red and Amber RAGs for {latest_period}.", className="pd-section-subtitle"),
-                _findings_table(findings),
-            ],
-        ),
-        html.Div(
-            id="overview-governance-summary",
-            className="section-card overview-governance-card",
-            children=[
-                html.Div("Governance / Findings Summary", className="section-title"),
-                html.P("Review Red and Amber findings."),
-                html.Div(
-                    className="overview-governance-tags",
-                    children=[
-                        html.Span(f"{red_findings} Red Findings", className="overview-tag overview-tag-red"),
-                        html.Span(f"{amber_findings} Amber Findings", className="overview-tag overview-tag-amber"),
-                    ],
-                ),
-            ],
-        ),
-    ]
+                        "blue" if leading_metric_count == 0 else "amber",
+                    ),
+                    _insight_card(
+                        "Largest workstream",
+                        largest_workstream,
+                        (
+                            "No workstream counts are available for the current selection."
+                            if largest_workstream_count == 0
+                            else f"{largest_workstream_count} model(s) are in scope here, with the most pressure currently in {risk_group}."
+                        ),
+                        "blue",
+                    ),
+                ],
+            ),
+            html.Div(
+                className="section-card overview-workstream-panel",
+                children=[
+                    html.Div(
+                        className="overview-workstream-panel-heading",
+                        children=[
+                            html.Div(
+                                children=[
+                                    html.Div("Monitoring tabs", className="pd-content-kicker"),
+                                    html.H4("Move from summary to detailed analysis"),
+                                    html.P(
+                                        "Overview should help you decide where to go next. These links mirror the Monitoring workstreams in the sidebar."
+                                    ),
+                                ]
+                            ),
+                        ],
+                    ),
+                    html.Div(
+                        className="overview-workstream-grid",
+                        children=[
+                            _workstream_card(
+                                item["path"],
+                                item["eyebrow"],
+                                item["label"],
+                                item["description"],
+                                active=item["path"] == "/overview",
+                            )
+                            for item in MONITORING_WORKSTREAMS
+                        ],
+                    ),
+                ],
+            ),
+        ],
+    )
+
+    heatmap_section = html.Section(
+        id="overview-heatmap",
+        className="pd-content-section pd-live-section",
+        children=[
+            html.Div(
+                className="pd-content-heading",
+                children=[
+                    html.Div("Model RAG Heatmap", className="pd-content-kicker"),
+                    html.H3("Cross-Model RAG Comparison"),
+                    html.P(f"RAG status across all monitoring dimensions for {latest_period}."),
+                ],
+            ),
+            html.Div(
+                className="section-card",
+                children=[_rag_heatmap_table(heat_rows)],
+            ),
+        ],
+    )
+
+    trend_section = html.Section(
+        id="overview-rag-trend",
+        className="pd-content-section pd-live-section",
+        children=[
+            html.Div(
+                className="pd-content-heading",
+                children=[
+                    html.Div("RAG Trend Analysis", className="pd-content-kicker"),
+                    html.H3("Period-over-Period RAG Movement"),
+                    html.P(f"Track how {_rag_label(rag_trend_metric)} evolves across monitoring points by model."),
+                ],
+            ),
+            html.Div(
+                className="section-card",
+                children=[
+                    html.Div(
+                        className="overview-card-heading-row",
+                        children=[
+                            html.Div(
+                                className="overview-trend-controls",
+                                children=[
+                                    html.Label("RAG Dimension", className="overview-trend-control-label"),
+                                    dcc.Dropdown(
+                                        id=RAG_TREND_METRIC_ID,
+                                        options=_dropdown_options(RAG_TREND_OPTIONS, RAG_LABELS),
+                                        value=rag_trend_metric,
+                                        clearable=False,
+                                        className="monitoring-top-select",
+                                    ),
+                                ],
+                            ),
+                            build_range_controls(RAG_TREND_RANGE_KEY, trend_periods, range_store.get(RAG_TREND_RANGE_KEY)),
+                        ],
+                    ),
+                    _rag_trend_graphs(rows, rag_trend_metric, range_store),
+                ],
+            ),
+        ],
+    )
+
+    findings_section = html.Section(
+        id="overview-top-findings",
+        className="pd-content-section pd-live-section",
+        children=[
+            html.Div(
+                className="pd-content-heading",
+                children=[
+                    html.Div("Top Findings", className="pd-content-kicker"),
+                    html.H3("Red and Amber Findings"),
+                    html.P(f"All heatmap RAGs flagged as Red or Amber for {latest_period}."),
+                ],
+            ),
+            html.Div(
+                className="section-card",
+                children=[_findings_table(findings)],
+            ),
+        ],
+    )
+
+    governance_section = html.Section(
+        id="overview-governance-summary",
+        className="pd-content-section pd-live-section",
+        children=[
+            html.Div(
+                className="pd-content-heading",
+                children=[
+                    html.Div("Governance", className="pd-content-kicker"),
+                    html.H3("Findings Summary"),
+                    html.P("Consolidated view of model risk findings requiring review or escalation."),
+                ],
+            ),
+            html.Div(
+                className="section-card",
+                children=[
+                    html.Div(
+                        className="overview-governance-grid",
+                        children=[
+                            html.Div(
+                                className=f"overview-governance-stat overview-governance-stat-red",
+                                children=[
+                                    html.Div(str(red_findings), className="overview-governance-stat-value"),
+                                    html.Div("Red Findings", className="overview-governance-stat-label"),
+                                    html.Div("Breaches requiring immediate action", className="overview-governance-stat-desc"),
+                                ],
+                            ),
+                            html.Div(
+                                className=f"overview-governance-stat overview-governance-stat-amber",
+                                children=[
+                                    html.Div(str(amber_findings), className="overview-governance-stat-value"),
+                                    html.Div("Amber Findings", className="overview-governance-stat-label"),
+                                    html.Div("Review signals under monitoring", className="overview-governance-stat-desc"),
+                                ],
+                            ),
+                            html.Div(
+                                className=f"overview-governance-stat overview-governance-stat-green",
+                                children=[
+                                    html.Div(str(summary["green"]), className="overview-governance-stat-value"),
+                                    html.Div("Green Models", className="overview-governance-stat-label"),
+                                    html.Div("Models within tolerance", className="overview-governance-stat-desc"),
+                                ],
+                            ),
+                            html.Div(
+                                className=f"overview-governance-stat overview-governance-stat-total",
+                                children=[
+                                    html.Div(str(breaches), className="overview-governance-stat-value"),
+                                    html.Div("Total Breaches", className="overview-governance-stat-label"),
+                                    html.Div("Red + Amber combined", className="overview-governance-stat-desc"),
+                                ],
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+        ],
+    )
+
+    return [summary_section, heatmap_section, trend_section, findings_section, governance_section]
 
 
 # ---------------------------------------------------------------------------
@@ -482,6 +934,7 @@ def page_layout(data: dict) -> list:
     """Top bar + main content for the Overview page."""
     overview_rows = build_overview_rows(data)
     options = overview_filter_options(overview_rows)
+    model_options = [value for value in options["models"] if value != "All"]
     return [
         html.Div(
             className="top-bar",
@@ -496,29 +949,58 @@ def page_layout(data: dict) -> list:
                                 html.Div(
                                     className="monitoring-filter",
                                     children=[
-                                        html.Label("Monitoring Point", htmlFor=PERIOD_ID),
-                                        dcc.Dropdown(id=PERIOD_ID, options=_dropdown_options(options["periods"]), value="All", clearable=False, className="monitoring-top-select"),
+                                        html.Label("Monitoring Point", htmlFor=PERIOD_TOGGLE_ID),
+                                        shared_filters.build_single_select_dropdown(
+                                            value_id=PERIOD_ID,
+                                            toggle_id=PERIOD_TOGGLE_ID,
+                                            menu_id=PERIOD_MENU_ID,
+                                            filter_key=PERIOD_FILTER_KEY,
+                                            options=_dropdown_options(options["periods"]),
+                                            value="All",
+                                        ),
                                     ],
                                 ),
                                 html.Div(
                                     className="monitoring-filter",
                                     children=[
-                                        html.Label("Segment", htmlFor=SEGMENT_ID),
-                                        dcc.Dropdown(id=SEGMENT_ID, options=_dropdown_options(options["segments"]), value="All", clearable=False, className="monitoring-top-select"),
+                                        html.Label("Segment", htmlFor=SEGMENT_TOGGLE_ID),
+                                        shared_filters.build_single_select_dropdown(
+                                            value_id=SEGMENT_ID,
+                                            toggle_id=SEGMENT_TOGGLE_ID,
+                                            menu_id=SEGMENT_MENU_ID,
+                                            filter_key=SEGMENT_FILTER_KEY,
+                                            options=_dropdown_options(options["segments"]),
+                                            value="All",
+                                        ),
+                                    ],
+                                ),
+                                html.Div(
+                                    className="monitoring-filter monitoring-model-filter",
+                                    children=[
+                                        html.Label("Specific Models", htmlFor=MODEL_TOGGLE_ID),
+                                        shared_filters.build_checkbox_dropdown(
+                                            checklist_id=MODEL_ID,
+                                            select_all_id=MODEL_SELECT_ALL_ID,
+                                            toggle_id=MODEL_TOGGLE_ID,
+                                            menu_id=MODEL_MENU_ID,
+                                            options=_dropdown_options(model_options),
+                                            value=list(model_options),
+                                            toggle_label="All models",
+                                        ),
                                     ],
                                 ),
                                 html.Div(
                                     className="monitoring-filter",
                                     children=[
-                                        html.Label("Specific Models", htmlFor=MODEL_ID),
-                                        dcc.Dropdown(id=MODEL_ID, options=_dropdown_options(options["models"]), value="All", clearable=False, className="monitoring-top-select"),
-                                    ],
-                                ),
-                                html.Div(
-                                    className="monitoring-filter",
-                                    children=[
-                                        html.Label("Model Group", htmlFor=MODEL_GROUP_ID),
-                                        dcc.Dropdown(id=MODEL_GROUP_ID, options=_dropdown_options(options["groups"]), value="All", clearable=False, className="monitoring-top-select"),
+                                        html.Label("Model Group", htmlFor=MODEL_GROUP_TOGGLE_ID),
+                                        shared_filters.build_single_select_dropdown(
+                                            value_id=MODEL_GROUP_ID,
+                                            toggle_id=MODEL_GROUP_TOGGLE_ID,
+                                            menu_id=MODEL_GROUP_MENU_ID,
+                                            filter_key=MODEL_GROUP_FILTER_KEY,
+                                            options=_dropdown_options(options["groups"]),
+                                            value="All",
+                                        ),
                                     ],
                                 ),
                             ],
@@ -534,17 +1016,25 @@ def page_layout(data: dict) -> list:
                 html.Div(
                     className="tab-panel active pd-performance-app",
                     children=[
-                        html.Div(
-                            className="pd-content-heading",
+                        html.Section(
+                            className="pd-content-section pd-live-section",
                             children=[
-                                html.Div("General Model Monitoring View", className="pd-content-kicker"),
-                                html.H3("Overview"),
-                                html.P("Portfolio-level model monitoring summary."),
+                                html.Div(
+                                    className="pd-performance-note",
+                                    children=[
+                                        html.Strong("Executive summary: "),
+                                        "The Wholesale Portfolio Model Monitoring Overview consolidates RAG outcomes across "
+                                        "all monitored credit risk models — PD, LGD, EAD, and Loss — into a single governance-ready "
+                                        "view. It surfaces the current health posture, highlights Red and Amber findings that "
+                                        "require escalation or review, and tracks period-over-period RAG movements to identify "
+                                        "emerging trends before they become material.",
+                                    ],
+                                ),
+                                html.Div(
+                                    id=CONTENT_ID,
+                                    children=render_overview_content(data, overview_rows),
+                                ),
                             ],
-                        ),
-                        html.Div(
-                            id=CONTENT_ID,
-                            children=render_overview_content(data, overview_rows),
                         ),
                     ],
                 )

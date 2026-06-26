@@ -32,7 +32,11 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from ..data.analytics.constants import pd_rag_color
-from ..data.analytics.mev_range import calculate_pd_mev_thresholds
+from ..data.analytics.mev_range import (
+    calculate_pd_mev_thresholds,
+    get_pd_mev_scenario_quarter,
+    get_pd_mev_scenario_series,
+)
 from ..data.analytics.rank_ordering import (
     build_pd_rank_ordering_period_label_map,
     compare_pd_quarter_labels,
@@ -52,23 +56,26 @@ from ..data.analytics.calculations import (
 )
 
 AXIS_LINE_COLOR = "#cbd5e1"
-GRID_COLOR = "#e5e7eb"
+GRID_COLOR = "#cbd5e1"
 SAAS_SCENARIO_COLOR_MAP = {
     "baseline": "#16a34a",
     "intsevere": "#dc2626",
+    "baseline_2std_shock": "#b91c1c",
     "other": "#2563eb",
 }
 SAAS_SCENARIO_FALLBACK_COLORS = ["#0f766e", "#d97706", "#0891b2", "#7c2d12"]
 SAAS_DARK_SCENARIO_COLOR_MAP = {
     "baseline": "#86efac",
     "intsevere": "#fb7185",
+    "baseline_2std_shock": "#f43f5e",
     "other": "#7dd3fc",
 }
 SAAS_DARK_SCENARIO_FALLBACK_COLORS = ["#c4b5fd", "#fbbf24", "#67e8f9", "#f472b6"]
-SAAS_SCENARIO_ORDER = {"baseline": 0, "other": 1, "intsevere": 2}
+SAAS_SCENARIO_ORDER = {"baseline": 0, "other": 1, "intsevere": 2, "baseline_2std_shock": 3}
 SAAS_SCENARIO_LABEL_MAP = {
     "baseline": "Baseline",
     "intsevere": "Severe",
+    "baseline_2std_shock": "Baseline + 2SD Shock",
     "other": "Other",
 }
 SAAS_RUN_FOR_DASHES = ["solid", "dot", "dash", "dashdot"]
@@ -452,7 +459,7 @@ def build_pd_time_series_xaxis(labels, base=None, density="normal", tick_text_ma
     if axis.get("showticklabels") is False or not categories:
         return {**axis, "automargin": True}
 
-    max_ticks = {"compact": 6, "roomy": 10}.get(density, 8)
+    max_ticks = {"tight": 4, "compact": 6, "roomy": 10}.get(density, 8)
     tickvals = _build_tick_values(categories, max_ticks)
     is_dense = len(tickvals) < len(categories)
     tick_text_map = {
@@ -707,18 +714,6 @@ def _lgd_thresholds(monitoring_thresholds) -> list[dict]:
     return list((monitoring_thresholds or {}).get("lgd_thresholds") or [])
 
 
-def _lgd_metric_format(metric: str) -> str:
-    if metric in {"ME", "RMSE", "Predicted LGD", "Actual LGD"}:
-        return ".2%"
-    return ".3f"
-
-
-def _lgd_metric_title(metric: str) -> str:
-    if metric in {"ME", "RMSE", "Predicted LGD", "Actual LGD"}:
-        return f"{metric} (%)"
-    return metric
-
-
 # ---------------------------------------------------------------------------
 # LGD RAG trend charts
 # ---------------------------------------------------------------------------
@@ -746,18 +741,20 @@ def build_lgd_calibration_rag_trend_figure(rag_trend, monitoring_quarter, range_
         ]
         for row in trend
     ]
-    return _rag_dot_figure(
+    fig = _rag_dot_figure(
         quarters,
         [row["rag_score"] for row in trend],
         [row["rag"] for row in trend],
         customdata,
         "%{x}<br>Calibration Conservatism RAG: %{customdata[0]}<br>"
-        "ME 1 year: %{customdata[1]} (%{customdata[2]})<br>"
+        "Mean Error 1 year: %{customdata[1]} (%{customdata[2]})<br>"
         "RMSE 1 year: %{customdata[3]} (%{customdata[4]})<br>"
         "Weighted score: %{customdata[5]}<br>Rounded score: %{customdata[6]}<extra></extra>",
         monitoring_quarter,
         "Calibration Conservatism Score",
     )
+    fig.update_layout(xaxis=build_pd_time_series_xaxis(quarters, {"title": "Monitoring Point", "gridcolor": GRID_COLOR}, density="tight"))
+    return fig
 
 
 def build_lgd_discrimination_rag_trend_figure(rag_trend, monitoring_quarter, range_value=None) -> go.Figure:
@@ -777,7 +774,7 @@ def build_lgd_discrimination_rag_trend_figure(rag_trend, monitoring_quarter, ran
         ]
         for row in trend
     ]
-    return _rag_dot_figure(
+    fig = _rag_dot_figure(
         quarters,
         [row["rag_score"] for row in trend],
         [row["rag"] for row in trend],
@@ -788,6 +785,8 @@ def build_lgd_discrimination_rag_trend_figure(rag_trend, monitoring_quarter, ran
         monitoring_quarter,
         "Discriminatory Power Score",
     )
+    fig.update_layout(xaxis=build_pd_time_series_xaxis(quarters, {"title": "Monitoring Point", "gridcolor": GRID_COLOR}, density="tight"))
+    return fig
 
 
 # ---------------------------------------------------------------------------
@@ -796,11 +795,17 @@ def build_lgd_discrimination_rag_trend_figure(rag_trend, monitoring_quarter, ran
 
 
 def build_ead_calibration_rag_trend_figure(rag_trend, monitoring_quarter, range_value=None) -> go.Figure:
-    return build_lgd_calibration_rag_trend_figure(rag_trend, monitoring_quarter, range_value)
+    fig = build_lgd_calibration_rag_trend_figure(rag_trend, monitoring_quarter, range_value)
+    quarters = [row["quarter"] for row in rag_trend if row["quarter"] in (filter_pd_periods_by_range(range_value, [r["quarter"] for r in rag_trend]))]
+    fig.update_layout(xaxis=build_pd_time_series_xaxis(quarters, {"title": "Monitoring Point", "gridcolor": GRID_COLOR}, density="tight"))
+    return fig
 
 
 def build_ead_discrimination_rag_trend_figure(rag_trend, monitoring_quarter, range_value=None) -> go.Figure:
-    return build_lgd_discrimination_rag_trend_figure(rag_trend, monitoring_quarter, range_value)
+    fig = build_lgd_discrimination_rag_trend_figure(rag_trend, monitoring_quarter, range_value)
+    quarters = [row["quarter"] for row in rag_trend if row["quarter"] in (filter_pd_periods_by_range(range_value, [r["quarter"] for r in rag_trend]))]
+    fig.update_layout(xaxis=build_pd_time_series_xaxis(quarters, {"title": "Monitoring Point", "gridcolor": GRID_COLOR}, density="tight"))
+    return fig
 
 
 def build_lgd_metric_trend_figure(metric_rows, monitoring_thresholds, metric: str, monitoring_point: str) -> go.Figure:
@@ -818,17 +823,19 @@ def build_lgd_metric_trend_figure(metric_rows, monitoring_thresholds, metric: st
     if monitoring_point in quarters:
         shapes.append(_vertical_marker(monitoring_point))
 
-    hover_value_format = "%{y:.2%}" if metric in {"ME", "RMSE"} else "%{y:.3f}"
+    display_name = "Mean Error" if metric == "ME" else metric
+    hover_value_format = "%{y:.0%}" if metric in {"ME", "RMSE"} else "%{y:.3f}"
+    tick_format = ".0%" if metric in {"ME", "RMSE"} else ".3f"
     fig = go.Figure(go.Scatter(
         x=quarters,
         y=values,
         mode="lines+markers",
-        name=metric,
+        name=display_name,
         connectgaps=False,
-        line=dict(color="#2563eb", width=2.5),
+        line=dict(color="rgba(71,85,105,0.75)", width=2.5),
         marker=dict(size=8, color=[pd_rag_color(rag) for rag in rags], line=dict(color="#fff", width=1)),
         customdata=rags,
-        hovertemplate=f"%{{x}}<br>{metric}: {hover_value_format}<br>RAG: %{{customdata}}<extra></extra>",
+        hovertemplate=f"%{{x}}<br>{display_name}: {hover_value_format}<br>RAG: %{{customdata}}<extra></extra>",
     ))
     fig.update_layout(
         height=308,
@@ -836,8 +843,8 @@ def build_lgd_metric_trend_figure(metric_rows, monitoring_thresholds, metric: st
         hovermode="x unified",
         showlegend=False,
         shapes=shapes,
-        xaxis=build_pd_time_series_xaxis(quarters, {"title": "Monitoring Point", "gridcolor": GRID_COLOR}, density="compact"),
-        yaxis=dict(title=_lgd_metric_title(metric), tickformat=_lgd_metric_format(metric), range=bands["axis_range"], gridcolor=GRID_COLOR, zerolinecolor=AXIS_LINE_COLOR),
+        xaxis=build_pd_time_series_xaxis(quarters, {"title": "Monitoring Point", "gridcolor": GRID_COLOR}, density="tight"),
+        yaxis=dict(title=display_name, tickformat=tick_format, range=bands["axis_range"], gridcolor=GRID_COLOR, zeroline=False),
     )
     _apply_transparent_background(fig)
     return fig
@@ -858,17 +865,19 @@ def build_ead_metric_trend_figure(metric_rows, monitoring_thresholds, metric: st
     if monitoring_point in quarters:
         shapes.append(_vertical_marker(monitoring_point))
 
-    hover_value_format = "%{y:.2%}" if metric in {"ME", "RMSE"} else "%{y:.3f}"
+    display_name = "Mean Error" if metric == "ME" else metric
+    hover_value_format = "%{y:.0%}" if metric in {"ME", "RMSE"} else "%{y:.3f}"
+    tick_format = ".0%" if metric in {"ME", "RMSE"} else ".3f"
     fig = go.Figure(go.Scatter(
         x=quarters,
         y=values,
         mode="lines+markers",
-        name=metric,
+        name=display_name,
         connectgaps=False,
-        line=dict(color="#2563eb", width=2.5),
+        line=dict(color="rgba(71,85,105,0.75)", width=2.5),
         marker=dict(size=8, color=[pd_rag_color(rag) for rag in rags], line=dict(color="#fff", width=1)),
         customdata=rags,
-        hovertemplate=f"%{{x}}<br>{metric}: {hover_value_format}<br>RAG: %{{customdata}}<extra></extra>",
+        hovertemplate=f"%{{x}}<br>{display_name}: {hover_value_format}<br>RAG: %{{customdata}}<extra></extra>",
     ))
     fig.update_layout(
         height=308,
@@ -876,8 +885,8 @@ def build_ead_metric_trend_figure(metric_rows, monitoring_thresholds, metric: st
         hovermode="x unified",
         showlegend=False,
         shapes=shapes,
-        xaxis=build_pd_time_series_xaxis(quarters, {"title": "Monitoring Point", "gridcolor": GRID_COLOR}, density="compact"),
-        yaxis=dict(title=_lgd_metric_title(metric), tickformat=_lgd_metric_format(metric), range=bands["axis_range"], gridcolor=GRID_COLOR, zerolinecolor=AXIS_LINE_COLOR),
+        xaxis=build_pd_time_series_xaxis(quarters, {"title": "Monitoring Point", "gridcolor": GRID_COLOR}, density="tight"),
+        yaxis=dict(title=display_name, tickformat=tick_format, range=bands["axis_range"], gridcolor=GRID_COLOR, zeroline=False),
     )
     _apply_transparent_background(fig)
     return fig
@@ -912,17 +921,19 @@ def build_loss_rag_trend_figure(rag_trend, monitoring_quarter, range_value=None)
         ]
         for row in trend
     ]
-    return _rag_dot_figure(
+    fig = _rag_dot_figure(
         quarters,
         [row["rag_score"] for row in trend],
         [row["rag"] for row in trend],
         customdata,
         "%{x}<br>Performance RAG: %{customdata[0]}<br>"
-        "ME % 1 year: %{customdata[1]} (%{customdata[2]})<br>"
+        "Mean Error % 1 year: %{customdata[1]} (%{customdata[2]})<br>"
         "Score: %{customdata[3]}<br>Rounded score: %{customdata[4]}<extra></extra>",
         monitoring_quarter,
         "Performance Score",
     )
+    fig.update_layout(xaxis=build_pd_time_series_xaxis(quarters, {"title": "Monitoring Point", "gridcolor": GRID_COLOR}, density="tight"))
+    return fig
 
 
 def build_loss_metric_trend_figure(metric_rows, monitoring_thresholds, monitoring_point: str) -> go.Figure:
@@ -947,10 +958,10 @@ def build_loss_metric_trend_figure(metric_rows, monitoring_thresholds, monitorin
         mode="lines+markers",
         name=metric,
         connectgaps=False,
-        line=dict(color="#2563eb", width=2.5),
+        line=dict(color="rgba(71,85,105,0.75)", width=2.5),
         marker=dict(size=8, color=[pd_rag_color(rag) for rag in rags], line=dict(color="#fff", width=1)),
         customdata=rags,
-        hovertemplate="%{x}<br>ME %: %{y:.2%}<br>RAG: %{customdata}<extra></extra>",
+        hovertemplate="%{x}<br>Mean Error %: %{y:.0%}<br>RAG: %{customdata}<extra></extra>",
     ))
     fig.update_layout(
         height=308,
@@ -958,8 +969,8 @@ def build_loss_metric_trend_figure(metric_rows, monitoring_thresholds, monitorin
         hovermode="x unified",
         showlegend=False,
         shapes=shapes,
-        xaxis=build_pd_time_series_xaxis(quarters, {"title": "Monitoring Point", "gridcolor": GRID_COLOR}, density="compact"),
-        yaxis=dict(title="ME %", tickformat=".2%", range=bands["axis_range"], gridcolor=GRID_COLOR, zerolinecolor=AXIS_LINE_COLOR),
+        xaxis=build_pd_time_series_xaxis(quarters, {"title": "Monitoring Point", "gridcolor": GRID_COLOR}, density="tight"),
+        yaxis=dict(title="Mean Error", tickformat=".0%", range=bands["axis_range"], gridcolor=GRID_COLOR, zeroline=False),
     )
     _apply_transparent_background(fig)
     return fig
@@ -1106,6 +1117,417 @@ def build_pd_confidence_interval_trend_figure(performance_trend, monitoring_thre
     return fig
 
 
+def build_pd_psi_trend_figure(performance_trend, monitoring_thresholds, snapshot_quarter, range_value=None, *, theme: str = "light") -> go.Figure:
+    """Population Stability Index trend with threshold bands and RAG markers."""
+    periods = filter_pd_periods_by_range(range_value, [row["quarter"] for row in performance_trend])
+    trend = [row for row in performance_trend if row["quarter"] in periods]
+    if not trend:
+        return _empty_figure("No PSI periods are available for the selected monitoring point.")
+
+    quarters = [row["quarter"] for row in trend]
+    thresholds = get_pd_thresholds(monitoring_thresholds)
+    metric_name = get_pd_threshold_metric_name("Population Stability Index")
+    threshold = next((row for row in thresholds if row.get("metric") == metric_name), {})
+    psi_values = [row.get("population_stability_index") for row in trend]
+    psi_rags = [calculate_pd_metric_rag(thresholds, "Population Stability Index", value) for value in psi_values]
+    bands = build_pd_threshold_bands(threshold, psi_values, {"min_axis_max": 0.25})
+    trend_line_color = _monitoring_trend_line_color(theme)
+
+    shapes = list(bands["shapes"])
+    if snapshot_quarter in quarters:
+        shapes.append(_vertical_marker(snapshot_quarter))
+
+    fig = go.Figure(go.Scatter(
+        x=quarters, y=psi_values,
+        mode="lines+markers", name="Population Stability Index",
+        line=dict(color=trend_line_color, width=2.5),
+        marker=dict(size=8, color=[pd_rag_color(rag) for rag in psi_rags], line=dict(color="#fff", width=1)),
+        customdata=psi_rags,
+        hovertemplate="%{x}<br>PSI: %{y:.3f}<br>RAG: %{customdata}<extra></extra>",
+    ))
+    fig.update_layout(
+        height=340,
+        margin=dict(t=18, r=30, b=52, l=68),
+        hovermode="x unified",
+        showlegend=False,
+        shapes=shapes,
+        xaxis=build_pd_time_series_xaxis(quarters, {"title": "Monitoring Point", "gridcolor": GRID_COLOR}, density="compact"),
+        yaxis=dict(title="Population Stability Index", tickformat=".3f", range=bands["axis_range"], gridcolor=GRID_COLOR, zeroline=False),
+    )
+    _apply_transparent_background(fig)
+    return fig
+
+
+def build_pd_transition_combined_figure(rows, range_value=None, monitoring_thresholds=None, *, theme: str = "light") -> go.Figure:
+    """Combined transition margin figure: levels (left) + delta bars (right).
+
+    Left panel shows MM_P0 (dashed anchor) and MM_Pm (solid migration path).
+    Right panel shows the delta (MM_Pm − MM_P0) as RAG-colored bars (against the
+    ``Transition Matrix`` threshold). Both panels share the same x-axis labels so
+    they read as a single visual unit.
+    """
+    all_rows = [row for row in (rows or []) if _finite(row.get("delta"))]
+    if not all_rows:
+        return _empty_figure("No transition-matrix margin data is available for the selected filters.", height=340, theme=theme)
+
+    all_labels = [row.get("label") or f"Q{row.get('offset')}" for row in all_rows]
+    filtered_labels = filter_pd_periods_by_range(range_value, all_labels)
+    scoped = [row for row in all_rows if (row.get("label") or f"Q{row.get('offset')}") in filtered_labels]
+    if not scoped:
+        return _empty_figure("No data in the selected range.", height=340, theme=theme)
+
+    labels = [row.get("label") or f"Q{row.get('offset')}" for row in scoped]
+    periods = [row.get("period") or "" for row in scoped]
+    p0_values = [row.get("mm_p0") for row in scoped]
+    pm_values = [row.get("mm_pm") for row in scoped]
+    deltas = [float(row["delta"]) for row in scoped]
+    pm_color = _monitoring_trend_line_color(theme)
+
+    fig = make_subplots(
+        rows=1, cols=2, horizontal_spacing=0.10,
+        column_widths=[0.55, 0.45],
+        subplot_titles=("MM_P0 vs MM_Pm", "Delta (MM_Pm − MM_P0)"),
+    )
+
+    fig.add_trace(go.Scatter(
+        x=labels, y=p0_values, mode="lines+markers", name="MM_P0 (anchor)",
+        line=dict(color="#94a3b8", width=2, dash="dash"),
+        marker=dict(size=7, color="#94a3b8", line=dict(color="#fff", width=1)),
+        customdata=periods,
+        hovertemplate="%{customdata}<br>MM_P0: %{y:.3%}<extra></extra>",
+    ), row=1, col=1)
+    fig.add_trace(go.Scatter(
+        x=labels, y=pm_values, mode="lines+markers", name="MM_Pm (migrated)",
+        line=dict(color=pm_color, width=2.5),
+        marker=dict(size=8, color=pm_color, line=dict(color="#fff", width=1)),
+        customdata=periods,
+        hovertemplate="%{customdata}<br>MM_Pm: %{y:.3%}<extra></extra>",
+    ), row=1, col=1)
+
+    thresholds = get_pd_thresholds(monitoring_thresholds) if monitoring_thresholds else []
+    delta_rags = [calculate_pd_metric_rag(thresholds, "Transition Matrix", value) for value in deltas]
+    bar_colors = [pd_rag_color(rag) for rag in delta_rags]
+    fig.add_trace(go.Bar(
+        x=labels, y=deltas, name="Delta",
+        marker=dict(color=bar_colors, line=dict(color="rgba(255,255,255,0.6)", width=0.5)),
+        customdata=[[period, p0, pm, rag] for period, p0, pm, rag in zip(periods, p0_values, pm_values, delta_rags)],
+        hovertemplate="%{customdata[0]}<br>Delta: %{y:.3%}<br>MM_P0: %{customdata[1]:.3%}<br>MM_Pm: %{customdata[2]:.3%}<br>RAG: %{customdata[3]}<extra></extra>",
+        showlegend=False,
+    ), row=1, col=2)
+
+    fig.add_shape(
+        type="line", xref="x2 domain", yref="y2",
+        x0=0, x1=1, y0=0, y1=0,
+        line=dict(color="#94a3b8", width=1, dash="dot"),
+    )
+
+    grid = "#94a3b8"
+    xaxis_opts = build_pd_time_series_xaxis(labels, {"title": "Quarter", "gridcolor": grid}, density="compact")
+    fig.update_xaxes(**xaxis_opts, row=1, col=1)
+    fig.update_xaxes(**xaxis_opts, row=1, col=2)
+    fig.update_yaxes(title_text="PD", tickformat=".2%", gridcolor=grid, zeroline=False, row=1, col=1)
+    fig.update_yaxes(title_text="Delta", tickformat=".2%", gridcolor=grid, zeroline=False, row=1, col=2)
+
+    fig.update_layout(
+        height=360,
+        margin=dict(t=32, r=30, b=52, l=68),
+        hovermode="x unified",
+        bargap=0.35,
+        legend=dict(orientation="h", x=0, y=1.06),
+    )
+    for annotation in fig.layout.annotations:
+        annotation.update(font=dict(size=12, color="#64748b"), x=annotation.x, xanchor="center")
+    _apply_transparent_background(fig)
+    return fig
+
+
+def build_pd_sensitivity_combined_figure(rows, threshold: float | None, range_value=None, *, theme: str = "light") -> go.Figure:
+    """Sensitivity: projected PD paths (left) + relative shock impact bars (right).
+
+    Both panels share the same quarter offsets and can be windowed with the
+    range controls. The impact bars keep their RAG colouring (within / above the
+    scenario-test threshold) but no threshold reference line is drawn.
+    """
+    palette = _saas_theme_palette(_normalize_saas_theme(theme))
+    scenario_order = ["baseline", "baseline_2std_shock"]
+    scenario_styles = {
+        "baseline": {"color": "#16a34a", "dash": "solid"},
+        "baseline_2std_shock": {"color": "#dc2626", "dash": "dash"},
+    }
+    scoped_rows = [
+        row for row in (rows or [])
+        if row.get("scenario_variant") in scenario_order and _finite(row.get("projected_pd"))
+    ]
+    if not scoped_rows:
+        return _empty_figure("No sensitivity projection data is available for the selected filters.", height=360, theme=theme)
+
+    all_quarters = sorted({int(r["quarter"]) for r in scoped_rows if r.get("quarter") is not None})
+    all_labels = [f"Q{q}" for q in all_quarters]
+    kept_labels = set(filter_pd_periods_by_range(range_value, all_labels))
+    quarters = [q for q in all_quarters if f"Q{q}" in kept_labels]
+    if not quarters:
+        return _empty_figure("No data in the selected range.", height=360, theme=theme)
+    quarter_set = set(quarters)
+    scoped_rows = [r for r in scoped_rows if int(r.get("quarter")) in quarter_set]
+
+    fig = make_subplots(
+        rows=1, cols=2, horizontal_spacing=0.10,
+        column_widths=[0.55, 0.45],
+        subplot_titles=("Projected PD Sensitivity", "Relative Shock Impact"),
+    )
+
+    # --- Left: baseline vs shocked PD paths ---
+    for scenario in scenario_order:
+        scenario_rows = sorted(
+            [r for r in scoped_rows if r.get("scenario_variant") == scenario],
+            key=lambda r: r.get("quarter", 0),
+        )
+        if not scenario_rows:
+            continue
+        style = scenario_styles[scenario]
+        fig.add_trace(go.Scatter(
+            x=[r.get("quarter") for r in scenario_rows],
+            y=[r.get("projected_pd") for r in scenario_rows],
+            mode="lines+markers", name=scenario,
+            line=dict(color=style["color"], width=2.7, dash=style["dash"]),
+            marker=dict(size=7, line=dict(color="#fff", width=1)),
+            customdata=[[_format_saas_quarter_label(_coerce_saas_date(r.get("projection_quarter")))] for r in scenario_rows],
+            hovertemplate="%{customdata[0]}<br>%{fullData.name}: %{y:.2%}<extra></extra>",
+        ), row=1, col=1)
+
+    # --- Right: relative shock impact bars (RAG-coloured, no threshold line) ---
+    baseline_by_offset = {
+        r.get("quarter"): r for r in scoped_rows
+        if r.get("scenario_variant") == "baseline" and _finite(r.get("projected_pd"))
+    }
+    points = []
+    for r in scoped_rows:
+        if r.get("scenario_variant") != "baseline_2std_shock" or not _finite(r.get("projected_pd")):
+            continue
+        base = baseline_by_offset.get(r.get("quarter"))
+        base_val = base.get("projected_pd") if base else None
+        if not _finite(base_val) or float(base_val) <= 0:
+            continue
+        impact = abs(float(r["projected_pd"]) - float(base_val)) / float(base_val)
+        rag = "Green" if threshold is not None and impact <= threshold else ("Red" if threshold is not None else "N/A")
+        points.append({
+            "q": int(r["quarter"]),
+            "period": _format_saas_quarter_label(_coerce_saas_date(r.get("projection_quarter"))),
+            "baseline": float(base_val), "shocked": float(r["projected_pd"]), "impact": impact, "rag": rag,
+        })
+    points.sort(key=lambda p: p["q"])
+    if points:
+        colors = ["rgba(22,163,74,0.78)" if p["rag"] == "Green" else "rgba(220,38,38,0.80)" for p in points]
+        fig.add_trace(go.Bar(
+            x=[p["q"] for p in points], y=[p["impact"] for p in points], name="Relative shock impact",
+            marker=dict(color=colors, line=dict(color="rgba(255,255,255,0.75)", width=1)),
+            customdata=[[p["period"], p["baseline"], p["shocked"], p["rag"]] for p in points],
+            hovertemplate="%{customdata[0]}<br>Impact: %{y:.1%}<br>Baseline PD: %{customdata[1]:.2%}<br>Shocked PD: %{customdata[2]:.2%}<br>RAG: %{customdata[3]}<extra></extra>",
+            showlegend=False,
+        ), row=1, col=2)
+
+    tickvals = quarters
+    ticktext = [f"Q{q}" for q in quarters]
+    axis_kw = dict(tickmode="array", tickvals=tickvals, ticktext=ticktext, tickangle=0,
+                   tickfont=dict(size=11, color=palette["axis_tick"]), gridcolor=palette["grid_color"],
+                   linecolor=palette["axis_line"], showline=True, ticks="outside", automargin=True,
+                   title=dict(text="Quarter", font=dict(size=12, color=palette["axis_title"])))
+    fig.update_xaxes(**axis_kw, row=1, col=1)
+    fig.update_xaxes(**axis_kw, row=1, col=2)
+    fig.update_yaxes(title_text="Projected PD", tickformat=".1%", gridcolor=palette["grid_color"], zeroline=False, rangemode="tozero", row=1, col=1)
+    fig.update_yaxes(title_text="Relative Shock Impact", tickformat=".0%", gridcolor=palette["grid_color"], zeroline=False, rangemode="tozero", row=1, col=2)
+
+    fig.update_layout(
+        height=360,
+        margin=dict(t=32, r=30, b=60, l=70),
+        hovermode="x unified",
+        legend=dict(orientation="h", x=0, y=1.08),
+    )
+    for annotation in fig.layout.annotations:
+        annotation.update(font=dict(size=12, color="#64748b"), xanchor="center")
+    _apply_transparent_background(fig)
+    return fig
+
+
+def build_pd_scenario_projection_figure(rows, *, theme: str = "light") -> go.Figure:
+    """Projected PD paths for every available scenario variant."""
+    normalized_theme = _normalize_saas_theme(theme)
+    palette = _saas_theme_palette(normalized_theme)
+    scenario_color_map = SAAS_DARK_SCENARIO_COLOR_MAP if normalized_theme == "dark" else SAAS_SCENARIO_COLOR_MAP
+    fallback_colors = SAAS_DARK_SCENARIO_FALLBACK_COLORS if normalized_theme == "dark" else SAAS_SCENARIO_FALLBACK_COLORS
+    scoped_rows = [row for row in (rows or []) if _finite(row.get("projected_pd")) and row.get("scenario_variant")]
+    if not scoped_rows:
+        return _empty_figure("No scenario projection data is available for the selected filters.", height=360, theme=theme)
+
+    quarters = sorted({
+        int(row.get("quarter"))
+        for row in scoped_rows
+        if row.get("quarter") is not None
+    })
+    scenarios = sorted(
+        {str(row.get("scenario_variant")) for row in scoped_rows},
+        key=lambda scenario: (SAAS_SCENARIO_ORDER.get(str(scenario).lower(), 99), str(scenario)),
+    )
+    y_values = [float(row["projected_pd"]) for row in scoped_rows]
+    y_max = max(y_values) * 1.16 if y_values else 0.05
+    assigned_colors: dict[str, str] = {}
+
+    fig = go.Figure()
+    for scenario in scenarios:
+        scenario_rows = sorted(
+            [row for row in scoped_rows if row.get("scenario_variant") == scenario],
+            key=lambda row: row.get("quarter", 0),
+        )
+        x_values = [row.get("quarter") for row in scenario_rows]
+        y_values = [row.get("projected_pd") for row in scenario_rows]
+        customdata = [
+            [f"Q{row.get('quarter')}", _format_saas_quarter_label(_coerce_saas_date(row.get("projection_quarter")))]
+            for row in scenario_rows
+        ]
+        color = _saas_scenario_color(
+            scenario,
+            assigned_colors,
+            base_colors=scenario_color_map,
+            fallback_colors=fallback_colors,
+        )
+        fig.add_trace(go.Scatter(
+            x=x_values,
+            y=y_values,
+            mode="lines+markers",
+            name=str(scenario),
+            line=dict(color=color, width=2.6),
+            marker=dict(size=7, line=dict(color="#fff", width=1)),
+            customdata=customdata,
+            hovertemplate="%{customdata[1]}<br>%{fullData.name}: %{y:.2%}<br>Quarter: %{customdata[0]}<extra></extra>",
+        ))
+
+    fig.update_layout(
+        height=360,
+        margin=dict(t=22, r=34, b=64, l=70),
+        hovermode="x unified",
+        legend=dict(orientation="h", x=0, y=1.12),
+        showlegend=True,
+        xaxis=dict(
+            title=dict(text="Quarter", font=dict(size=12, color=palette["axis_title"])),
+            tickmode="array",
+            tickvals=quarters,
+            ticktext=[f"Q{quarter}" for quarter in quarters],
+            tickangle=0,
+            tickfont=dict(size=11, color=palette["axis_tick"]),
+            gridcolor=palette["grid_color"],
+            linecolor=palette["axis_line"],
+            showline=True,
+            ticks="outside",
+            automargin=True,
+        ),
+        yaxis=dict(
+            title="Projected PD",
+            tickformat=".1%",
+            range=[0, y_max],
+            gridcolor=palette["grid_color"],
+            zeroline=False,
+            showline=True,
+            linecolor=palette["axis_line"],
+            automargin=True,
+        ),
+    )
+    _apply_transparent_background(fig)
+    return fig
+
+
+def build_pd_scenario_rank_figure(rows, *, theme: str = "light") -> go.Figure:
+    """Scenario rank matrix where rank 1 is the highest projected PD."""
+    palette = _saas_theme_palette(_normalize_saas_theme(theme))
+    scoped_rows = [row for row in (rows or []) if _finite(row.get("projected_pd")) and row.get("scenario_variant")]
+    if not scoped_rows:
+        return _empty_figure("No scenario ranking data is available for the selected filters.", height=330, theme=theme)
+
+    quarters = sorted({
+        int(row.get("quarter"))
+        for row in scoped_rows
+        if row.get("quarter") is not None
+    })
+    scenarios = sorted(
+        {str(row.get("scenario_variant")) for row in scoped_rows},
+        key=lambda scenario: (SAAS_SCENARIO_ORDER.get(str(scenario).lower(), 99), str(scenario)),
+    )
+    scenario_labels = [str(scenario) for scenario in scenarios]
+    rows_by_quarter: dict[int, list[dict]] = {}
+    for row in scoped_rows:
+        rows_by_quarter.setdefault(int(row["quarter"]), []).append(row)
+
+    z_values = []
+    customdata = []
+    text_values = []
+    for scenario in scenarios:
+        z_row = []
+        custom_row = []
+        text_row = []
+        for quarter in quarters:
+            quarter_rows = rows_by_quarter.get(quarter, [])
+            ranked = sorted(quarter_rows, key=lambda item: float(item.get("projected_pd") or 0), reverse=True)
+            n = len(ranked)
+            rank_by_scenario = {item.get("scenario_variant"): n - rank for rank, item in enumerate(ranked)}
+            value_by_scenario = {item.get("scenario_variant"): item.get("projected_pd") for item in ranked}
+            rank = rank_by_scenario.get(scenario)
+            projected_pd = value_by_scenario.get(scenario)
+            z_row.append(rank)
+            text_row.append(str(rank) if rank is not None else "")
+            custom_row.append([
+                f"Q{quarter}",
+                str(scenario),
+                projected_pd,
+                rank,
+            ])
+        z_values.append(z_row)
+        text_values.append(text_row)
+        customdata.append(custom_row)
+
+    fig = go.Figure(go.Heatmap(
+        x=[f"Q{quarter}" for quarter in quarters],
+        y=scenario_labels,
+        z=z_values,
+        text=text_values,
+        texttemplate="%{text}",
+        customdata=customdata,
+        zmin=1,
+        zmax=max(len(scenarios), 1),
+        colorscale=[
+            [0.0, "rgba(22,163,74,0.70)"],
+            [0.5, "rgba(245,158,11,0.72)"],
+            [1.0, "rgba(220,38,38,0.88)"],
+        ],
+        colorbar=dict(
+            title="Rank",
+            tickmode="array",
+            tickvals=list(range(1, len(scenarios) + 1)),
+            ticktext=[str(value) for value in range(1, len(scenarios) + 1)],
+        ),
+        hovertemplate=(
+            "%{customdata[0]}<br>"
+            "Scenario: %{customdata[1]}<br>"
+            "Projected PD: %{customdata[2]:.2%}<br>"
+            "Rank: %{customdata[3]} (highest = highest PD)<extra></extra>"
+        ),
+    ))
+    fig.update_layout(
+        height=330,
+        margin=dict(t=22, r=68, b=58, l=128),
+        xaxis=dict(
+            title=dict(text="Quarter", font=dict(size=12, color=palette["axis_title"])),
+            tickangle=0,
+            tickfont=dict(size=11, color=palette["axis_tick"]),
+            side="bottom",
+        ),
+        yaxis=dict(
+            title="Scenario",
+            tickfont=dict(size=11, color=palette["axis_tick"]),
+        ),
+    )
+    _apply_transparent_background(fig)
+    return fig
+
+
 # ---------------------------------------------------------------------------
 # 1.3 Discriminatory Power - Other Metrics Trend (drawPdDiscriminationTrend)
 # ---------------------------------------------------------------------------
@@ -1231,101 +1653,6 @@ def build_pd_go_live_accuracy_trend_figure(performance_trend, monitoring_thresho
 
 
 # ---------------------------------------------------------------------------
-# 2.4 Scenario Rank Ordering (drawPdRankOrderingChart)
-# ---------------------------------------------------------------------------
-
-
-def build_pd_rank_ordering_figure(aggregate, y_title: str, range_value=None) -> go.Figure:
-    all_periods = aggregate.get("periods") or []
-    visible_periods = filter_pd_periods_by_range(range_value, all_periods)
-    severe_dates = aggregate.get("severe_dates") or []
-    scenario_quarter = get_pd_rank_ordering_scenario_quarter(severe_dates)
-
-    axis_periods = list(visible_periods)
-    if (
-        scenario_quarter
-        and visible_periods
-        and scenario_quarter not in axis_periods
-        and compare_pd_quarter_labels(scenario_quarter, visible_periods[0]) >= 0
-        and compare_pd_quarter_labels(scenario_quarter, visible_periods[-1]) <= 0
-    ):
-        axis_periods.append(scenario_quarter)
-        axis_periods.sort(key=_pd_quarter_sort_key)
-
-    period_label_map = build_pd_rank_ordering_period_label_map(axis_periods, severe_dates, hide_scenario_quarter=True)
-    historical = [point for point in aggregate.get("historical") or [] if point["period"] in visible_periods]
-    base = [point for point in aggregate.get("base") or [] if point["period"] in visible_periods]
-    severe = [point for point in aggregate.get("severe") or [] if point["period"] in visible_periods]
-    has_series = historical or base or severe
-    if not visible_periods or not has_series:
-        return _empty_figure("No scenario PD data is available for the selected time window.")
-
-    all_values = [point["value"] for point in (*historical, *base, *severe) if _finite(point["value"])]
-    if not all_values:
-        return _empty_figure("No scenario PD data is available for the selected time window.")
-
-    min_value = min(all_values)
-    max_value = max(all_values)
-    padding = max((max_value - min_value) * 0.12, abs(max_value or 1) * 0.08, 0.0025)
-    y_min = max(0, min_value - padding)
-    y_max = max_value + padding
-
-    severe_quarters = sorted(
-        {iso_date_to_pd_quarter(date) for date in severe_dates if iso_date_to_pd_quarter(date) in axis_periods},
-        key=_pd_quarter_sort_key,
-    )
-
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=[point["period"] for point in historical], y=[point["value"] for point in historical],
-        mode="lines", name="Historical PD",
-        line=dict(color="#2563eb", width=2.6),
-        customdata=[period_label_map.get(point["period"], format_pd_compact_quarter_label(point["period"])) for point in historical],
-        hovertemplate="%{customdata}<br>Historical PD: %{y:.2%}<extra></extra>",
-    ))
-    fig.add_trace(go.Scatter(
-        x=[point["period"] for point in base], y=[point["value"] for point in base],
-        mode="lines", name="Base PD",
-        line=dict(color="#64748b", width=2.4),
-        customdata=[period_label_map.get(point["period"], format_pd_compact_quarter_label(point["period"])) for point in base],
-        hovertemplate="%{customdata}<br>Base PD: %{y:.2%}<extra></extra>",
-    ))
-    fig.add_trace(go.Scatter(
-        x=[point["period"] for point in severe], y=[point["value"] for point in severe],
-        mode="lines", name="Severe PD",
-        line=dict(color="#dc2626", width=2.5),
-        customdata=[period_label_map.get(point["period"], format_pd_compact_quarter_label(point["period"])) for point in severe],
-        hovertemplate="%{customdata}<br>Severe PD: %{y:.2%}<extra></extra>",
-    ))
-    if severe_quarters:
-        x_values: list = []
-        y_values: list = []
-        for quarter in severe_quarters:
-            x_values += [quarter, quarter, None]
-            y_values += [y_min, y_max, None]
-        fig.add_trace(go.Scatter(
-            x=x_values, y=y_values,
-            mode="lines", name="Severe scenario date",
-            line=dict(color="#7c2d12", width=1.4, dash="dot"),
-            hoverinfo="skip",
-        ))
-
-    fig.update_layout(
-        height=320,
-        margin=dict(t=18, r=24, b=48, l=62),
-        hovermode="x unified",
-        legend=dict(orientation="h", x=0, y=1.12),
-        xaxis=build_pd_time_series_xaxis(axis_periods, {
-            "title": "Quarter", "gridcolor": GRID_COLOR, "showline": True, "linecolor": AXIS_LINE_COLOR,
-            "ticks": "outside", "categoryorder": "array", "categoryarray": axis_periods,
-        }, density="compact", tick_text_map=period_label_map),
-        yaxis=dict(title=y_title, tickformat=".1%", range=[y_min, y_max], gridcolor=GRID_COLOR, zerolinecolor=AXIS_LINE_COLOR, showline=True, linecolor=AXIS_LINE_COLOR, ticks="outside"),
-    )
-    _apply_transparent_background(fig)
-    return fig
-
-
-# ---------------------------------------------------------------------------
 # 2.6 MEV Range (drawPdMevRangeChart)
 # ---------------------------------------------------------------------------
 
@@ -1349,10 +1676,13 @@ def _format_pd_mev_quarter_tick(quarter_label: str) -> str:
     return f"{match.group(1)}Q{match.group(2)}"
 
 
-def build_pd_mev_range_figure(model_data, mev_name: str, mev_data, color: str, range_value=None, *, current_quarter: str | None = None, theme: str = "light") -> go.Figure:
+def build_pd_mev_range_figure(model_data, mev_name: str, mev_data, color: str, range_value=None, *, current_quarter: str | None = None, theme: str = "light", reporting_cycle: str | None = None, scenario: str | None = None) -> go.Figure:
     palette = _saas_theme_palette(_normalize_saas_theme(theme))
+    selected_scenario = str(scenario or "baseline").strip()
+    scenario_data = get_pd_mev_scenario_series(mev_data, reporting_cycle, selected_scenario)
+    ts = scenario_data if scenario_data else (mev_data.get("time_series") or {})
     all_points = sorted(
-        ((quarter, value) for quarter, value in (mev_data.get("time_series") or {}).items() if _finite(value)),
+        ((quarter, value) for quarter, value in ts.items() if _finite(value)),
         key=lambda item: _pd_quarter_sort_key(item[0]),
     )
     visible_quarters = set(filter_pd_periods_by_range(range_value, [point[0] for point in all_points]))
@@ -1366,6 +1696,7 @@ def build_pd_mev_range_figure(model_data, mev_name: str, mev_data, color: str, r
     raw_dev_date = (mev_data.get("dev_range") or {}).get("development_date") or ""
     development_quarter = raw_dev_date if re.match(r"^\d{4}-Q[1-4]$", raw_dev_date) else iso_date_to_pd_quarter(raw_dev_date)
     severe_quarter = iso_date_to_pd_quarter(model_data.get("severe_scenario_date"))
+    scenario_marker_quarter = get_pd_mev_scenario_quarter(mev_data, reporting_cycle, selected_scenario) or current_quarter
 
     quarter_dates = [_pd_quarter_to_date(q) for q in quarters]
     quarter_date_map = dict(zip(quarters, quarter_dates))
@@ -1393,6 +1724,8 @@ def build_pd_mev_range_figure(model_data, mev_name: str, mev_data, color: str, r
             dict(type="rect", xref="paper", x0=0, x1=1, yref="y", y0=amber_upper, y1=y_max, fillcolor="rgba(239,68,68,0.10)", line=dict(width=0), layer="below"),
             dict(type="line", xref="paper", x0=0, x1=1, yref="y", y0=green_min, y1=green_min, line=dict(color="#f59e0b", width=1.3, dash="dash")),
             dict(type="line", xref="paper", x0=0, x1=1, yref="y", y0=green_max, y1=green_max, line=dict(color="#f59e0b", width=1.3, dash="dash")),
+            dict(type="line", xref="paper", x0=0, x1=1, yref="y", y0=amber_lower, y1=amber_lower, line=dict(color="#ef4444", width=1, dash="dot")),
+            dict(type="line", xref="paper", x0=0, x1=1, yref="y", y0=amber_upper, y1=amber_upper, line=dict(color="#ef4444", width=1, dash="dot")),
         ])
 
     dev_date = quarter_date_map.get(development_quarter)
@@ -1401,14 +1734,14 @@ def build_pd_mev_range_figure(model_data, mev_name: str, mev_data, color: str, r
     severe_date = quarter_date_map.get(severe_quarter)
     if severe_date is not None:
         shapes.append(_vertical_marker(severe_date, color="#9a3412", dash="dash"))
-    current_date = quarter_date_map.get(current_quarter)
-    if current_date is not None:
-        shapes.append(_vertical_marker(current_date, color=palette["scenario_date_marker"], dash="dash", width=1.8))
+    scenario_marker_date = quarter_date_map.get(scenario_marker_quarter)
+    if scenario_marker_date is not None:
+        shapes.append(_vertical_marker(scenario_marker_date, color=palette["scenario_date_marker"], dash="dash", width=1.8))
 
     fig = go.Figure()
-    has_split = current_quarter and current_quarter in quarters
+    has_split = scenario_marker_quarter and scenario_marker_quarter in quarters
     if has_split:
-        split_index = quarters.index(current_quarter)
+        split_index = quarters.index(scenario_marker_quarter)
         history_dates = quarter_dates[: split_index + 1]
         history_values = values[: split_index + 1]
         history_labels = quarters[: split_index + 1]
@@ -1442,11 +1775,27 @@ def build_pd_mev_range_figure(model_data, mev_name: str, mev_data, color: str, r
             showlegend=False,
         ))
 
-    tickvals = _build_saas_date_ticks(quarter_dates, max_ticks=8)
+    threshold_annotations = []
+    if thresholds:
+        threshold_labels = [
+            (thresholds["amber_upper"], "Max_Dev + 2 SD"),
+            (thresholds["green_max"], "Max_Dev"),
+            (thresholds["green_min"], "Min_Dev"),
+            (thresholds["amber_lower"], "Min_Dev − 2 SD"),
+        ]
+        for y_val, label in threshold_labels:
+            threshold_annotations.append(dict(
+                xref="paper", x=1.01, yref="y", y=y_val,
+                text=label, showarrow=False, xanchor="left", yanchor="middle",
+                font=dict(size=9, color="#64748b"),
+            ))
+
+    tickvals = _build_saas_date_ticks(quarter_dates, max_ticks=5)
     ticktext = [_format_saas_quarter_label(d) for d in tickvals]
     fig.update_layout(
         height=292,
-        margin=dict(t=16, r=18, b=54, l=58),
+        margin=dict(t=16, r=100, b=72, l=58),
+        annotations=threshold_annotations,
         hovermode="x unified",
         showlegend=False,
         shapes=shapes,

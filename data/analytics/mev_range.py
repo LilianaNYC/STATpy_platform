@@ -36,6 +36,74 @@ def format_pd_mev_value(value: Any) -> str:
     return f"{number:,.2f}".rstrip("0").rstrip(".")
 
 
+def _normalise_lookup(value: str | None) -> str:
+    return str(value or "").strip()
+
+
+def get_pd_mev_scenario_series(
+    mev_data: dict[str, Any],
+    reporting_cycle: str | None = None,
+    scenario: str | None = None,
+) -> dict[str, float]:
+    """Return the MEV series scoped to the selected reporting cycle/scenario.
+
+    Older catalog payloads only stored ``scenario_series`` by scenario. Newer
+    payloads also preserve ``scenario_series_by_cycle`` so scenario projections
+    do not leak across reporting cycles.
+    """
+    scenario_key = _normalise_lookup(scenario) or "baseline"
+    cycle_key = _normalise_lookup(reporting_cycle)
+    by_cycle = mev_data.get("scenario_series_by_cycle") or {}
+    if cycle_key:
+        cycle_series = by_cycle.get(cycle_key) or {}
+        scoped_series = cycle_series.get(scenario_key)
+        if scoped_series:
+            return scoped_series
+        baseline_series = cycle_series.get("baseline")
+        if baseline_series:
+            return baseline_series
+        for fallback_series in cycle_series.values():
+            if fallback_series:
+                return fallback_series
+
+    legacy_series = (mev_data.get("scenario_series") or {}).get(scenario_key)
+    if legacy_series:
+        return legacy_series
+    legacy_baseline = (mev_data.get("scenario_series") or {}).get("baseline")
+    if legacy_baseline:
+        return legacy_baseline
+    return {}
+
+
+def get_pd_mev_scenario_quarter(
+    mev_data: dict[str, Any],
+    reporting_cycle: str | None = None,
+    scenario: str | None = None,
+) -> str:
+    """Return the calendar quarter where the selected scenario has offset Q0."""
+    scenario_key = _normalise_lookup(scenario) or "baseline"
+    cycle_key = _normalise_lookup(reporting_cycle)
+    by_cycle = mev_data.get("scenario_quarter_zero_by_cycle") or {}
+    if cycle_key:
+        cycle_dates = by_cycle.get(cycle_key) or {}
+        quarter = _normalise_lookup(cycle_dates.get(scenario_key))
+        if quarter:
+            return quarter
+        baseline_quarter = _normalise_lookup(cycle_dates.get("baseline"))
+        if baseline_quarter:
+            return baseline_quarter
+        for fallback_quarter in cycle_dates.values():
+            quarter = _normalise_lookup(fallback_quarter)
+            if quarter:
+                return quarter
+
+    legacy_dates = mev_data.get("scenario_quarter_zero") or {}
+    quarter = _normalise_lookup(legacy_dates.get(scenario_key))
+    if quarter:
+        return quarter
+    return _normalise_lookup(legacy_dates.get("baseline"))
+
+
 # ---------------------------------------------------------------------------
 # Catalog filtering
 # ---------------------------------------------------------------------------
@@ -126,14 +194,20 @@ def calculate_pd_mev_rag(value: Any, thresholds: dict[str, Any] | None) -> str:
     return "Green"
 
 
-def calculate_pd_mev_worst_rag_after_quarter(mev_data: dict[str, Any], start_quarter: str) -> str:
+def calculate_pd_mev_worst_rag_after_quarter(
+    mev_data: dict[str, Any],
+    start_quarter: str,
+    reporting_cycle: str | None = None,
+    scenario: str | None = None,
+) -> str:
     """Port of ``calculatePdMevWorstRagAfterQuarter``."""
     thresholds = calculate_pd_mev_thresholds(mev_data.get("dev_range") or {})
     if not thresholds:
         return "N/A"
 
+    series = get_pd_mev_scenario_series(mev_data, reporting_cycle, scenario) or (mev_data.get("time_series") or {})
     post_scenario_values = []
-    for quarter, raw_value in (mev_data.get("time_series") or {}).items():
+    for quarter, raw_value in series.items():
         if start_quarter and compare_pd_quarter_labels(quarter, start_quarter) < 0:
             continue
         value = _to_number(raw_value)

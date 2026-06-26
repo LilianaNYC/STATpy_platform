@@ -33,6 +33,34 @@ def _children_of(node) -> list:
     return [children]
 
 
+def _render_pd_content():
+    """Render the live dashboard content (post-Apply), not the getting-started prompt."""
+    from STATpy_platform.features.monitoring.data_access import PD_PERFORMANCE_DATA as data
+    from STATpy_platform.data.analytics.calculations import PdFilterContext, set_precomputed_metrics
+
+    cycle = data["observations_by_cycle"]["CCAR 2026"]
+    set_precomputed_metrics(cycle["metrics_store"])
+    try:
+        ctx = PdFilterContext(
+            quarters=cycle["quarters"],
+            models=set(data["model_names"]),
+            segment="all",
+            monitoring_point=cycle["quarters"][-1],
+        )
+        return page.render_pd_performance_content(
+            {**data, "quarters": cycle["quarters"]},
+            ctx,
+            {},
+            dict(page.DEFAULT_TREND_HORIZON_STORE),
+            dict(page.DEFAULT_MEV_FILTER_STORE),
+            {},
+            reporting_cycle="CCAR 2026",
+            scenario="intsevere",
+        )
+    finally:
+        set_precomputed_metrics(None)
+
+
 def _collect_chart_ids_with_surface(node, *, inside_surface: bool = False) -> set[str]:
     if not isinstance(node, Component):
         return set()
@@ -53,7 +81,7 @@ def _collect_chart_ids_with_surface(node, *, inside_surface: bool = False) -> se
 
 
 def test_chapter_one_charts_render_inside_chart_surfaces():
-    layout = page.build_layout()
+    layout = _render_pd_content()
     chart_ids = set()
     for node in layout:
         chart_ids |= _collect_chart_ids_with_surface(node)

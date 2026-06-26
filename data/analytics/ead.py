@@ -21,6 +21,45 @@ EAD_DISCRIMINATION_METRICS = ["Kendall's Tau"]
 EAD_ALL_MODELS_LABEL = "All models"
 
 
+# ---------------------------------------------------------------------------
+# Precomputed-metrics store
+# ---------------------------------------------------------------------------
+# The EAD tab reads metric rows straight from ``EAD_Performance_Metrics`` via a
+# store keyed by ``(level, value)``. The cycle callback installs the selected
+# reporting cycle's store and quarters here.
+
+_EAD_STORE: dict | None = None
+_EAD_QUARTERS: list[str] = []
+
+
+def set_ead_metrics(store: dict | None, quarters: list[str] | None = None) -> None:
+    """Install (or clear) the precomputed EAD metrics store and its quarters."""
+    global _EAD_STORE, _EAD_QUARTERS
+    _EAD_STORE = store
+    _EAD_QUARTERS = list(quarters or [])
+
+
+def _ead_store_key(selected_model, selected_segment) -> tuple[str, str]:
+    """Map a (model, segment) selection to a ``(level, value)`` store key."""
+    segment = selected_segment if isinstance(selected_segment, str) else None
+    if segment and segment not in ("All", "all", ""):
+        return "segment", segment
+    if isinstance(selected_model, (list, tuple, set)):
+        models = [m for m in selected_model if m]
+        model = models[0] if len(models) == 1 else None
+    else:
+        model = selected_model
+    if model and model not in ("all", "All", EAD_ALL_MODELS_LABEL, ""):
+        return "model", str(model)
+    return "model", "All Models"
+
+
+def _ead_store_rows(selected_model, selected_segment) -> list[dict] | None:
+    if _EAD_STORE is None:
+        return None
+    return _EAD_STORE.get(_ead_store_key(selected_model, selected_segment), [])
+
+
 def _is_finite(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
@@ -83,8 +122,12 @@ def get_ead_thresholds(data: dict) -> list[dict[str, Any]]:
 
 
 def get_ead_model_options(data: dict) -> list[str]:
-    portfolio: pl.DataFrame = data["portfolio"]
-    if config.EAD_MODEL_COLUMN not in portfolio.columns:
+    from ..monitoring.filters_config import model_names
+    options = model_names("ead")
+    if options:
+        return options
+    portfolio: pl.DataFrame = data.get("portfolio")
+    if portfolio is None or config.EAD_MODEL_COLUMN not in portfolio.columns:
         return []
     values = portfolio.select(config.EAD_MODEL_COLUMN).to_series().to_list()
     return sorted({text for value in values if (text := _clean_text(value))}, key=str.lower)
@@ -94,44 +137,56 @@ def get_ead_default_model(data: dict) -> str:
     return EAD_ALL_MODELS_LABEL
 
 
-def resolve_ead_model(data: dict, selected_model: str | None) -> str:
-    if selected_model in {EAD_ALL_MODELS_LABEL, "All", None, ""}:
-        return EAD_ALL_MODELS_LABEL
+def resolve_ead_models(data: dict, selected_model: str | list[str] | tuple[str, ...] | set[str] | None) -> list[str]:
     models = get_ead_model_options(data)
+    if isinstance(selected_model, (list, tuple, set)):
+        selected = [str(value) for value in selected_model if value in models]
+        return selected
+    if selected_model in {EAD_ALL_MODELS_LABEL, "All", None, ""}:
+        return []
     if selected_model in models:
-        return str(selected_model)
-    return EAD_ALL_MODELS_LABEL
+        return [str(selected_model)]
+    return []
 
 
-def get_ead_segments_for_model(data: dict, selected_model: str | None) -> list[str]:
-    portfolio: pl.DataFrame = data["portfolio"]
-    model = resolve_ead_model(data, selected_model)
-    if config.SEGMENT_COLUMN not in portfolio.columns or config.EAD_MODEL_COLUMN not in portfolio.columns:
+
+def get_ead_segments_for_model(data: dict, selected_model: str | list[str] | tuple[str, ...] | set[str] | None) -> list[str]:
+    from ..monitoring.filters_config import segment_values
+    segments = segment_values()
+    if segments:
+        return ["All", *segments]
+    portfolio: pl.DataFrame = data.get("portfolio")
+    if portfolio is None or config.SEGMENT_COLUMN not in portfolio.columns or config.EAD_MODEL_COLUMN not in portfolio.columns:
         return ["All"]
-
     df = portfolio.filter(pl.col(config.EAD_MODEL_COLUMN).cast(pl.String).str.strip_chars() != "")
-    if model != EAD_ALL_MODELS_LABEL:
-        df = df.filter(pl.col(config.EAD_MODEL_COLUMN).cast(pl.String) == model)
     values = df.select(config.SEGMENT_COLUMN).to_series().to_list()
     segments = sorted({text for value in values if (text := _clean_text(value))}, key=str.lower)
     return ["All", *segments]
 
 
-def resolve_ead_segment(data: dict, selected_model: str | None, selected_segment: str | None) -> str:
+def resolve_ead_segment(
+    data: dict,
+    selected_model: str | list[str] | tuple[str, ...] | set[str] | None,
+    selected_segment: str | None,
+) -> str:
     segments = get_ead_segments_for_model(data, selected_model)
     return selected_segment if selected_segment in segments else "All"
 
 
-def filter_ead_portfolio(data: dict, selected_model: str | None, selected_segment: str | None = "All") -> pl.DataFrame:
+def filter_ead_portfolio(
+    data: dict,
+    selected_model: str | list[str] | tuple[str, ...] | set[str] | None,
+    selected_segment: str | None = "All",
+) -> pl.DataFrame:
     portfolio: pl.DataFrame = data["portfolio"]
-    model = resolve_ead_model(data, selected_model)
+    selected_models = resolve_ead_models(data, selected_model)
     if config.EAD_MODEL_COLUMN not in portfolio.columns:
         return portfolio.clear()
 
     df = portfolio.filter(pl.col(config.EAD_MODEL_COLUMN).cast(pl.String).str.strip_chars() != "")
-    if model != EAD_ALL_MODELS_LABEL:
-        df = df.filter(pl.col(config.EAD_MODEL_COLUMN).cast(pl.String) == model)
-    segment = resolve_ead_segment(data, model, selected_segment)
+    if selected_models:
+        df = df.filter(pl.col(config.EAD_MODEL_COLUMN).cast(pl.String).is_in(selected_models))
+    segment = resolve_ead_segment(data, selected_models, selected_segment)
     if segment != "All" and config.SEGMENT_COLUMN in df.columns:
         df = df.filter(pl.col(config.SEGMENT_COLUMN).cast(pl.String) == segment)
     return df
@@ -189,6 +244,9 @@ def build_ead_observations(data: dict, selected_model: str | None, selected_segm
 
 
 def get_ead_periods(data: dict, selected_model: str | None, selected_segment: str | None = "All") -> list[str]:
+    rows = _ead_store_rows(selected_model, selected_segment)
+    if rows is not None:
+        return sorted({str(r["Monitoring Period"]) for r in rows if r.get("Monitoring Period")}, key=_quarter_sort_key)
     observations = build_ead_observations(data, selected_model, selected_segment)
     if observations.is_empty():
         return []
@@ -216,6 +274,10 @@ def resolve_ead_monitoring_point(
 
 
 def ead_metrics_by_period(data: dict, selected_model: str | None, selected_segment: str | None = "All") -> list[dict[str, Any]]:
+    rows = _ead_store_rows(selected_model, selected_segment)
+    if rows is not None:
+        return sorted((dict(r) for r in rows), key=lambda r: _quarter_sort_key(r["Monitoring Period"]))
+
     observations = build_ead_observations(data, selected_model, selected_segment)
     if observations.is_empty():
         return []

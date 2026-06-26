@@ -21,7 +21,6 @@ portfolio dataframe.
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any
 
@@ -47,10 +46,21 @@ def _label(ts: pd.Timestamp) -> str:
 # Portfolio loading
 # ---------------------------------------------------------------------------
 def load_portfolio() -> pd.DataFrame:
-    """Load the portfolio Excel file, clean null sentinels, derive quarter labels."""
+    """Load the portfolio Excel file, clean null sentinels, derive quarter labels.
+
+    The facility-level ``Portfolio`` sheet is no longer used by the PD
+    Performance tab (its metrics are read directly from
+    ``PD_Performance_Metrics``). If the sheet is absent, return an empty frame
+    so the app still loads.
+    """
     log.info("Loading portfolio from %s [%s]", config.PORTFOLIO_FILE, config.PORTFOLIO_SHEET_NAME)
 
-    df = pd.read_excel(config.PORTFOLIO_FILE, sheet_name=config.PORTFOLIO_SHEET_NAME)
+    try:
+        df = pd.read_excel(config.PORTFOLIO_FILE, sheet_name=config.PORTFOLIO_SHEET_NAME)
+    except (ValueError, KeyError):
+        log.info("Portfolio sheet '%s' not found; using empty portfolio.", config.PORTFOLIO_SHEET_NAME)
+        return pd.DataFrame(columns=[config.DATE_COLUMN, "_quarter", "_snapshot_date"])
+
     df.replace(config.NULL_SENTINELS, pd.NA, inplace=True)
 
     df[config.DATE_COLUMN] = pd.to_datetime(df[config.DATE_COLUMN])
@@ -66,11 +76,6 @@ def get_quarters(df: pd.DataFrame) -> list[str]:
     dates = df[config.DATE_COLUMN].sort_values().unique()
     labels = [_label(pd.Timestamp(d)) for d in dates]
     return sorted(set(labels))
-
-
-def get_quarter_df(df: pd.DataFrame, quarter: str) -> pd.DataFrame:
-    """Return rows for a specific quarter label."""
-    return df[df["_quarter"] == quarter].copy()
 
 
 def get_snapshot_date(df: pd.DataFrame, quarter: str) -> str:
@@ -118,6 +123,7 @@ def load_monitoring_thresholds() -> dict[str, list[dict[str, Any]]]:
         ("rag_assignment_pd", config.RAG_ASSIGNMENT_PD_SHEET_NAME),
         ("lgd_thresholds", config.LGD_THRESHOLDS_SHEET_NAME),
         ("loss_thresholds", config.LOSS_THRESHOLDS_SHEET_NAME),
+        ("scenario_test_thresholds", "Scenario_Test_Thresholds"),
     ):
         try:
             df = pd.read_excel(config.MONITORING_THRESHOLDS_FILE, sheet_name=sheet_name)
@@ -373,15 +379,18 @@ def load_pd_mev_catalog() -> dict[str, Any]:
             except (TypeError, ValueError):
                 pass
 
-    # -- mev_data (baseline scenario only): time series per model+MEV
+    # -- mev_data (all scenarios): time series per model+MEV+scenario
     ts_df = pd.read_excel(
         xls,
         sheet_name=config.DUMMY_MEV_TIME_SERIES_SHEET_NAME,
     ).dropna(how="all")
-    ts_df = ts_df[ts_df["Scenario"] == "baseline"].copy()
+    ts_df["Date"] = pd.to_datetime(ts_df["Date"], errors="coerce")
+    ts_df["Quarter"] = pd.to_numeric(ts_df.get("Quarter"), errors="coerce")
+    ts_df["Run For"] = ts_df.get("Run For").map(lambda value: str(value).strip() if value is not None else "")
+    ts_df["Scenario"] = ts_df.get("Scenario").map(lambda value: str(value).strip() if value is not None else "")
     ts_df["_quarter_label"] = ts_df["Date"].astype(str).map(_date_to_quarter_label)
     ts_df["MEV Value"] = pd.to_numeric(ts_df["MEV Value"], errors="coerce")
-    ts_df = ts_df.dropna(subset=["MEV Value"])
+    ts_df = ts_df.dropna(subset=["Date", "MEV Value"])
 
     xls.close()
 
@@ -418,10 +427,35 @@ def load_pd_mev_catalog() -> dict[str, Any]:
         mevs: dict[str, Any] = {}
         for mev_name in mev_names_for_model:
             series_rows = model_ts[model_ts["MEV Name"] == mev_name].sort_values("_quarter_label")
+            baseline_rows = series_rows[series_rows["Scenario"] == "baseline"]
             time_series = {
                 row["_quarter_label"]: round(float(row["MEV Value"]), 6)
-                for _, row in series_rows.iterrows()
+                for _, row in baseline_rows.iterrows()
             }
+            scenario_series: dict[str, dict[str, float]] = {}
+            for scenario in series_rows["Scenario"].dropna().unique():
+                sc_rows = series_rows[series_rows["Scenario"] == scenario]
+                scenario_series[str(scenario).strip()] = {
+                    row["_quarter_label"]: round(float(row["MEV Value"]), 6)
+                    for _, row in sc_rows.iterrows()
+                }
+            scenario_series_by_cycle: dict[str, dict[str, dict[str, float]]] = {}
+            scenario_quarter_zero_by_cycle: dict[str, dict[str, str]] = {}
+            for run_for in series_rows["Run For"].dropna().unique():
+                cycle_rows = series_rows[series_rows["Run For"] == run_for]
+                cycle_key = str(run_for).strip()
+                if not cycle_key:
+                    continue
+                for scenario in cycle_rows["Scenario"].dropna().unique():
+                    scenario_key = str(scenario).strip()
+                    sc_rows = cycle_rows[cycle_rows["Scenario"] == scenario]
+                    scenario_series_by_cycle.setdefault(cycle_key, {})[scenario_key] = {
+                        row["_quarter_label"]: round(float(row["MEV Value"]), 6)
+                        for _, row in sc_rows.iterrows()
+                    }
+                    q0_rows = sc_rows[sc_rows["Quarter"] == 0].sort_values("Date")
+                    if not q0_rows.empty:
+                        scenario_quarter_zero_by_cycle.setdefault(cycle_key, {})[scenario_key] = q0_rows.iloc[0]["_quarter_label"]
             dev_values = [
                 v for q, v in time_series.items()
                 if not dev_date or q <= dev_date
@@ -430,6 +464,9 @@ def load_pd_mev_catalog() -> dict[str, Any]:
             mevs[display_name] = {
                 "dev_range": _compute_dev_range(dev_values, dev_date),
                 "time_series": time_series,
+                "scenario_series": scenario_series,
+                "scenario_series_by_cycle": scenario_series_by_cycle,
+                "scenario_quarter_zero_by_cycle": scenario_quarter_zero_by_cycle,
             }
 
         contributions = {}
@@ -449,148 +486,240 @@ def load_pd_mev_catalog() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Rank-ordering facilities
-# ---------------------------------------------------------------------------
-def _clean_rank_ordering_series(raw_series: Any) -> dict[str, float]:
-    if not isinstance(raw_series, dict):
-        return {}
-    clean: dict[str, float] = {}
-    for raw_period, raw_value in raw_series.items():
-        period = str(raw_period).strip()
-        value = pd.to_numeric(raw_value, errors="coerce")
-        if period and pd.notna(value):
-            clean[period] = round(float(value), 6)
-    return clean
-
-
-def _clean_rank_ordering_forecast(raw_forecast: Any) -> dict[str, dict[str, float]]:
-    if not isinstance(raw_forecast, dict):
-        raw_forecast = {}
-    return {
-        "base": _clean_rank_ordering_series(raw_forecast.get("base", {})),
-        "severe": _clean_rank_ordering_series(raw_forecast.get("severe", {})),
-    }
-
-
-def load_pd_rank_ordering_facilities() -> dict[str, Any]:
-    """Load the dummy facility-level PD paths used by the scenario rank-ordering section.
-
-    Port of ``_load_pd_rank_ordering_facilities``.
-    """
-    path = config.FACILITIES_DUMMY_DATA_FILE
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        log.warning("PD rank-ordering dummy data file not found: %s", path)
-        return {}
-    except json.JSONDecodeError as exc:
-        log.warning("PD rank-ordering dummy data file could not be parsed: %s", exc)
-        return {}
-
-    if not isinstance(payload, dict):
-        log.warning("PD rank-ordering dummy data must be a facility-keyed JSON object.")
-        return {}
-
-    facilities: dict[str, Any] = {}
-    for raw_facility_id, raw_payload in payload.items():
-        if not isinstance(raw_payload, dict):
-            continue
-
-        facility_id = str(raw_facility_id).strip()
-        if not facility_id:
-            continue
-
-        facilities[facility_id] = {
-            "segment": str(raw_payload.get("segment") or "").strip(),
-            "pd_model": _normalize_model_name(raw_payload.get("pd_model")),
-            "severe_scenario_date": str(raw_payload.get("severe_scenario_date") or ""),
-            "acl_pd_historical": _clean_rank_ordering_series(raw_payload.get("acl_pd_historical", {})),
-            "nco_pd_historical": _clean_rank_ordering_series(raw_payload.get("nco_pd_historical", {})),
-            "acl_pd_forecast": _clean_rank_ordering_forecast(raw_payload.get("acl_pd_forecast", {})),
-            "nco_pd_forecast": _clean_rank_ordering_forecast(raw_payload.get("nco_pd_forecast", {})),
-        }
-
-    return facilities
-
-
-# ---------------------------------------------------------------------------
 # Aggregated-sheet loader
 # ---------------------------------------------------------------------------
 
 PD_AGGREGATED_SHEET_NAME = "PD_Performance_Metrics"
+LGD_AGGREGATED_SHEET_NAME = "LGD_Performance_Metrics"
+EAD_AGGREGATED_SHEET_NAME = "EAD_Performance_Metrics"
+LOSS_AGGREGATED_SHEET_NAME = "Loss_Performance_Metrics"
+PD_SENSITIVITY_SHEET_NAME = "PD_Sensitivity_Projections"
+
+# Sheet column -> metric-row key consumed by each performance page/data module.
+_LGD_METRIC_COLUMN_MAP = {
+    "me": "ME",
+    "rmse": "RMSE",
+    "kendall_tau": "Kendall's Tau",
+    "predicted_lgd": "Predicted LGD",
+    "actual_lgd": "Actual LGD",
+    "recovery_rate": "Recovery Rate",
+    "observations": "Observations",
+    "defaults": "Defaults",
+}
+_EAD_METRIC_COLUMN_MAP = {
+    "me": "ME",
+    "rmse": "RMSE",
+    "kendall_tau": "Kendall's Tau",
+    "predicted_ead": "Predicted EAD",
+    "actual_ead": "Actual EAD",
+    "observations": "Observations",
+    "defaults": "Defaults",
+}
+_LOSS_METRIC_COLUMN_MAP = {
+    "me": "ME",
+    "me_pct": "ME %",
+    "predicted_loss": "Predicted Loss",
+    "actual_loss": "Actual Loss",
+    "defaults": "Defaults",
+    "balance": "Balance",
+    "observations": "Observations",
+}
+
+
+def _build_metric_rows_store(sheet_name: str, column_map: dict[str, str]) -> dict[str, Any]:
+    """Load a precomputed performance sheet into a per-cycle metric-row store.
+
+    Returns ``{cycle: {"quarters": [...], "metrics_store": {(level, value): [rows]}}}``
+    where each row matches the metric-row shape the matching page expects.
+    Values are taken verbatim from the sheet — no metric is recomputed.
+    """
+    try:
+        df = pd.read_excel(config.PORTFOLIO_FILE, sheet_name=sheet_name)
+    except (FileNotFoundError, ValueError, KeyError):
+        return {}
+    df = df.dropna(how="all")
+    if df.empty or "reporting_cycle" not in df.columns:
+        return {}
+
+    def _num(value):
+        return float(value) if pd.notna(value) else None
+
+    by_cycle: dict[str, Any] = {}
+    for cycle in sorted(df["reporting_cycle"].dropna().unique()):
+        cycle_df = df[df["reporting_cycle"] == cycle]
+        store: dict = {}
+        for _, row in cycle_df.iterrows():
+            level = str(row.get("level", "")).strip().lower()
+            value = str(row.get("model_or_segment", "")).strip()
+            quarter = str(row.get("quarter", "")).strip()
+            if not level or not value or not quarter:
+                continue
+            metric_row = {"Monitoring Period": quarter}
+            for col, key in column_map.items():
+                metric_row[key] = _num(row.get(col)) if col in cycle_df.columns else None
+            for count_key in ("Observations", "Defaults"):
+                if metric_row.get(count_key) is not None:
+                    metric_row[count_key] = int(metric_row[count_key])
+            store.setdefault((level, value), []).append(metric_row)
+        for key in store:
+            store[key].sort(key=lambda r: r["Monitoring Period"])
+        quarters = sorted(cycle_df["quarter"].dropna().astype(str).unique())
+        by_cycle[cycle] = {"quarters": quarters, "metrics_store": store}
+    return by_cycle
+
+
+def load_lgd_performance_metrics() -> dict[str, Any]:
+    """Load LGD metrics per reporting cycle from ``LGD_Performance_Metrics``."""
+    return _build_metric_rows_store(LGD_AGGREGATED_SHEET_NAME, _LGD_METRIC_COLUMN_MAP)
+
+
+def load_ead_performance_metrics() -> dict[str, Any]:
+    """Load EAD metrics per reporting cycle from ``EAD_Performance_Metrics``."""
+    return _build_metric_rows_store(EAD_AGGREGATED_SHEET_NAME, _EAD_METRIC_COLUMN_MAP)
+
+
+def load_loss_performance_metrics() -> dict[str, Any]:
+    """Load Loss metrics per reporting cycle from ``Loss_Performance_Metrics``."""
+    return _build_metric_rows_store(LOSS_AGGREGATED_SHEET_NAME, _LOSS_METRIC_COLUMN_MAP)
+
+
+def load_pd_sensitivity_projections() -> list[dict[str, Any]]:
+    """Load projected PD sensitivity rows from ``PD_Sensitivity_Projections``."""
+    try:
+        df = pd.read_excel(config.PORTFOLIO_FILE, sheet_name=PD_SENSITIVITY_SHEET_NAME)
+    except (FileNotFoundError, ValueError, KeyError):
+        return []
+
+    df = df.dropna(how="all")
+    required = {
+        "reporting_cycle",
+        "level",
+        "model_or_segment",
+        "projection_quarter",
+        "scenario_variant",
+        "projected_pd",
+    }
+    if "quarter" not in df.columns and "projection_offset" in df.columns:
+        df = df.rename(columns={"projection_offset": "quarter"})
+    required.add("quarter")
+    if df.empty or not required.issubset(df.columns):
+        return []
+
+    df = df.copy()
+    df["quarter"] = pd.to_numeric(df["quarter"], errors="coerce")
+    df["projection_quarter"] = pd.to_datetime(df["projection_quarter"], errors="coerce")
+    df["projected_pd"] = pd.to_numeric(df["projected_pd"], errors="coerce")
+    df = df.dropna(subset=["quarter", "projection_quarter", "projected_pd"])
+
+    # MM_P0 / MM_Pm are scenario-independent margins read verbatim from the
+    # sheet: MM_P0 is a single value per entity, MM_Pm varies by projection
+    # quarter. Both repeat across the scenario rows.
+    def _opt_num(row, column):
+        if column not in df.columns or pd.isna(row.get(column)):
+            return None
+        return round(float(row[column]), 8)
+
+    records = []
+    for _, row in df.iterrows():
+        records.append({
+            "reporting_cycle": str(row["reporting_cycle"]).strip(),
+            "level": str(row["level"]).strip().lower(),
+            "model_or_segment": str(row["model_or_segment"]).strip(),
+            "quarter": int(row["quarter"]),
+            "projection_quarter": row["projection_quarter"].date().isoformat(),
+            "scenario_variant": str(row["scenario_variant"]).strip(),
+            "base_scenario": str(row.get("base_scenario") or "").strip(),
+            "shock_std": float(row["shock_std"]) if "shock_std" in df.columns and pd.notna(row.get("shock_std")) else None,
+            "shock_direction": str(row.get("shock_direction") or "").strip(),
+            "projected_pd": round(float(row["projected_pd"]), 8),
+            "mm_p0": _opt_num(row, "MM_P0"),
+            "mm_pm": _opt_num(row, "MM_Pm"),
+        })
+
+    return records
 
 
 def _build_observations_from_aggregated(agg_df: pd.DataFrame) -> tuple[dict, list[dict], list[str], list[dict]]:
-    """Synthesize facility-level observations from the pre-aggregated metrics sheet.
+    """Deprecated facility synthesis.
 
-    Returns ``(performance_horizons, performance_observations,
-    rating_values, rating_migration_observations)``.
-
-    For each model × quarter × horizon row in the aggregated data, two
-    synthetic facility rows are created whose average observed/predicted
-    values and EAD reproduce the aggregated metrics. The existing
-    calculation pipeline processes these rows identically to real
-    facility-level data.
+    PD Performance metrics are now read verbatim from the
+    ``PD_Performance_Metrics`` tab via :func:`_build_metrics_store`; no
+    facility-level data is synthesized or recomputed. Retained as a no-op so
+    existing call sites keep working.
     """
-    performance_horizons = config.PD_HORIZON_COLUMNS
+    return config.PD_HORIZON_COLUMNS, [], [], []
 
-    obs_map: dict[tuple[str, str, str], dict] = {}
 
-    for _, row in agg_df.iterrows():
+# Metric columns read verbatim from the PD_Performance_Metrics tab.
+_PD_METRIC_COLUMNS = (
+    "confidence_interval_test",
+    "notching_test_signed",
+    "notching_test_abs",
+    "observed_default_rate",
+    "predicted_default_rate",
+    "actual_expected_ratio",
+    "accuracy_ratio",
+    "go_live_accuracy_ratio",
+    "delta_accuracy_ratio",
+    "gini_coefficient",
+    "ks_statistic",
+    "kendall_tau",
+    "brier_score",
+    "population_stability_index",
+    "rating_migration_index",
+    "ead",
+    "ead_share",
+    "default_count_1y",
+)
+
+# The horizons each per-horizon row is replicated to when its ``horizon`` cell
+# is left blank (i.e. the metric is horizon-agnostic, e.g. discrimination).
+_PD_HORIZONS = ("1y", "2y", "nco_1y")
+
+
+def _build_metrics_store(cycle_df: pd.DataFrame) -> dict:
+    """Build the precomputed-metrics lookup the calculation engine reads from.
+
+    The ``PD_Performance_Metrics`` tab is keyed by ``reporting_cycle × level ×
+    quarter × model_or_segment × horizon``. The store is keyed by
+    ``(level, model_or_segment, quarter, horizon)`` and every value is taken
+    verbatim from the sheet. Rows whose ``horizon`` is blank carry
+    horizon-agnostic metrics (discrimination, PSI, rating migration); they are
+    merged into every horizon for that ``(level, value, quarter)`` so the engine
+    finds them regardless of which horizon it queries.
+    """
+    go_live_quarter = config.PD_GO_LIVE_QUARTER_END
+
+    def _num(value):
+        return float(value) if pd.notna(value) else None
+
+    # Collect, per (level, value, quarter), the blank-horizon agnostic metrics
+    # and each specific horizon's metrics.
+    grouped: dict = {}
+    for _, row in cycle_df.iterrows():
         quarter = str(row["quarter"]).strip()
-        model = _normalize_model_name(row.get("model"))
-        segments = [s.strip() for s in str(row.get("segment", "")).split(",") if s.strip()]
+        level = str(row.get("level", "")).strip().lower()
+        value = str(row.get("model_or_segment", row.get("model", "") or row.get("segment", ""))).strip()
         horizon = str(row.get("horizon", "")).strip()
-        if not quarter or not model or not horizon or not segments:
+        if not quarter or not level or not value:
             continue
+        metrics = {col: _num(row.get(col)) for col in _PD_METRIC_COLUMNS if col in cycle_df.columns}
+        bucket = grouped.setdefault((level, value, quarter), {"shared": {}, "horizons": {}})
+        if horizon in ("", "nan", "all"):
+            bucket["shared"].update({k: v for k, v in metrics.items() if v is not None})
+        else:
+            bucket["horizons"][horizon] = metrics
 
-        predicted = row.get("predicted_default_rate")
-        observed_dr = row.get("observed_default_rate")
-        ead = row.get("ead")
-        n_segments = len(segments)
+    store: dict = {}
+    for (level, value, quarter), bucket in grouped.items():
+        shared = bucket["shared"]
+        horizons = bucket["horizons"] or {h: {} for h in _PD_HORIZONS}
+        for horizon, specific in horizons.items():
+            merged = {**shared, **{k: v for k, v in specific.items() if v is not None}}
+            merged.setdefault("go_live_quarter", go_live_quarter)
+            store[(level, value, quarter, horizon)] = merged
 
-        for segment in segments:
-            key = (quarter, model, segment)
-            if key not in obs_map:
-                obs_map[key] = {"quarter": quarter, "model": model, "segment": segment, "rating": "5", "horizons": {}}
-
-            if pd.notna(predicted) and pd.notna(observed_dr):
-                n = max(int(row.get("default_count_1y", 20) or 20), 2) if horizon == "1y" else 20
-                n_defaults = max(1, round(observed_dr * n))
-                n_non_defaults = max(1, n - n_defaults)
-                total = n_defaults + n_non_defaults
-                segment_ead = float(ead) / n_segments if pd.notna(ead) else None
-                facility_ead = segment_ead / total if segment_ead is not None else None
-
-                obs_map[key]["horizons"][horizon] = {
-                    "observed_dr": float(observed_dr),
-                    "predicted": float(predicted),
-                    "ead": facility_ead,
-                    "n_defaults": n_defaults,
-                    "n_non_defaults": n_non_defaults,
-                }
-
-    observations = []
-    for key, entry in obs_map.items():
-        for horizon_key, h_data in entry["horizons"].items():
-            for i in range(h_data["n_defaults"]):
-                obs = {"quarter": entry["quarter"], "model": entry["model"],
-                       "segment": entry["segment"], "rating": entry["rating"], "horizons": {}}
-                obs["horizons"][horizon_key] = {
-                    "observed": 1, "predicted": round(h_data["predicted"], 8),
-                    "ead": round(h_data["ead"], 2) if h_data["ead"] else None,
-                }
-                observations.append(obs)
-            for i in range(h_data["n_non_defaults"]):
-                obs = {"quarter": entry["quarter"], "model": entry["model"],
-                       "segment": entry["segment"], "rating": entry["rating"], "horizons": {}}
-                obs["horizons"][horizon_key] = {
-                    "observed": 0, "predicted": round(h_data["predicted"], 8),
-                    "ead": round(h_data["ead"], 2) if h_data["ead"] else None,
-                }
-                observations.append(obs)
-
-    return performance_horizons, observations, [], []
+    return store
 
 
 def load_pd_performance_data_from_aggregated() -> dict[str, Any]:
@@ -606,18 +735,49 @@ def load_pd_performance_data_from_aggregated() -> dict[str, Any]:
     latest_quarter = quarters[-1] if quarters else ""
     previous_quarter = quarters[-2] if len(quarters) > 1 else ""
 
-    model_names = sorted(agg_df["model"].dropna().map(_normalize_model_name).unique())
-    segment_values = sorted({
-        s.strip()
-        for raw in agg_df["segment"].dropna().unique()
-        for s in str(raw).split(",")
-        if s.strip()
+    # Models/segments are the entities under each ``level`` in the sheet. The
+    # "All Models" portfolio entity is the implicit default, not a pickable model.
+    is_model = agg_df["level"].astype(str).str.lower() == "model"
+    is_segment = agg_df["level"].astype(str).str.lower() == "segment"
+    data_model_names = sorted({
+        m for m in agg_df.loc[is_model, "model_or_segment"].dropna().map(_normalize_model_name).unique()
+        if m and m != "All Models"
     })
+    data_segment_values = sorted(agg_df.loc[is_segment, "model_or_segment"].dropna().astype(str).str.strip().unique())
+    model_names = data_model_names or ["PD Model A", "PD Model B"]
+    segment_values = data_segment_values or ["Cyclical", "Defensive", "O&M", "LoL", "IVB"]
 
     monitoring_thresholds = load_monitoring_thresholds()
-    performance_horizons, performance_observations, rating_values, rating_migration_observations = (
-        _build_observations_from_aggregated(agg_df)
-    )
+
+    # Build observations per reporting cycle
+    reporting_cycles = sorted(agg_df["reporting_cycle"].dropna().unique()) if "reporting_cycle" in agg_df.columns else []
+    observations_by_cycle = {}
+    for cycle in reporting_cycles:
+        cycle_df = agg_df[agg_df["reporting_cycle"] == cycle]
+        obs = _build_observations_from_aggregated(cycle_df)
+        cycle_quarters = sorted(cycle_df["quarter"].dropna().unique())
+        observations_by_cycle[cycle] = {
+            "performance_horizons": obs[0],
+            "performance_observations": obs[1],
+            "rating_values": obs[2],
+            "rating_migration_observations": obs[3],
+            "quarters": cycle_quarters,
+            "metrics_store": _build_metrics_store(cycle_df),
+        }
+
+    # Default to first available cycle for backwards compatibility
+    default_cycle = reporting_cycles[0] if reporting_cycles else None
+    if default_cycle and default_cycle in observations_by_cycle:
+        default_obs = observations_by_cycle[default_cycle]
+        performance_horizons = default_obs["performance_horizons"]
+        performance_observations = default_obs["performance_observations"]
+        rating_values = default_obs["rating_values"]
+        rating_migration_observations = default_obs["rating_migration_observations"]
+    else:
+        performance_horizons, performance_observations, rating_values, rating_migration_observations = (
+            _build_observations_from_aggregated(agg_df)
+        )
+
     mev_catalog, mev_mnemonic_map, mev_description_map = load_pd_mev_catalog()
 
     return {
@@ -635,10 +795,16 @@ def load_pd_performance_data_from_aggregated() -> dict[str, Any]:
         "performance_observations": performance_observations,
         "rating_values": rating_values,
         "rating_migration_observations": rating_migration_observations,
+        "observations_by_cycle": observations_by_cycle,
+        "reporting_cycles": reporting_cycles,
         "mev_catalog": mev_catalog,
         "mev_mnemonic_map": mev_mnemonic_map,
         "mev_description_map": mev_description_map,
-        "rank_ordering_facilities": load_pd_rank_ordering_facilities(),
+        "sensitivity_projections": load_pd_sensitivity_projections(),
+        "rank_ordering_facilities": {},
+        "lgd_observations_by_cycle": load_lgd_performance_metrics(),
+        "ead_observations_by_cycle": load_ead_performance_metrics(),
+        "loss_observations_by_cycle": load_loss_performance_metrics(),
     }
 
 
@@ -674,5 +840,9 @@ def load_pd_performance_data() -> dict[str, Any]:
         "mev_catalog": mev_catalog,
         "mev_mnemonic_map": mev_mnemonic_map,
         "mev_description_map": mev_description_map,
-        "rank_ordering_facilities": load_pd_rank_ordering_facilities(),
+        "sensitivity_projections": load_pd_sensitivity_projections(),
+        "rank_ordering_facilities": {},
+        "lgd_observations_by_cycle": load_lgd_performance_metrics(),
+        "ead_observations_by_cycle": load_ead_performance_metrics(),
+        "loss_observations_by_cycle": load_loss_performance_metrics(),
     }
