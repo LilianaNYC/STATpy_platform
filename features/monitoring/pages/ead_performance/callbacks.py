@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dash import ALL, Input, Output, State, ctx, no_update
 
+from .. import filter_shell
 from . import page as layout
 from .....components import filters
 from .....data.analytics.ead import (
@@ -32,6 +33,29 @@ def register_callbacks(app) -> None:
         return
 
     data = PD_PERFORMANCE_DATA
+
+    for value_id, toggle_id, menu_id, filter_key in (
+        (layout.REPORTING_CYCLE_ID, layout.REPORTING_CYCLE_TOGGLE_ID, layout.REPORTING_CYCLE_MENU_ID, layout.REPORTING_CYCLE_FILTER_KEY),
+        (layout.MONITORING_POINT_DROPDOWN_ID, layout.MONITORING_POINT_TOGGLE_ID, layout.MONITORING_POINT_MENU_ID, layout.MONITORING_POINT_FILTER_KEY),
+        (layout.SEGMENT_DROPDOWN_ID, layout.SEGMENT_TOGGLE_ID, layout.SEGMENT_MENU_ID, layout.SEGMENT_FILTER_KEY),
+        (layout.MODEL_DROPDOWN_ID, layout.MODEL_TOGGLE_ID, layout.MODEL_MENU_ID, layout.MODEL_FILTER_KEY),
+    ):
+        filter_shell.register_single_select_callbacks(
+            app,
+            value_id=value_id,
+            toggle_id=toggle_id,
+            menu_id=menu_id,
+            filter_key=filter_key,
+        )
+
+    def _install_ead_store(reporting_cycle):
+        from .....data.analytics.ead import set_ead_metrics
+        cycle_data = (data.get("ead_observations_by_cycle") or {}).get(reporting_cycle)
+        if cycle_data:
+            set_ead_metrics(cycle_data.get("metrics_store"), cycle_data.get("quarters"))
+        else:
+            set_ead_metrics(None, [])
+        return cycle_data
 
     # -----------------------------------------------------------------
     # Range-window store (calibration / discrimination RAG trend ranges)
@@ -121,17 +145,12 @@ def register_callbacks(app) -> None:
     @app.callback(
         Output(layout.MONITORING_POINT_DROPDOWN_ID, "options"),
         Output(layout.MONITORING_POINT_DROPDOWN_ID, "value"),
-        Input(layout.MODEL_DROPDOWN_ID, "value"),
-        Input(layout.SEGMENT_DROPDOWN_ID, "value"),
+        Input(layout.REPORTING_CYCLE_ID, "value"),
         Input(layout.MONITORING_POINT_DROPDOWN_ID, "value"),
     )
-    def sync_ead_monitoring_point_dropdown(selected_model, selected_segment, selected_monitoring_point):
-        segment = resolve_ead_segment(data, selected_model, selected_segment)
-        options = get_ead_monitoring_point_options(data, selected_model, segment)
-        if selected_monitoring_point in options:
-            value = selected_monitoring_point
-        else:
-            value = "Latest" if "Latest" in options else (options[0] if options else "")
+    def sync_ead_monitoring_point_dropdown(reporting_cycle, selected_monitoring_point):
+        options = filters.REPORTING_CYCLE_QUARTERS.get(reporting_cycle, [])
+        value = selected_monitoring_point if selected_monitoring_point in options else (options[0] if options else "")
         return _dropdown_options(options), value
 
     # -----------------------------------------------------------------
@@ -139,12 +158,14 @@ def register_callbacks(app) -> None:
     # -----------------------------------------------------------------
     @app.callback(
         Output(layout.CONTENT_ID, "children"),
+        Input(layout.REPORTING_CYCLE_ID, "value"),
         Input(layout.MODEL_DROPDOWN_ID, "value"),
         Input(layout.SEGMENT_DROPDOWN_ID, "value"),
         Input(layout.MONITORING_POINT_DROPDOWN_ID, "value"),
         Input(layout.RANGE_STORE_ID, "data"),
     )
-    def update_ead_content(selected_model, selected_segment, selected_monitoring_point, range_store):
+    def update_ead_content(reporting_cycle, selected_model, selected_segment, selected_monitoring_point, range_store):
+        _install_ead_store(reporting_cycle)
         return layout.render_ead_performance_content(
             data,
             selected_model,

@@ -19,6 +19,8 @@ components that hold this page's filter/range state.
 
 from __future__ import annotations
 
+import math
+
 from dash import dcc, html
 
 from .....data.analytics import constants as config
@@ -32,7 +34,11 @@ from .....components.charts import (
     build_pd_go_live_accuracy_trend_figure,
     build_pd_mev_range_figure,
     build_pd_notching_trend_figure,
-    build_pd_rank_ordering_figure,
+    build_pd_psi_trend_figure,
+    build_pd_transition_combined_figure,
+    build_pd_scenario_projection_figure,
+    build_pd_scenario_rank_figure,
+    build_pd_sensitivity_combined_figure,
 )
 from .....components.filters import (
     build_chart_header,
@@ -57,15 +63,10 @@ from .....data.analytics.mev_range import (
     get_pd_mev_chart_id,
     get_pd_mev_model_development_dates,
     get_pd_mev_selected_models,
+    get_pd_mev_scenario_quarter,
     get_pd_mev_visible_periods,
 )
 from .....data.analytics.rank_ordering import (
-    _pd_quarter_sort_key,
-    build_pd_rank_ordering_aggregate,
-    build_pd_rank_ordering_period_label_map,
-    format_pd_date_summary,
-    format_pd_short_date,
-    get_pd_rank_ordering_selected_facilities,
     iso_date_to_pd_quarter,
 )
 from .....data.analytics.calculations import (
@@ -84,6 +85,8 @@ from .....data.analytics.calculations import (
     calculate_pd_ead_summaries,
     calculate_pd_metric_rag,
     calculate_pd_notching_components,
+    precomputed_notching_components,
+    precomputed_row,
     calculate_pd_overview_performance_rag,
     calculate_pd_rag_metrics,
     calculate_pd_rag_metrics_for_horizon,
@@ -96,8 +99,10 @@ from .....data.analytics.calculations import (
     get_pd_performance_context_for_horizon,
     get_pd_range_periods,
     get_pd_thresholds,
+    get_pd_threshold_metric_name,
     get_previous_pd_quarter,
     get_worst_pd_rag,
+    pd_tone_class,
 )
 
 # ---------------------------------------------------------------------------
@@ -112,6 +117,8 @@ TREND_HORIZON_STORE_ID = "pd-trend-horizon-store"
 MEV_FILTER_STORE_ID = "pd-mev-filter-store"
 APPLY_FILTERS_ID = "pd-apply-filters"
 APPLIED_FILTERS_STORE_ID = "pd-applied-filters-store"
+SCENARIO_RANKING_STORE_ID = "pd-scenario-ranking-store"
+SCENARIO_RANKING_FILTER_ID = "pd-scenario-ranking-filter"
 
 # Maps each per-panel trend-horizon control to the shared store group it
 # reads/writes. Ports the JS PD_CALIBRATION_TREND_HORIZON /
@@ -167,6 +174,966 @@ def _build_placeholder_card(title: str, message: str, tags: list[str] | None = N
 
 
 # ---------------------------------------------------------------------------
+# PSI stability section helpers
+# ---------------------------------------------------------------------------
+
+
+def _safe_text(value, fallback: str = "") -> str:
+    if value is None:
+        return fallback
+    if isinstance(value, float) and math.isnan(value):
+        return fallback
+    text = str(value).strip()
+    return text or fallback
+
+
+def _psi_rule_label(rule: str | None) -> str:
+    rule_text = _safe_text(rule)
+    if not rule_text:
+        return "Not configured"
+    return rule_text.replace("value", "PSI")
+
+
+def _build_psi_threshold_chip(label: str, rule: str | None, tone: str, active_tone: str) -> html.Div:
+    return html.Div(
+        className=f"pd-psi-threshold-mini pd-psi-threshold-mini-{tone}{' is-active' if tone == active_tone else ''}",
+        children=[
+            html.Span(label),
+            html.Strong(_psi_rule_label(rule)),
+        ],
+    )
+
+
+def _build_psi_stability_card(
+    threshold: dict,
+    current_rag: str,
+    monitoring_point: str,
+) -> html.Article:
+    active_tone = pd_tone_class(current_rag)
+    return html.Article(
+        className=f"pd-test-card pd-test-{active_tone} pd-psi-stability-card",
+        children=[
+            html.Div(
+                className="pd-test-card-heading",
+                children=[
+                    html.Div([
+                        html.Span("Stability test"),
+                        html.Div([html.H4("PSI Stability RAG")], className="pd-card-title-row"),
+                    ]),
+                ],
+            ),
+            html.Div(current_rag, className="pd-test-value"),
+            html.Div(f"Monitoring point: {monitoring_point}", className="pd-test-meta"),
+            html.Div(
+                className="pd-rag-card-method",
+                children=[
+                    html.Strong("Methodology: "),
+                    "Population Stability Index on the IRB CRR key-driver distribution, comparing the current "
+                    "performing-book population against the development reference.",
+                ],
+            ),
+            html.Div(
+                className="pd-psi-threshold-mini-grid",
+                children=[
+                    _build_psi_threshold_chip("Green", threshold.get("green_rule"), "green", active_tone),
+                    _build_psi_threshold_chip("Amber", threshold.get("amber_rule"), "amber", active_tone),
+                    _build_psi_threshold_chip("Red", threshold.get("red_rule"), "red", active_tone),
+                ],
+            ),
+            html.Div(
+                _safe_text(
+                    threshold.get("notes"),
+                    "Lower PSI values indicate a more stable population.",
+                ),
+                className="pd-test-footnote",
+            ),
+        ],
+    )
+
+
+def _build_psi_stability_summary(
+    performance_trend: list[dict],
+    thresholds: list[dict],
+    monitoring_point: str,
+) -> html.Div:
+    metric_name = get_pd_threshold_metric_name("Population Stability Index")
+    threshold = next((row for row in thresholds if row.get("metric") == metric_name), {})
+    trend = [row for row in performance_trend if row.get("quarter") and row.get("quarter") <= monitoring_point]
+    current_row = trend[-1] if trend else {}
+    previous_row = trend[-2] if len(trend) > 1 else {}
+    current_value = current_row.get("population_stability_index")
+    previous_value = previous_row.get("population_stability_index")
+    current_rag = calculate_pd_metric_rag(thresholds, "Population Stability Index", current_value)
+    current_values = {"Population Stability Index": current_value}
+    previous_values = {"Population Stability Index": previous_value}
+    psi_context = {
+        "monitoring_point": monitoring_point,
+        "snapshot_quarter": current_row.get("quarter") or monitoring_point,
+        "previous_quarter": previous_row.get("quarter") or "",
+    }
+
+    return html.Div(
+        className="pd-test-grid pd-discrimination-test-grid pd-psi-test-grid",
+        children=[
+            _build_psi_stability_card(threshold, current_rag, monitoring_point),
+            build_pd_test_card(
+                "Population Stability Index", current_values, previous_values, thresholds, psi_context,
+                options={
+                    "card_title": "Population Stability Index",
+                    "test_label": "PSI based on IRB CRR",
+                    "format": "ratio",
+                    "extra_meta_rows": [{"label": "Assessment", "value": "Current vs reference snapshot"}],
+                    "tooltip": "Lower PSI indicates a more stable performing-book distribution.",
+                },
+            ),
+        ],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Scenario ranking and sensitivity analysis helpers
+# ---------------------------------------------------------------------------
+
+
+_PD_SCENARIO_ORDER = {"baseline": 0, "other": 1, "intsevere": 2, "baseline_2std_shock": 3}
+
+
+def _format_pd_scenario_label(value: str | None) -> str:
+    scenario = str(value or "").strip()
+    return scenario or "Scenario"
+
+
+def _resolve_pd_sensitivity_entity(ctx: PdFilterContext) -> tuple[str, str]:
+    if ctx.segment and ctx.segment != "all":
+        return "segment", ctx.segment
+    models = sorted(model for model in ctx.models if model)
+    if len(models) == 1:
+        return "model", models[0]
+    return "model", "All Models"
+
+
+def _filter_pd_projection_rows(rows: list[dict], reporting_cycle: str, ctx: PdFilterContext) -> list[dict]:
+    level, entity = _resolve_pd_sensitivity_entity(ctx)
+    return [
+        row for row in rows or []
+        if row.get("reporting_cycle") == reporting_cycle
+        and row.get("level") == level
+        and row.get("model_or_segment") == entity
+        and row.get("scenario_variant")
+    ]
+
+
+def _filter_pd_sensitivity_rows(rows: list[dict], reporting_cycle: str, ctx: PdFilterContext) -> list[dict]:
+    return [
+        row for row in _filter_pd_projection_rows(rows, reporting_cycle, ctx)
+        if row.get("scenario_variant") in {"baseline", "baseline_2std_shock"}
+    ]
+
+
+def _available_pd_scenario_ranking_values(rows: list[dict]) -> list[str]:
+    return sorted(
+        {str(row.get("scenario_variant")) for row in rows if row.get("scenario_variant")},
+        key=lambda scenario: (_PD_SCENARIO_ORDER.get(str(scenario).lower(), 99), str(scenario)),
+    )
+
+
+def _resolve_pd_scenario_ranking_selection(rows: list[dict], store: dict | None) -> list[str]:
+    available = _available_pd_scenario_ranking_values(rows)
+    if not available:
+        return []
+    selected = (store or {}).get("scenarios")
+    if selected is None:
+        return available
+    return [scenario for scenario in selected if scenario in available]
+
+
+def _build_pd_scenario_ranking_filter(rows: list[dict], selected_scenarios: list[str]) -> html.Div:
+    available = _available_pd_scenario_ranking_values(rows)
+    options = [
+        {"label": _format_pd_scenario_label(scenario), "value": scenario}
+        for scenario in available
+    ]
+    return html.Div(
+        className="pd-scenario-ranking-filter-row",
+        children=[
+            html.Div(
+                className="pd-scenario-ranking-filter-copy",
+                children=[
+                    html.Div("Scenario selection", className="pd-scenario-ranking-filter-title"),
+                    html.P(
+                        "Choose which scenario paths should be included in the ranking statistics and charts.",
+                        className="pd-section-subtitle",
+                    ),
+                ],
+            ),
+            dcc.Checklist(
+                id=SCENARIO_RANKING_FILTER_ID,
+                options=options,
+                value=selected_scenarios,
+                className="pd-scenario-ranking-checklist",
+                inputClassName="pd-scenario-ranking-check-input",
+                labelClassName="pd-scenario-ranking-check-label",
+            ),
+        ],
+    )
+
+
+def _scenario_ranking_summary(rows: list[dict]) -> dict:
+    scenarios = sorted(
+        {str(row.get("scenario_variant")) for row in rows if row.get("scenario_variant")},
+        key=lambda scenario: (_PD_SCENARIO_ORDER.get(str(scenario).lower(), 99), str(scenario)),
+    )
+    quarters = sorted({row.get("quarter") for row in rows if row.get("quarter") is not None})
+    rows_by_quarter: dict[int, list[dict]] = {}
+    rows_by_scenario: dict[str, list[dict]] = {}
+    for row in rows:
+        if row.get("quarter") is not None:
+            rows_by_quarter.setdefault(int(row["quarter"]), []).append(row)
+        rows_by_scenario.setdefault(str(row.get("scenario_variant")), []).append(row)
+
+    inversion_count = 0
+    spreads = []
+    for quarter in quarters:
+        quarter_rows = rows_by_quarter.get(int(quarter), [])
+        values_by_scenario = {
+            str(row.get("scenario_variant")): row.get("projected_pd")
+            for row in quarter_rows
+            if row.get("projected_pd") is not None
+        }
+        ordered_values = [values_by_scenario.get(scenario) for scenario in scenarios]
+        ordered_values = [value for value in ordered_values if value is not None]
+        if len(ordered_values) >= 2 and any(ordered_values[index] > ordered_values[index + 1] for index in range(len(ordered_values) - 1)):
+            inversion_count += 1
+        if values_by_scenario:
+            values = list(values_by_scenario.values())
+            spreads.append(max(values) - min(values))
+
+    average_by_scenario = {}
+    for scenario, scenario_rows in rows_by_scenario.items():
+        values = [row.get("projected_pd") for row in scenario_rows if row.get("projected_pd") is not None]
+        if values:
+            average_by_scenario[scenario] = sum(values) / len(values)
+    highest_scenario = max(average_by_scenario, key=average_by_scenario.get) if average_by_scenario else None
+    status = "Ranking maintained" if inversion_count == 0 and scenarios else "Rank inversion"
+
+    return {
+        "scenario_count": len(scenarios),
+        "quarter_count": len(quarters),
+        "inversion_count": inversion_count,
+        "max_spread": max(spreads) if spreads else None,
+        "highest_scenario": _format_pd_scenario_label(highest_scenario),
+        "status": status,
+        "tone": "green" if status == "Ranking maintained" else "red",
+    }
+
+
+def _format_sensitivity_pd(value: float | None) -> str:
+    if value is None:
+        return "—"
+    return f"{value:.2%}"
+
+
+def _build_pd_transition_delta_trend(data: dict, reporting_cycle: str, ctx: PdFilterContext) -> list[dict]:
+    """Scenario-independent MM_Pm - MM_P0 delta per projection quarter.
+
+    MM_P0 is a constant anchor and MM_Pm migrates over the horizon, so the
+    margins are read once per projection quarter (they don't vary by scenario).
+    """
+    rows = _filter_pd_projection_rows(data.get("sensitivity_projections") or [], reporting_cycle, ctx)
+    by_offset: dict[int, dict] = {}
+    for row in rows:
+        offset = row.get("quarter")
+        mm_p0 = row.get("mm_p0")
+        mm_pm = row.get("mm_pm")
+        if offset is None or mm_p0 is None or mm_pm is None or int(offset) in by_offset:
+            continue
+        by_offset[int(offset)] = {
+            "offset": int(offset),
+            "label": f"Q{int(offset)}",
+            "period": iso_date_to_pd_quarter(row.get("projection_quarter")),
+            "mm_p0": mm_p0,
+            "mm_pm": mm_pm,
+            "delta": mm_pm - mm_p0,
+        }
+    return [by_offset[key] for key in sorted(by_offset)]
+
+
+def _rag_tone(rag: str) -> str:
+    return {"Green": "green", "Amber": "amber", "Red": "red"}.get(rag, "neutral")
+
+
+def _build_pd_transition_matrix_section(
+    data: dict,
+    ctx: PdFilterContext,
+    reporting_cycle: str,
+    theme: str,
+    range_store: dict | None = None,
+) -> html.Section:
+    range_store = range_store or {}
+    trend = _build_pd_transition_delta_trend(data, reporting_cycle, ctx)
+    heading = build_pd_section_heading(
+        "2.2 Transition Matrix", "Transition Matrix",
+        "Migration of the through-the-horizon PD (MM_Pm) away from its anchor (MM_P0). The delta widens as the "
+        "transition structure drifts from the reference, independent of macro scenario.",
+        "N/A", options={"show_rag": False},
+    )
+
+    if not trend:
+        return html.Section(
+            id="pd-transition-matrix-distance",
+            className="pd-content-section pd-placeholder-section",
+            children=[
+                heading,
+                _build_placeholder_card(
+                    "Transition Matrix",
+                    "No MM_P0 / MM_Pm margin data is available for the selected reporting cycle and population.",
+                    ["Transition view", "Distance metric", "Threshold guidance"],
+                ),
+            ],
+        )
+
+    from .....data.analytics.calculations import calculate_pd_metric_rag, get_pd_thresholds
+
+    thresholds = get_pd_thresholds(data.get("monitoring_thresholds") or {})
+    _rank = {"Green": 0, "Amber": 1, "Red": 2, "N/A": -1}
+    peak = max(trend, key=lambda row: row["delta"])
+    # Overall status = the worst RAG seen anywhere across the horizon.
+    overall_rag = max(
+        (calculate_pd_metric_rag(thresholds, "Transition Matrix", row["delta"]) for row in trend),
+        key=lambda rag: _rank.get(rag, -1),
+    )
+    breaches = sum(
+        1 for row in trend
+        if calculate_pd_metric_rag(thresholds, "Transition Matrix", row["delta"]) in ("Amber", "Red")
+    )
+
+    return html.Section(
+        id="pd-transition-matrix-distance",
+        className="pd-content-section pd-live-section",
+        children=[
+            heading,
+            html.Div(
+                className="pd-test-grid",
+                style={"gridTemplateColumns": "repeat(2, minmax(0, 1fr))"},
+                children=[
+                    _build_rag_status_card(
+                        "Migration test",
+                        "Transition Matrix RAG",
+                        overall_rag,
+                        ctx.monitoring_point,
+                        "Worst-case migration gap (MM_Pm − MM_P0) across the projection horizon, scored against the "
+                        "Transition Matrix distance threshold.",
+                        [("Green", "Δ < 15%", "green"), ("Amber", "15–30%", "amber"), ("Red", "Δ > 30%", "red")],
+                        footnote="Lower delta means the migrated PD stays closer to the reference anchor.",
+                    ),
+                    html.Article(
+                        className=f"pd-test-card pd-test-{'red' if overall_rag == 'Red' else ('amber' if breaches else 'green')}",
+                        children=[
+                            html.Div(
+                                className="pd-test-card-heading",
+                                children=[html.Div([html.Div([html.H4("Threshold Breaches")], className="pd-card-title-row")])],
+                            ),
+                            html.Div(f"{breaches} / {len(trend)}", className="pd-test-value"),
+                            html.Div("quarters breach the Transition Matrix threshold", className="pd-test-meta"),
+                            html.Div(
+                                className="pd-test-card-heading",
+                                style={"marginTop": "14px"},
+                                children=[html.Div([html.Div([html.H4("Peak migration delta")], className="pd-card-title-row")])],
+                            ),
+                            html.Div(f"{peak['delta']:.2%}", className="pd-test-value"),
+                            html.Div(f"Largest gap, reached at {peak['period']}.", className="pd-test-meta"),
+                        ],
+                    ),
+                ],
+            ),
+            html.Div(
+                id="pd-transition-combined-panel",
+                className="section-card pd-default-rate-trend-section",
+                children=[
+                    build_chart_header(
+                        "Transition Margins & Delta",
+                        "MM_P0 anchor vs MM_Pm migrated PD (left) and their RAG-rated delta (right) "
+                        "across the projection horizon.",
+                    ),
+                    dcc.Graph(
+                        id="pd-transition-combined-chart",
+                        figure=build_pd_transition_combined_figure(
+                            trend,
+                            range_value=None,
+                            monitoring_thresholds=data.get("monitoring_thresholds"),
+                            theme=theme,
+                        ),
+                        config=_GRAPH_CONFIG,
+                        className="pd-default-rate-trend-chart",
+                    ),
+                ],
+            ),
+        ],
+    )
+
+
+def _build_pd_scenario_ranking_section(
+    data: dict,
+    ctx: PdFilterContext,
+    reporting_cycle: str,
+    theme: str,
+    scenario_ranking_store: dict | None = None,
+) -> html.Section:
+    available_rows = _filter_pd_projection_rows(data.get("sensitivity_projections") or [], reporting_cycle, ctx)
+    selected_scenarios = _resolve_pd_scenario_ranking_selection(available_rows, scenario_ranking_store)
+    rows = [
+        row for row in available_rows
+        if row.get("scenario_variant") in selected_scenarios
+    ]
+    level, entity = _resolve_pd_sensitivity_entity(ctx)
+    summary = _scenario_ranking_summary(rows)
+    filter_control = _build_pd_scenario_ranking_filter(available_rows, selected_scenarios)
+
+    if rows:
+        body = [
+            filter_control,
+            html.Div(
+                className="pd-test-grid",
+                style={"gridTemplateColumns": "repeat(2, minmax(0, 1fr))"},
+                children=[
+                    _build_rag_status_card(
+                        "Ranking test",
+                        "Scenario Ranking RAG",
+                        summary["status"],
+                        ctx.monitoring_point,
+                        "Checks whether projected PD stays ordered by scenario severity in every projection quarter; "
+                        "any quarter where a milder scenario outranks a more severe one is an inversion.",
+                        [("Green", "0 inversions", "green"), ("Red", "≥ 1 inversion", "red")],
+                        footnote=f"{summary['inversion_count']} inversion(s) across {summary['quarter_count']} quarters.",
+                        tone=summary["tone"],
+                    ),
+                    html.Article(
+                        className="pd-test-card pd-test-neutral",
+                        children=[
+                            html.Div(
+                                className="pd-test-card-heading",
+                                children=[html.Div([html.Div([html.H4("Maximum PD spread")], className="pd-card-title-row")])],
+                            ),
+                            html.Div(_format_sensitivity_pd(summary["max_spread"]), className="pd-test-value"),
+                            html.Div("Largest high-minus-low scenario gap across projection quarters.", className="pd-test-meta"),
+                            html.Div(
+                                className="pd-test-card-heading",
+                                style={"marginTop": "14px"},
+                                children=[html.Div([html.Div([html.H4("Highest average PD")], className="pd-card-title-row")])],
+                            ),
+                            html.Div(summary["highest_scenario"], className="pd-test-value"),
+                            html.Div(f"Across {summary['scenario_count']} selected scenario paths.", className="pd-test-meta"),
+                        ],
+                    ),
+                ],
+            ),
+            html.Div(
+                className="pd-sensitivity-chart-grid",
+                children=[
+                    html.Div(
+                        className="section-card pd-default-rate-trend-section pd-sensitivity-chart-card",
+                        children=[
+                            build_chart_header(
+                                "Projected PD by Scenario",
+                                f"{entity} ({level}) projected PD paths for selected scenarios.",
+                            ),
+                            dcc.Graph(
+                                id="pd-scenario-projection-chart",
+                                figure=build_pd_scenario_projection_figure(rows, theme=theme),
+                                config=_GRAPH_CONFIG,
+                                className="pd-default-rate-trend-chart pd-default-rate-trend-chart-medium",
+                            ),
+                        ],
+                    ),
+                    html.Div(
+                        className="section-card pd-default-rate-trend-section pd-sensitivity-chart-card",
+                        children=[
+                            build_chart_header(
+                                "Scenario Rank Matrix",
+                                "Rank 1 identifies the scenario with the highest projected PD in each projection quarter.",
+                            ),
+                            dcc.Graph(
+                                id="pd-scenario-rank-chart",
+                                figure=build_pd_scenario_rank_figure(rows, theme=theme),
+                                config=_GRAPH_CONFIG,
+                                className="pd-default-rate-trend-chart pd-default-rate-trend-chart-medium",
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+        ]
+    else:
+        body = [
+            filter_control,
+            html.Div(
+                className="section-card pd-mev-empty-state",
+                children=[
+                    html.Div("No scenario projection data matches the current scenario selection", className="pd-mev-chart-title"),
+                    html.P(
+                        "Select at least one available scenario, or choose a reporting cycle, segment, or specific model that exists in the PD_Sensitivity_Projections workbook sheet.",
+                        className="pd-section-subtitle",
+                    ),
+                ],
+            ),
+        ]
+
+    return html.Section(
+        id="pd-scenario-ranking",
+        className="pd-content-section pd-live-section",
+        children=[
+            build_pd_section_heading(
+                "2.4 Scenario Ranking",
+                "Scenario Ranking",
+                "Compares projected PD paths across selected scenarios and checks whether higher-stress scenarios "
+                "consistently rank above lower-stress paths. Any rank inversion suggests the scenario response may "
+                "need business review. Use the scenario selector to include or exclude available paths.",
+                "N/A",
+                options={"show_rag": False},
+            ),
+            *body,
+        ],
+    )
+
+
+def _get_pd_sensitivity_threshold(monitoring_thresholds: dict) -> dict:
+    rows = (monitoring_thresholds or {}).get("scenario_test_thresholds") or []
+    threshold = next(
+        (
+            row for row in rows
+            if str(row.get("test", "")).strip().lower() == "sensitivity analysis"
+            and str(row.get("model_type", "")).strip().upper() == "PD"
+        ),
+        {},
+    )
+    value = threshold.get("threshold")
+    try:
+        threshold_value = float(value)
+    except (TypeError, ValueError):
+        threshold_value = None
+    return {**threshold, "threshold": threshold_value}
+
+
+def _sensitivity_impact_summary(rows: list[dict], threshold: float | None) -> dict:
+    baseline_by_offset = {
+        row.get("quarter"): row.get("projected_pd")
+        for row in rows
+        if row.get("scenario_variant") == "baseline"
+    }
+    impacts = []
+    for row in rows:
+        if row.get("scenario_variant") != "baseline_2std_shock":
+            continue
+        baseline = baseline_by_offset.get(row.get("quarter"))
+        shocked = row.get("projected_pd")
+        if baseline and shocked is not None and baseline > 0:
+            impacts.append(abs(shocked - baseline) / baseline)
+
+    if not impacts:
+        return {
+            "average_impact": None,
+            "max_impact": None,
+            "within_count": 0,
+            "total_count": 0,
+            "status": "N/A",
+            "tone": "neutral",
+        }
+
+    within_count = sum(1 for impact in impacts if threshold is not None and impact <= threshold)
+    if threshold is None:
+        status = "Threshold unavailable"
+        tone = "neutral"
+    elif within_count == len(impacts):
+        status = "Within threshold"
+        tone = "green"
+    else:
+        status = "Threshold breach"
+        tone = "red"
+    return {
+        "average_impact": sum(impacts) / len(impacts),
+        "max_impact": max(impacts),
+        "within_count": within_count,
+        "total_count": len(impacts),
+        "status": status,
+        "tone": tone,
+    }
+
+
+def _format_sensitivity_percent(value: float | None) -> str:
+    if value is None:
+        return "—"
+    return f"{value:.1%}"
+
+
+def _build_rag_status_card(
+    kicker: str,
+    title: str,
+    rag: str,
+    monitoring_point: str,
+    methodology,
+    threshold_chips: list[tuple[str, str, str]],
+    footnote: str | None = None,
+    tone: str | None = None,
+) -> html.Article:
+    """RAG status card with monitoring point, methodology, and threshold chips.
+
+    ``threshold_chips`` is a list of ``(label, rule_text, tone)`` tuples
+    (tone in {"green", "amber", "red"}). ``tone`` overrides the card tone when
+    the ``rag`` value is not a standard Green/Amber/Red label.
+    """
+    active_tone = tone or pd_tone_class(rag)
+    children = [
+        html.Div(
+            className="pd-test-card-heading",
+            children=[html.Div([
+                html.Span(kicker),
+                html.Div([html.H4(title)], className="pd-card-title-row"),
+            ])],
+        ),
+        html.Div(rag, className="pd-test-value"),
+        html.Div(f"Monitoring point: {monitoring_point}", className="pd-test-meta"),
+        html.Div(
+            className="pd-rag-card-method",
+            children=[html.Strong("Methodology: "), *(methodology if isinstance(methodology, list) else [methodology])],
+        ),
+        html.Div(
+            className="pd-psi-threshold-mini-grid",
+            children=[
+                _build_psi_threshold_chip(label, rule, tone, active_tone)
+                for label, rule, tone in threshold_chips
+            ],
+        ),
+    ]
+    if footnote:
+        children.append(html.Div(footnote, className="pd-test-footnote"))
+    return html.Article(className=f"pd-test-card pd-test-{active_tone}", children=children)
+
+
+def _build_pd_sensitivity_section(data: dict, ctx: PdFilterContext, reporting_cycle: str, theme: str, range_store: dict | None = None) -> html.Section:
+    range_store = range_store or {}
+    rows = _filter_pd_sensitivity_rows(data.get("sensitivity_projections") or [], reporting_cycle, ctx)
+    level, entity = _resolve_pd_sensitivity_entity(ctx)
+    threshold_row = _get_pd_sensitivity_threshold(data.get("monitoring_thresholds") or {})
+    threshold_value = threshold_row.get("threshold")
+    impact_summary = _sensitivity_impact_summary(rows, threshold_value)
+    threshold_label = _format_sensitivity_percent(threshold_value)
+
+    if rows:
+        breaches = impact_summary["total_count"] - impact_summary["within_count"]
+        body = [
+            html.Div(
+                className="pd-test-grid",
+                style={"gridTemplateColumns": "repeat(2, minmax(0, 1fr))"},
+                children=[
+                    _build_rag_status_card(
+                        "Sensitivity test",
+                        "Scenario Test RAG",
+                        impact_summary["status"],
+                        ctx.monitoring_point,
+                        "Per quarter, abs(shocked − baseline) / baseline measures how reactive projected PD is to a "
+                        "2SD adverse MEV shock; a breach in any quarter turns the test Red.",
+                        [("Green", f"≤ {threshold_label}", "green"), ("Red", f"> {threshold_label}", "red")],
+                        footnote="Lower relative impact means projected PD is less reactive to the macro shock.",
+                        tone=impact_summary["tone"],
+                    ),
+                    html.Article(
+                        className=f"pd-test-card pd-test-{'red' if breaches else 'green'}",
+                        children=[
+                            html.Div(
+                                className="pd-test-card-heading",
+                                children=[html.Div([html.Div([html.H4("Threshold Breaches")], className="pd-card-title-row")])],
+                            ),
+                            html.Div(f"{breaches} / {impact_summary['total_count']}", className="pd-test-value"),
+                            html.Div(f"quarters above the {threshold_label} scenario-test threshold", className="pd-test-meta"),
+                            html.Div(
+                                className="pd-test-card-heading",
+                                style={"marginTop": "14px"},
+                                children=[html.Div([html.Div([html.H4("Peak Relative Impact")], className="pd-card-title-row")])],
+                            ),
+                            html.Div(_format_sensitivity_percent(impact_summary["max_impact"]), className="pd-test-value"),
+                            html.Div("Largest abs(shocked − baseline) / baseline across the horizon.", className="pd-test-meta"),
+                        ],
+                    ),
+                ],
+            ),
+            html.Div(
+                id="pd-sensitivity-combined-panel",
+                className="section-card pd-default-rate-trend-section",
+                children=[
+                    build_chart_header(
+                        "Projected PD Sensitivity & Relative Shock Impact",
+                        f"{entity} ({level}): baseline vs 2SD-shock projected PD (left) and the relative shock "
+                        "impact by quarter (right), RAG-rated against the scenario-test threshold.",
+                    ),
+                    dcc.Graph(
+                        id="pd-sensitivity-combined-chart",
+                        figure=build_pd_sensitivity_combined_figure(
+                            rows, threshold_value,
+                            range_value=None,
+                            theme=theme,
+                        ),
+                        config=_GRAPH_CONFIG,
+                        className="pd-default-rate-trend-chart",
+                    ),
+                ],
+            ),
+        ]
+    else:
+        body = [
+            html.Div(
+                className="section-card pd-mev-empty-state",
+                children=[
+                    html.Div("No sensitivity projection data matches the current filters", className="pd-mev-chart-title"),
+                    html.P(
+                        "Choose a reporting cycle, segment, or specific model that exists in the PD_Sensitivity_Projections workbook sheet.",
+                        className="pd-section-subtitle",
+                    ),
+                ],
+            ),
+        ]
+
+    return html.Section(
+        id="pd-sensitivity-analysis",
+        className="pd-content-section pd-live-section",
+        children=[
+            build_pd_section_heading(
+                "2.5 Sensitivity Analysis",
+                "Sensitivity Analysis",
+                "Compares baseline projected PD values against a simultaneous 2 standard deviation shock applied to transformed MEVs.",
+                "N/A",
+                options={"show_rag": False},
+            ),
+            *body,
+        ],
+    )
+
+
+# ---------------------------------------------------------------------------
+# 2.1 Post Subjective Review Analysis Overview (review scorecard)
+# ---------------------------------------------------------------------------
+
+_RAG_RANK = {"N/A": -1, "Green": 0, "Amber": 1, "Red": 2}
+_RAG_HEX = {"green": "#16a34a", "amber": "#d97706", "red": "#dc2626", "neutral": "#94a3b8"}
+
+
+def _worst_rag(rags: list[str]) -> str:
+    rags = [r for r in rags if r]
+    return max(rags, key=lambda r: _RAG_RANK.get(r, -1)) if rags else "N/A"
+
+
+def _pd_post_review_summaries(
+    data: dict,
+    ctx: PdFilterContext,
+    reporting_cycle: str,
+    scenario: str,
+    observations,
+    rating_observations,
+    cq: str,
+    crr_scale,
+) -> list[dict]:
+    """Headline status + key metric + takeaway for each Chapter 2 test."""
+    from .....data.analytics.calculations import (
+        build_pd_performance_trend_for_horizon,
+        calculate_pd_metric_rag,
+        get_pd_thresholds,
+    )
+
+    monitoring_thresholds = data.get("monitoring_thresholds") or {}
+    thresholds = get_pd_thresholds(monitoring_thresholds)
+    projections = data.get("sensitivity_projections") or []
+    summaries: list[dict] = []
+
+    # 2.2 Transition Matrix -------------------------------------------------
+    trend = _build_pd_transition_delta_trend(data, reporting_cycle, ctx)
+    if trend:
+        rags = [calculate_pd_metric_rag(thresholds, "Transition Matrix", row["delta"]) for row in trend]
+        peak = max(trend, key=lambda row: row["delta"])
+        breaches = sum(1 for r in rags if r in ("Amber", "Red"))
+        summaries.append({
+            "name": "Transition Matrix", "anchor": "pd-transition-matrix-distance", "rag": _worst_rag(rags),
+            "metric": f"{peak['delta']:.1%}", "metric_label": "Peak migration gap",
+            "takeaway": f"MM_Pm drifts {peak['delta']:.1%} from anchor by {peak['period']} · "
+                        f"{breaches}/{len(trend)} quarters breach threshold.",
+        })
+    else:
+        summaries.append({
+            "name": "Transition Matrix", "anchor": "pd-transition-matrix-distance", "rag": "N/A",
+            "metric": "—", "metric_label": "Peak migration gap",
+            "takeaway": "No MM_P0 / MM_Pm margin data for the current scope.",
+        })
+
+    # 2.3 PSI ---------------------------------------------------------------
+    psi_trend = build_pd_performance_trend_for_horizon(observations, rating_observations, cq, "1y", ctx, crr_scale)
+    psi_rows = [r for r in psi_trend if r.get("quarter") and r["quarter"] <= cq]
+    latest_psi = psi_rows[-1].get("population_stability_index") if psi_rows else None
+    psi_rag = calculate_pd_metric_rag(thresholds, "Population Stability Index", latest_psi)
+    summaries.append({
+        "name": "PSI", "anchor": "pd-population-stability-index", "rag": psi_rag,
+        "metric": f"{latest_psi:.3f}" if latest_psi is not None else "—", "metric_label": f"Latest PSI ({cq})",
+        "takeaway": "Population stability vs reference — lower is more stable (green ≤ 0.10, red > 0.25).",
+    })
+
+    # 2.4 Scenario Ranking --------------------------------------------------
+    sr_rows = _filter_pd_projection_rows(projections, reporting_cycle, ctx)
+    if sr_rows:
+        sr = _scenario_ranking_summary(sr_rows)
+        sr_rag = "Green" if sr["status"] == "Ranking maintained" else "Red"
+        summaries.append({
+            "name": "Scenario Ranking", "anchor": "pd-scenario-ranking", "rag": sr_rag,
+            "metric": sr["status"], "metric_label": f"{sr['scenario_count']} scenario paths",
+            "takeaway": f"{sr['inversion_count']} rank inversion(s) over {sr['quarter_count']} quarters · "
+                        f"max spread {_format_sensitivity_pd(sr['max_spread'])}.",
+        })
+    else:
+        summaries.append({
+            "name": "Scenario Ranking", "anchor": "pd-scenario-ranking", "rag": "N/A",
+            "metric": "—", "metric_label": "scenario paths",
+            "takeaway": "No scenario projection data for the current scope.",
+        })
+
+    # 2.5 Sensitivity Analysis ---------------------------------------------
+    threshold_value = _get_pd_sensitivity_threshold(monitoring_thresholds).get("threshold")
+    sens_rows = _filter_pd_sensitivity_rows(projections, reporting_cycle, ctx)
+    sens = _sensitivity_impact_summary(sens_rows, threshold_value)
+    sens_breaches = sens["total_count"] - sens["within_count"]
+    sens_rag = {"green": "Green", "red": "Red"}.get(sens["tone"], "N/A")
+    summaries.append({
+        "name": "Sensitivity Analysis", "anchor": "pd-sensitivity-analysis", "rag": sens_rag,
+        "metric": _format_sensitivity_percent(sens["max_impact"]), "metric_label": "Peak shock impact",
+        "takeaway": f"{sens_breaches}/{sens['total_count']} quarters above the "
+                    f"{_format_sensitivity_percent(threshold_value)} threshold." if sens["total_count"]
+                    else "No sensitivity projection data for the current scope.",
+    })
+
+    # 2.6 MEV Range ---------------------------------------------------------
+    catalog = data.get("mev_catalog") or {}
+    counts = {"Green": 0, "Amber": 0, "Red": 0, "N/A": 0}
+    total = 0
+    for model_name in get_pd_mev_selected_models(catalog, ctx):
+        model_data = catalog.get(model_name, {})
+        for _, mev_data in (model_data.get("mevs") or {}).items():
+            sq = get_pd_mev_scenario_quarter(mev_data, reporting_cycle, scenario)
+            rag = calculate_pd_mev_worst_rag_after_quarter(mev_data, sq, reporting_cycle, scenario)
+            counts[rag] = counts.get(rag, 0) + 1
+            total += 1
+    breached = counts["Red"] + counts["Amber"]
+    mev_rag = "Red" if counts["Red"] else ("Amber" if counts["Amber"] else ("Green" if total else "N/A"))
+    summaries.append({
+        "name": "MEV Range", "anchor": "pd-mev-range", "rag": mev_rag,
+        "metric": f"{breached}/{total}" if total else "—", "metric_label": "MEVs outside dev range",
+        "takeaway": (f"{counts['Red']} red · {counts['Amber']} amber across {total} MEVs at the {scenario} scenario."
+                     if total else "No MEVs in scope for the current scenario."),
+    })
+
+    return summaries
+
+
+def _build_pd_review_scorecard_card(summary: dict) -> html.Article:
+    tone = _rag_tone(summary["rag"])
+    return html.Article(
+        className=f"pd-test-card pd-test-{tone} pd-review-card",
+        children=[
+            html.Div(
+                className="pd-card-title-row",
+                style={"display": "flex", "alignItems": "center", "justifyContent": "space-between", "gap": "8px"},
+                children=[
+                    html.H4(summary["name"]),
+                    html.Span(
+                        summary["rag"],
+                        style={
+                            "flex": "0 0 auto", "fontSize": "11px", "fontWeight": "800", "letterSpacing": "0.3px",
+                            "color": _RAG_HEX.get(tone, "#94a3b8"),
+                        },
+                    ),
+                ],
+            ),
+            html.Div(summary["metric"], className="pd-test-value", style={"marginTop": "10px"}),
+            html.Div(
+                summary["metric_label"], className="pd-test-meta",
+                style={"fontWeight": "700", "textTransform": "uppercase", "fontSize": "9.5px",
+                       "letterSpacing": "0.35px", "color": "#64748b", "marginTop": "2px"},
+            ),
+            html.Div(summary["takeaway"], className="pd-test-meta", style={"marginTop": "8px"}),
+        ],
+    )
+
+
+def _build_pd_post_review_overview(
+    data: dict,
+    ctx: PdFilterContext,
+    reporting_cycle: str,
+    scenario: str,
+    observations,
+    rating_observations,
+    cq: str,
+    crr_scale,
+) -> html.Section:
+    summaries = _pd_post_review_summaries(
+        data, ctx, reporting_cycle, scenario, observations, rating_observations, cq, crr_scale,
+    )
+    attention = [s for s in summaries if s["rag"] in ("Amber", "Red")]
+    red = sum(1 for s in summaries if s["rag"] == "Red")
+    amber = sum(1 for s in summaries if s["rag"] == "Amber")
+    green = sum(1 for s in summaries if s["rag"] == "Green")
+    posture_tone = "red" if red else ("amber" if amber else "green")
+
+    def _legend(label: str, count: int, tone: str) -> html.Div:
+        return html.Div(
+            className="pd-review-legend-chip",
+            style={"display": "inline-flex", "alignItems": "center", "gap": "7px", "padding": "6px 11px",
+                   "border": "1px solid #dbe4f0", "borderRadius": "999px", "background": "rgba(248,250,252,.9)"},
+            children=[
+                html.Span(style={"width": "10px", "height": "10px", "borderRadius": "999px",
+                                 "background": _RAG_HEX[tone], "boxShadow": "0 0 0 2px rgba(255,255,255,.9) inset"}),
+                html.Strong(str(count), style={"fontSize": "13px", "color": "#0f172a"}),
+                html.Span(label, style={"fontSize": "11px", "color": "#64748b", "fontWeight": "700"}),
+            ],
+        )
+
+    return html.Section(
+        id="pd-post-subjective-overview",
+        className="pd-content-section pd-live-section",
+        children=[
+            build_pd_section_heading(
+                "2.1 Overview",
+                "PD Post Subjective Review Analysis Overview",
+                "At-a-glance health of every post subjective review test for the current scope. Each card shows the "
+                "worst-case RAG across the projection horizon, a headline metric, and a one-line takeaway.",
+                "N/A", options={"show_rag": False},
+            ),
+            html.Div(
+                className="overview-command-hero",
+                style={"marginBottom": "16px", "padding": "18px 20px"},
+                children=[
+                    html.Div(
+                        style={"display": "flex", "flexWrap": "wrap", "alignItems": "center",
+                               "justifyContent": "space-between", "gap": "14px"},
+                        children=[
+                            html.Div(children=[
+                                html.Div("Review posture", className="overview-command-hero-kicker"),
+                                html.H4(
+                                    f"{len(attention)} of {len(summaries)} areas need attention",
+                                    style={"margin": "0", "color": _RAG_HEX[posture_tone]},
+                                ),
+                            ]),
+                            html.Div(
+                                style={"display": "flex", "gap": "10px", "flexWrap": "wrap"},
+                                children=[_legend("Red", red, "red"), _legend("Amber", amber, "amber"), _legend("Green", green, "green")],
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+            html.Div(
+                className="pd-test-grid",
+                style={"gridTemplateColumns": "repeat(5, minmax(0, 1fr))"},
+                children=[_build_pd_review_scorecard_card(s) for s in summaries],
+            ),
+        ],
+    )
+
+
+# ---------------------------------------------------------------------------
 # MEV chart-filter store resolvers (getPdMevChartModelNames / getPdMevChartNames)
 # ---------------------------------------------------------------------------
 
@@ -195,122 +1162,7 @@ def resolve_pd_mev_chart_names(available_names: list[str], store_names: list[str
 
 
 # ---------------------------------------------------------------------------
-# 2.4 Scenario Rank Ordering (buildPdRankOrderingSection)
-# ---------------------------------------------------------------------------
-
-
-def _build_rank_ordering_section(data: dict, ctx: PdFilterContext, range_store: dict) -> html.Section:
-    facilities = get_pd_rank_ordering_selected_facilities(data["rank_ordering_facilities"], ctx)
-    acl_aggregate = build_pd_rank_ordering_aggregate(facilities, "acl_pd_historical", "acl_pd_forecast")
-    nco_aggregate = build_pd_rank_ordering_aggregate(facilities, "nco_pd_historical", "nco_pd_forecast")
-    periods = sorted({*acl_aggregate["periods"], *nco_aggregate["periods"]}, key=_pd_quarter_sort_key)
-    severe_dates_for_labels = acl_aggregate["severe_dates"] or nco_aggregate["severe_dates"]
-    period_label_map = build_pd_rank_ordering_period_label_map(periods, severe_dates_for_labels)
-    model_scope = sorted({f["pd_model"] for f in facilities if f.get("pd_model")})
-    source_file = data.get("rank_ordering_source_file") or "facilities_dummy_data.json"
-    has_data = bool(facilities) and bool(periods)
-
-    range_value = range_store.get("rank_ordering")
-
-    if has_data:
-        body = html.Div(
-            className="pd-trend-detail-grid",
-            children=[
-                html.Div(
-                    id="pd-rank-ordering-acl-panel",
-                    className="section-card pd-default-rate-trend-section",
-                    children=[
-                        build_chart_header(
-                            "Aggregate ACL PD",
-                            f"Historical, base, and severe ACL PD for the facilities in scope. "
-                            f"Severe scenario date: {format_pd_date_summary(acl_aggregate['severe_dates'])}.",
-                        ),
-                        dcc.Graph(
-                            id="pd-rank-ordering-acl-chart",
-                            figure=build_pd_rank_ordering_figure(acl_aggregate, "ACL PD", range_value),
-                            config=_GRAPH_CONFIG,
-                            className="pd-default-rate-trend-chart pd-default-rate-trend-chart-medium pd-default-rate-trend-chart-axis-room-medium",
-                        ),
-                    ],
-                ),
-                html.Div(
-                    id="pd-rank-ordering-nco-panel",
-                    className="section-card pd-default-rate-trend-section",
-                    children=[
-                        build_chart_header(
-                            "Aggregate NCO PD",
-                            f"Historical, base, and severe NCO PD for the facilities in scope. "
-                            f"Severe scenario date: {format_pd_date_summary(nco_aggregate['severe_dates'])}.",
-                        ),
-                        dcc.Graph(
-                            id="pd-rank-ordering-nco-chart",
-                            figure=build_pd_rank_ordering_figure(nco_aggregate, "NCO PD", range_value),
-                            config=_GRAPH_CONFIG,
-                            className="pd-default-rate-trend-chart pd-default-rate-trend-chart-medium pd-default-rate-trend-chart-axis-room-medium",
-                        ),
-                    ],
-                ),
-            ],
-        )
-    else:
-        body = html.Div(
-            className="section-card pd-mev-empty-state",
-            children=[
-                html.Div("No scenario rank ordering data matches the current dashboard filters", className="pd-mev-chart-title"),
-                html.P(
-                    "Adjust Segment or Specific Models above to bring facility-level ACL and NCO PD paths into scope.",
-                    className="pd-section-subtitle",
-                ),
-            ],
-        )
-
-    if has_data:
-        chart_scope_subtitle = (
-            f"Simple-average PD paths across {len(facilities)} facilities in scope. Dashboard filters above "
-            f"automatically apply to Segment and Specific Models. Models in scope: "
-            f"{', '.join(model_scope) or '—'}. Source: {source_file}."
-        )
-    else:
-        chart_scope_subtitle = (
-            f"No facility-level PD paths are currently available for the selected Segment and Specific Models "
-            f"filters. Source: {source_file}."
-        )
-
-    return html.Section(
-        id="pd-rank-ordering",
-        className="pd-content-section pd-live-section",
-        children=[
-            build_pd_section_heading(
-                "2.4 Scenario Rank Ordering",
-                "Scenario Rank Ordering",
-                "Aggregate ACL PD and NCO PD paths for facilities in scope, comparing historical behaviour with "
-                "base and severe scenario projections.",
-                "N/A",
-                options={"show_rag": False},
-            ),
-            html.Div(
-                className="pd-chart-heading",
-                children=[
-                    html.Div(
-                        className="pd-chart-heading-copy",
-                        children=[
-                            html.Div("Chart scope", className="section-title"),
-                            html.Div(chart_scope_subtitle, className="pd-section-subtitle"),
-                        ],
-                    ),
-                    html.Div(
-                        className="pd-chart-actions",
-                        children=[build_range_controls("rank_ordering", periods, range_value)] if periods else [],
-                    ),
-                ],
-            ),
-            body,
-        ],
-    )
-
-
-# ---------------------------------------------------------------------------
-# 2.6 MEV Range helpers
+# 2.5 MEV Range helpers
 # ---------------------------------------------------------------------------
 
 
@@ -361,35 +1213,49 @@ def _mev_marker_legend_item(
     )
 
 
-def _monitoring_point_to_mev_quarter(monitoring_point: str) -> str:
-    """Convert a portfolio quarter label (``YYYYQn``) to an MEV quarter label (``YYYY-Qn``)."""
-    if len(monitoring_point) == 6 and monitoring_point[4] == "Q":
-        return f"{monitoring_point[:4]}-{monitoring_point[4:]}"
-    return monitoring_point
-
-
-def _build_mev_marker_items(model_data: dict, mev_data: dict, monitoring_point: str | None, theme_value: str | None = None) -> list:
+def _build_mev_marker_items(
+    model_data: dict,
+    mev_data: dict,
+    monitoring_point: str | None,
+    theme_value: str | None = None,
+    scenario: str = "intsevere",
+    reporting_cycle: str | None = None,
+) -> list:
     items = []
     scenario_color = "#fb7185" if normalize_theme_value(theme_value) == "dark" else "#dc2626"
     items.append(
-        _mev_marker_legend_item("Scenario", "Severe", "series", line_color=scenario_color, line_dash="solid")
+        _mev_marker_legend_item("Scenario", scenario, "series", line_color=scenario_color, line_dash="solid")
     )
     development_date = (mev_data.get("dev_range") or {}).get("development_date")
     if development_date:
         dev_label = str(development_date).replace("-Q", "Q")
         items.append(_mev_marker_legend_item("Development Date", dev_label, "development"))
-    if monitoring_point:
+    scenario_quarter = get_pd_mev_scenario_quarter(mev_data, reporting_cycle, scenario)
+    if scenario_quarter:
         items.append(
-            _mev_marker_legend_item("Scenario Date", monitoring_point, "current")
+            _mev_marker_legend_item("Scenario Date", str(scenario_quarter).replace("-Q", "Q"), "current")
         )
     return items
 
 
 def _build_mev_monitoring_summary(
-    thresholds: dict | None, model_data: dict, mev_data: dict, monitoring_point: str | None, theme_value: str | None = None,
+    thresholds: dict | None,
+    model_data: dict,
+    mev_data: dict,
+    monitoring_point: str | None,
+    theme_value: str | None = None,
+    scenario: str = "intsevere",
+    reporting_cycle: str | None = None,
 ):
     threshold_items = _build_mev_threshold_chips(thresholds)
-    marker_items = _build_mev_marker_items(model_data, mev_data, monitoring_point, theme_value)
+    marker_items = _build_mev_marker_items(
+        model_data,
+        mev_data,
+        monitoring_point,
+        theme_value,
+        scenario=scenario,
+        reporting_cycle=reporting_cycle,
+    )
 
     summary_rows = []
     if threshold_items:
@@ -414,16 +1280,33 @@ def _format_mev_quarter(value: str | None) -> str:
     return str(value).replace("-Q", "Q")
 
 
-def _build_mev_rag_summary_panel(selected_models: list[str], catalog: dict, monitoring_point: str | None) -> html.Div:
+def _build_mev_rag_summary_panel(
+    selected_models: list[str],
+    catalog: dict,
+    monitoring_point: str | None,
+    reporting_cycle: str | None = None,
+    scenario: str = "intsevere",
+) -> html.Div:
     summaries = []
     for model_name in selected_models:
         model_data = catalog.get(model_name, {})
-        severe_quarter = iso_date_to_pd_quarter(model_data.get("severe_scenario_date"))
+        severe_quarter = ""
+        for mev_data in (model_data.get("mevs") or {}).values():
+            severe_quarter = get_pd_mev_scenario_quarter(mev_data, reporting_cycle, scenario)
+            if severe_quarter:
+                break
+        if not severe_quarter:
+            severe_quarter = iso_date_to_pd_quarter(model_data.get("severe_scenario_date"))
         dev_dates = get_pd_mev_model_development_dates(model_data)
         contributions = model_data.get("contributions") or {}
         mev_rags = []
         for mev_name, mev_data in (model_data.get("mevs") or {}).items():
-            rag = calculate_pd_mev_worst_rag_after_quarter(mev_data, severe_quarter)
+            rag = calculate_pd_mev_worst_rag_after_quarter(
+                mev_data,
+                severe_quarter,
+                reporting_cycle=reporting_cycle,
+                scenario=scenario,
+            )
             contrib = contributions.get(mev_name)
             mev_rags.append({"name": mev_name, "rag": rag, "contribution": contrib})
         mev_rags.sort(key=lambda entry: (-(entry.get("contribution") or 0), entry["name"]))
@@ -528,7 +1411,7 @@ def _build_mev_rag_summary_panel(selected_models: list[str], catalog: dict, moni
 # ---------------------------------------------------------------------------
 
 
-def _build_mev_range_section(data: dict, ctx: PdFilterContext, range_store: dict, mev_filter_store: dict, theme_value: str | None = None) -> html.Section:
+def _build_mev_range_section(data: dict, ctx: PdFilterContext, range_store: dict, mev_filter_store: dict, theme_value: str | None = None, reporting_cycle: str = "CCAR 2026", scenario: str = "intsevere") -> html.Section:
     catalog = data["mev_catalog"]
     mev_mnemonic_map = data.get("mev_mnemonic_map") or {}
     mev_description_map = data.get("mev_description_map") or {}
@@ -550,7 +1433,11 @@ def _build_mev_range_section(data: dict, ctx: PdFilterContext, range_store: dict
         if not mev_entries:
             continue
 
-        current_quarter = _monitoring_point_to_mev_quarter(ctx.monitoring_point) if ctx.monitoring_point else None
+        scenario_quarter = ""
+        for _, mev_data in mev_entries:
+            scenario_quarter = get_pd_mev_scenario_quarter(mev_data, reporting_cycle, scenario)
+            if scenario_quarter:
+                break
         chart_cards = []
         for mev_index, (mev_name, mev_data) in enumerate(mev_entries):
             mev_mnemonic = mev_mnemonic_map.get(mev_name, mev_name)
@@ -559,8 +1446,25 @@ def _build_mev_range_section(data: dict, ctx: PdFilterContext, range_store: dict
             chart_id = get_pd_mev_chart_id(model_name, mev_name)
             theme = normalize_theme_value(theme_value)
             trace_color = "#fb7185" if theme == "dark" else "#dc2626"
-            fig = build_pd_mev_range_figure(model_data, mev_name, mev_data, trace_color, range_store.get("mev"), current_quarter=current_quarter, theme=theme)
-            monitoring_summary = _build_mev_monitoring_summary(thresholds, model_data, mev_data, ctx.monitoring_point, theme_value)
+            fig = build_pd_mev_range_figure(
+                model_data,
+                mev_name,
+                mev_data,
+                trace_color,
+                range_store.get("mev"),
+                theme=theme,
+                reporting_cycle=reporting_cycle,
+                scenario=scenario,
+            )
+            monitoring_summary = _build_mev_monitoring_summary(
+                thresholds,
+                model_data,
+                mev_data,
+                ctx.monitoring_point,
+                theme_value,
+                scenario=scenario,
+                reporting_cycle=reporting_cycle,
+            )
             chart_cards.append(
                 html.Article(
                     className="pd-mev-chart-card",
@@ -603,9 +1507,9 @@ def _build_mev_range_section(data: dict, ctx: PdFilterContext, range_store: dict
                                         html.Span(f"{len(mev_entries)}", className="pd-mev-model-meta-value"),
                                     ], className="pd-mev-model-meta-item"),
                                     html.Div([
-                                        html.Span("Severe scenario", className="pd-mev-model-meta-label"),
+                                        html.Span(f"Scenario: {scenario}", className="pd-mev-model-meta-label"),
                                         html.Span(
-                                            format_pd_short_date(model_data.get("severe_scenario_date")),
+                                            _format_mev_quarter(scenario_quarter),
                                             className="pd-mev-model-meta-value pd-mev-model-meta-value-scenario",
                                         ),
                                     ], className="pd-mev-model-meta-item"),
@@ -638,18 +1542,54 @@ def _build_mev_range_section(data: dict, ctx: PdFilterContext, range_store: dict
             build_pd_section_heading(
                 "2.6 MEV Range",
                 "MEV Range",
-                [
-                    "Checks whether stress scenario MEVs remain within the range observed during model development. "
-                    "Green marks the development min/max, amber extends two standard deviations beyond, and red flags "
-                    "values outside amber — indicating key drivers have moved beyond the model's trained operating range. "
-                    "For detailed MEV time series and scenario comparisons, see the ",
-                    html.Strong("SAAS"),
+                "Checks whether the macro-economic variables (MEVs) driving PD models under stress remain within their trained operating range.",
+                "N/A",
+                options={
+                    "show_rag": False,
+                    "tooltip": (
+                        "MEV Range charts, scenario date, and post-scenario RAG are based on the selected "
+                        "Reporting Cycle value. The Monitoring Point controls the PD performance snapshot, "
+                        "but it does not move the MEV scenario Q0 date."
+                    ),
+                },
+            ),
+            html.Div(
+                className="pd-performance-note",
+                style={"marginBottom": "16px"},
+                children=[
+                    html.Strong("How it works: "),
+                    "At development time, the model observed a range of MEV values that defined its confidence boundaries. "
+                    "Each MEV's current scenario value is compared against these thresholds:",
+                    html.Div(
+                        style={"display": "flex", "gap": "12px", "marginTop": "8px", "marginBottom": "8px", "flexWrap": "wrap"},
+                        children=[
+                            html.Span([
+                                html.Span("", style={"display": "inline-block", "width": "10px", "height": "10px", "borderRadius": "2px", "background": "rgba(34,197,94,0.5)", "marginRight": "5px", "verticalAlign": "middle"}),
+                                html.Strong("Green"), " — within development min / max",
+                            ], style={"fontSize": "11px"}),
+                            html.Span([
+                                html.Span("", style={"display": "inline-block", "width": "10px", "height": "10px", "borderRadius": "2px", "background": "rgba(245,158,11,0.5)", "marginRight": "5px", "verticalAlign": "middle"}),
+                                html.Strong("Amber"), " — within ±2 standard deviations",
+                            ], style={"fontSize": "11px"}),
+                            html.Span([
+                                html.Span("", style={"display": "inline-block", "width": "10px", "height": "10px", "borderRadius": "2px", "background": "rgba(239,68,68,0.5)", "marginRight": "5px", "verticalAlign": "middle"}),
+                                html.Strong("Red"), " — outside amber boundary",
+                            ], style={"fontSize": "11px"}),
+                        ],
+                    ),
+                    "Values in the Red zone indicate the MEV has moved significantly beyond the model's trained operating range, "
+                    "which may affect model reliability. For detailed MEV time series and scenario comparisons, see the ",
+                    dcc.Link("SAAS Workspace", href="/saas", className="pd-inline-link"),
                     " tab.",
                 ],
-                "N/A",
-                options={"show_rag": False},
             ),
-            _build_mev_rag_summary_panel(selected_models, catalog, ctx.monitoring_point),
+            _build_mev_rag_summary_panel(
+                selected_models,
+                catalog,
+                ctx.monitoring_point,
+                reporting_cycle=reporting_cycle,
+                scenario=scenario,
+            ),
             *body,
         ],
     )
@@ -660,7 +1600,17 @@ def _build_mev_range_section(data: dict, ctx: PdFilterContext, range_store: dict
 # ---------------------------------------------------------------------------
 
 
-def render_pd_performance_content(data: dict, ctx: PdFilterContext, range_store: dict, trend_horizon_store: dict, mev_filter_store: dict, theme_value: str | None = None) -> list:
+def render_pd_performance_content(
+    data: dict,
+    ctx: PdFilterContext,
+    range_store: dict,
+    trend_horizon_store: dict,
+    mev_filter_store: dict,
+    scenario_ranking_store: dict | None = None,
+    theme_value: str | None = None,
+    reporting_cycle: str = "CCAR 2026",
+    scenario: str = "intsevere",
+) -> list:
     theme = normalize_theme_value(theme_value)
     observations = data["performance_observations"]
     rating_observations = data["rating_migration_observations"]
@@ -676,7 +1626,11 @@ def render_pd_performance_content(data: dict, ctx: PdFilterContext, range_store:
     current_rows = filter_pd_performance_observations(observations, context["snapshot_quarter"], ctx)
 
     availability_note = None
-    if not current_rows:
+    has_current_data = (
+        precomputed_row(ctx, context["snapshot_quarter"], "1y") is not None
+        or current_rows
+    )
+    if not has_current_data:
         availability_note = html.Div(
             f"No PD observations are available for snapshot date {context['snapshot_quarter']} using {context['predicted_column']}.",
             className="pd-performance-note pd-data-note",
@@ -713,10 +1667,10 @@ def render_pd_performance_content(data: dict, ctx: PdFilterContext, range_store:
     balance_sheet_values = calculate_pd_rag_metrics_for_horizon(observations, rating_observations, balance_sheet_context["snapshot_quarter"], "nco_1y", ctx, crr_scale)
     previous_balance_sheet_values = calculate_pd_rag_metrics_for_horizon(observations, rating_observations, balance_sheet_context["previous_quarter"], "nco_1y", ctx, crr_scale)
 
-    balance_sheet_notching = calculate_pd_notching_components(
+    balance_sheet_notching = precomputed_notching_components(ctx, balance_sheet_context["snapshot_quarter"], "nco_1y", crr_scale) or calculate_pd_notching_components(
         filter_pd_performance_observations_for_horizon(observations, balance_sheet_context["snapshot_quarter"], "nco_1y", ctx), crr_scale,
     )
-    previous_balance_sheet_notching = calculate_pd_notching_components(
+    previous_balance_sheet_notching = precomputed_notching_components(ctx, balance_sheet_context["previous_quarter"], "nco_1y", crr_scale) or calculate_pd_notching_components(
         filter_pd_performance_observations_for_horizon(observations, balance_sheet_context["previous_quarter"], "nco_1y", ctx), crr_scale,
     )
 
@@ -754,7 +1708,11 @@ def render_pd_performance_content(data: dict, ctx: PdFilterContext, range_store:
     )
 
     balance_sheet_availability_note = None
-    if not filter_pd_performance_observations_for_horizon(observations, balance_sheet_context["snapshot_quarter"], "nco_1y", ctx):
+    has_balance_sheet_data = (
+        precomputed_row(ctx, balance_sheet_context["snapshot_quarter"], "nco_1y") is not None
+        or filter_pd_performance_observations_for_horizon(observations, balance_sheet_context["snapshot_quarter"], "nco_1y", ctx)
+    )
+    if not has_balance_sheet_data:
         balance_sheet_availability_note = html.Div(
             f"No PD observations are available for snapshot date {balance_sheet_context['snapshot_quarter']} using {balance_sheet_context['predicted_column']}.",
             className="pd-performance-note pd-data-note",
@@ -813,10 +1771,10 @@ def render_pd_performance_content(data: dict, ctx: PdFilterContext, range_store:
         horizon_context = get_pd_performance_context_for_horizon(performance_horizons, horizon_key, ctx)
         horizon_values = calculate_pd_rag_metrics_for_horizon(observations, rating_observations, horizon_context["snapshot_quarter"], horizon_key, ctx, crr_scale)
         previous_horizon_values = calculate_pd_rag_metrics_for_horizon(observations, rating_observations, horizon_context["previous_quarter"], horizon_key, ctx, crr_scale)
-        horizon_notching = calculate_pd_notching_components(
+        horizon_notching = precomputed_notching_components(ctx, horizon_context["snapshot_quarter"], horizon_key, crr_scale) or calculate_pd_notching_components(
             filter_pd_performance_observations_for_horizon(observations, horizon_context["snapshot_quarter"], horizon_key, ctx), crr_scale,
         )
-        previous_horizon_notching = calculate_pd_notching_components(
+        previous_horizon_notching = precomputed_notching_components(ctx, horizon_context["previous_quarter"], horizon_key, crr_scale) or calculate_pd_notching_components(
             filter_pd_performance_observations_for_horizon(observations, horizon_context["previous_quarter"], horizon_key, ctx), crr_scale,
         )
         horizon_assignment_rag = calculate_pd_calibration_assignment_rag(horizon_values["Confidence Interval Test"], horizon_notching["signed_difference"], monitoring_thresholds)
@@ -925,7 +1883,7 @@ def render_pd_performance_content(data: dict, ctx: PdFilterContext, range_store:
                 className="pd-content-heading",
                 children=[
                     html.Div("1.1 Overview", className="pd-content-kicker"),
-                    html.H3("RAG Assignment Overview"),
+                    html.H3("PD RAG Assignment Overview"),
                     html.P(
                         "At-a-glance summary of the current ECL PIT PD and Balance Sheet PD calibration and "
                         "discriminatory power diagnostics."
@@ -1203,19 +2161,10 @@ def render_pd_performance_content(data: dict, ctx: PdFilterContext, range_store:
             build_pd_section_heading(
                 "1.4 Balance Sheet PD - Calibration Conservatism",
                 "Balance Sheet PD - Calibration Conservatism",
-                "Assess balance sheet PD calibration with the same framework, using CPD NCO as the predicted PD "
-                "input for the 1-year horizon.",
+                "Assess balance sheet PD calibration using the same framework as ECL PIT calibration, "
+                "evaluating the 1-year population with CPD NCO as the predicted PD source.",
                 "N/A",
                 options={"show_rag": False},
-            ),
-            html.Div(
-                className="pd-performance-note",
-                children=[
-                    "Balance sheet calibration uses the same card logic as ECL PIT calibration, but evaluates the "
-                    "1-year population with ",
-                    html.Strong(balance_sheet_context["predicted_column"]),
-                    " as the predicted PD source.",
-                ],
             ),
             *([balance_sheet_availability_note] if balance_sheet_availability_note is not None else []),
             html.Div(
@@ -1352,86 +2301,60 @@ def render_pd_performance_content(data: dict, ctx: PdFilterContext, range_store:
                 "ordering is maintained. While no standalone RAG is assigned to this analysis, any material "
                 "concerns identified through the deep-dive review will be highlighted in the monitoring report and "
                 "reflected in the overall Model RAG.",
-                options={"note": "Scaffold aligned to requested subsections"},
+                options={"note": f"Monitoring point {cq}"},
             ),
         ],
     )
 
-    section_2_1 = html.Section(
-        id="pd-post-subjective-overview",
-        className="pd-content-section pd-placeholder-section",
-        children=[
-            build_pd_section_heading(
-                "2.1 Overview", "Overview",
-                "High-level landing area for the future post subjective review analysis package.",
-                "N/A", options={"show_rag": False},
-            ),
-            _build_placeholder_card(
-                "Post Subjective Review Overview",
-                "This placeholder section is ready for the future summary narrative, key flags, and cross-check "
-                "metrics that will frame the post subjective review analysis.",
-                ["Summary KPIs", "Narrative insights", "Reviewer actions"],
-            ),
-        ],
+    section_2_1 = _build_pd_post_review_overview(
+        data, ctx, reporting_cycle, scenario, observations, rating_observations, cq, crr_scale,
     )
 
-    section_2_2 = html.Section(
-        id="pd-transition-matrix-distance",
-        className="pd-content-section pd-placeholder-section",
-        children=[
-            build_pd_section_heading(
-                "2.2 Transition Matrix", "Transition Matrix",
-                "Future section for comparing post-review transition behavior against the reference migration structure.",
-                "N/A", options={"show_rag": False},
-            ),
-            _build_placeholder_card(
-                "Transition Matrix",
-                "A compact placeholder is in place for the transition matrix views, distance metrics, and "
-                "interpretation rules that will be added later.",
-                ["Transition view", "Distance metric", "Threshold guidance"],
-            ),
-        ],
+    section_2_2 = _build_pd_transition_matrix_section(data, ctx, reporting_cycle, theme, range_store)
+
+    psi_performance_trend = build_pd_performance_trend_for_horizon(
+        observations, rating_observations, cq, "1y", ctx, crr_scale,
     )
+    psi_periods = get_pd_range_periods(ctx.quarters, cq)
 
     section_2_3 = html.Section(
         id="pd-population-stability-index",
-        className="pd-content-section pd-placeholder-section",
+        className="pd-content-section pd-live-section",
         children=[
             build_pd_section_heading(
                 "2.3 PSI", "PSI",
-                "Future section for population stability diagnostics after subjective review adjustments.",
+                "PSI based on IRB CRR key-driver stability, monitoring whether the performing-book population "
+                "has shifted against the reference distribution.",
                 "N/A", options={"show_rag": False},
             ),
-            _build_placeholder_card(
-                "Population Stability Index (PSI)",
-                "This placeholder reserves space for PSI trends, distribution shift diagnostics, and any future "
-                "threshold-based alerts.",
-                ["PSI trend", "Shift diagnostics", "Threshold alerts"],
+            _build_psi_stability_summary(psi_performance_trend, thresholds, cq),
+            html.Div(
+                id="pd-psi-trend-panel",
+                className="section-card pd-default-rate-trend-section",
+                children=[
+                    build_chart_header(
+                        "Population Stability Index Trend",
+                        "Quarter-by-quarter PSI for the selected population, with threshold bands and RAG-colored markers.",
+                        "psi_trend",
+                        psi_periods,
+                        range_store.get("psi_trend"),
+                    ),
+                    dcc.Graph(
+                        id="pd-psi-trend-chart",
+                        figure=build_pd_psi_trend_figure(psi_performance_trend, monitoring_thresholds, cq, range_store.get("psi_trend"), theme=theme),
+                        config=_GRAPH_CONFIG,
+                        className="pd-default-rate-trend-chart pd-default-rate-trend-chart-medium",
+                    ),
+                ],
             ),
         ],
     )
 
-    section_2_4 = _build_rank_ordering_section(data, ctx, range_store)
+    section_2_4 = _build_pd_scenario_ranking_section(data, ctx, reporting_cycle, theme, scenario_ranking_store)
 
-    section_2_5 = html.Section(
-        id="pd-sensitivity-analysis",
-        className="pd-content-section pd-placeholder-section",
-        children=[
-            build_pd_section_heading(
-                "2.5 Sensitivity Analysis", "Sensitivity Analysis",
-                "Future section for showing how model outputs react to selected drivers and review overlays.",
-                "N/A", options={"show_rag": False},
-            ),
-            _build_placeholder_card(
-                "Sensitivity Analysis",
-                "A lightweight placeholder is ready for future parameter sensitivities, comparative views, and "
-                "documented interpretation logic.",
-                ["Driver impact", "Scenario comparison", "Review commentary"],
-            ),
-        ],
-    )
+    section_2_5 = _build_pd_sensitivity_section(data, ctx, reporting_cycle, theme, range_store)
 
-    section_2_6 = _build_mev_range_section(data, ctx, range_store, mev_filter_store, theme_value=theme_value)
+    section_2_6 = _build_mev_range_section(data, ctx, range_store, mev_filter_store, theme_value=theme_value, reporting_cycle=reporting_cycle, scenario=scenario)
 
     chapter_2_body = html.Div(
         className="pd-chapter-body pd-chapter-body-secondary",
@@ -1444,17 +2367,6 @@ def render_pd_performance_content(data: dict, ctx: PdFilterContext, range_store:
 # ---------------------------------------------------------------------------
 # Default filter context + top-level layout
 # ---------------------------------------------------------------------------
-
-
-def default_filter_context(data: dict) -> PdFilterContext:
-    quarters = data["quarters"]
-    latest_quarter = data.get("latest_quarter") or (sorted(quarters)[-1] if quarters else "")
-    return PdFilterContext(
-        quarters=quarters,
-        models=set(data["model_names"]),
-        segment="all",
-        monitoring_point=latest_quarter,
-    )
 
 
 def _build_apply_button() -> html.Div:
@@ -1496,6 +2408,119 @@ def _build_top_bar(data: dict) -> html.Div:
     )
 
 
+def build_pd_apply_prompt() -> html.Section:
+    """Executive summary + how-to guide shown until the user applies the filters."""
+    return html.Section(
+        className="pd-content-section pd-live-section",
+        children=[
+            html.Div(
+                className="pd-performance-note",
+                children=[
+                    html.Strong("Executive summary: "),
+                    "The PD Performance dashboard is the monitoring view for Probability of Default (PD) models "
+                    "across the wholesale portfolio. It tracks each model's calibration, discriminatory power, and "
+                    "population stability against agreed RAG thresholds, for both the ECL point-in-time and balance "
+                    "sheet horizons, and adds a post subjective review layer (transition migration, scenario rank "
+                    "ordering, sensitivity, and MEV range) so reviewers can judge whether model behaviour remains "
+                    "defensible across reporting cycles and stress scenarios.",
+                ],
+            ),
+            html.Div(
+                className="saas-model-panel-stack",
+                children=[
+                    html.Div(
+                        className="section-card pd-mev-empty-state saas-getting-started",
+                        children=[
+                            html.Div("Getting started with the PD Performance dashboard", className="pd-mev-chart-title"),
+                            html.P(
+                                "Set your filters in the top bar, then click “Apply filters” to render the dashboard. "
+                                "Use the quick guide below to move from setup to analysis smoothly.",
+                                className="pd-section-subtitle",
+                            ),
+                            html.Div(
+                                className="saas-getting-started-summary",
+                                children=[
+                                    html.Div("Quick start", className="saas-getting-started-summary-title"),
+                                    html.Div(
+                                        className="saas-getting-started-highlights",
+                                        children=[
+                                            html.Span("1. Choose Reporting Cycle, Scenario, and Monitoring Point.", className="saas-getting-started-highlight"),
+                                            html.Span("2. Pick a Segment or a Specific Model — not both.", className="saas-getting-started-highlight"),
+                                            html.Span("3. Click Apply filters to load the dashboard.", className="saas-getting-started-highlight"),
+                                        ],
+                                    ),
+                                    html.Div(
+                                        "The dashboard always reflects the most recent applied filter snapshot, not any unapplied edits still sitting in the top bar.",
+                                        className="saas-getting-started-summary-note",
+                                    ),
+                                ],
+                            ),
+                            html.Ol(
+                                className="saas-getting-started-steps",
+                                children=[
+                                    html.Li([
+                                        html.Strong("Pick a Reporting Cycle. "),
+                                        "Choose the cycle to review (e.g. CCAR 2026). This sets which monitoring points and "
+                                        "precomputed metrics are available for every section.",
+                                    ]),
+                                    html.Li([
+                                        html.Strong("Choose a Scenario. "),
+                                        "Select the macro scenario (e.g. intsevere, baseline). The scenario drives the MEV "
+                                        "Range section and the scenario-conditioned views.",
+                                    ]),
+                                    html.Li([
+                                        html.Strong("Set the Monitoring Point. "),
+                                        "Pick the as-of quarter for the snapshot. The available quarters follow the selected "
+                                        "reporting cycle, and trends are shown up to this point.",
+                                    ]),
+                                    html.Li([
+                                        html.Strong("Choose your population. "),
+                                        "Select a Segment or a single Specific Model — these two filters are mutually "
+                                        "exclusive. Leaving both at “All” reads the portfolio-level (All Models) metrics.",
+                                    ]),
+                                    html.Li([
+                                        html.Strong("Click “Apply filters”. "),
+                                        "The dashboard loads here. Nothing renders until you apply, so this starting guide "
+                                        "stays visible until the first Apply.",
+                                    ]),
+                                    html.Li([
+                                        html.Strong("Read the analysis in two chapters. "),
+                                        "Once loaded, the dashboard is organised as:",
+                                        html.Ul(
+                                            className="saas-getting-started-substeps",
+                                            children=[
+                                                html.Li([
+                                                    html.Strong("1. RAG Assignment — "),
+                                                    "the core model-health view: overview, ECL PIT PD calibration conservatism, "
+                                                    "discriminatory power, and balance sheet PD calibration.",
+                                                ]),
+                                                html.Li([
+                                                    html.Strong("2. Post Subjective Review Analysis — "),
+                                                    "qualitative deep-dives: transition matrix margins, population stability (PSI), "
+                                                    "scenario rank ordering, sensitivity analysis, and MEV range.",
+                                                ]),
+                                            ],
+                                        ),
+                                    ]),
+                                    html.Li([
+                                        html.Strong("Fine-tune within each section. "),
+                                        "Many charts have Window / From / To range controls and per-panel horizon toggles for "
+                                        "on-screen analysis — these do not require re-applying the top filters.",
+                                    ]),
+                                    html.Li([
+                                        html.Strong("Start over. "),
+                                        "Refresh the page at any time to clear the dashboard and return to this starting view.",
+                                    ]),
+                                ],
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+        ],
+    )
+
+
 def build_stores() -> list:
     """``dcc.Store`` components backing this page's filter/range state.
 
@@ -1506,6 +2531,7 @@ def build_stores() -> list:
         dcc.Store(id=RANGE_STORE_ID, data={}),
         dcc.Store(id=TREND_HORIZON_STORE_ID, data=dict(DEFAULT_TREND_HORIZON_STORE)),
         dcc.Store(id=MEV_FILTER_STORE_ID, data=dict(DEFAULT_MEV_FILTER_STORE)),
+        dcc.Store(id=SCENARIO_RANKING_STORE_ID, data={}),
         dcc.Store(id=APPLIED_FILTERS_STORE_ID),
     ]
 
@@ -1518,8 +2544,12 @@ def build_layout() -> list:
 
 
 def page_layout(data: dict) -> list:
-    """Top bar + main content for the PD Performance page."""
-    ctx = default_filter_context(data)
+    """Top bar + getting-started prompt.
+
+    The dashboard content is rendered into ``CONTENT_ID`` only once the user
+    clicks "Apply filters"; until then this getting-started guide is shown
+    (mirroring the SAAS workspace).
+    """
     return [
         _build_top_bar(data),
         html.Div(
@@ -1531,13 +2561,7 @@ def page_layout(data: dict) -> list:
                     children=[
                         html.Div(
                             id=CONTENT_ID,
-                            children=render_pd_performance_content(
-                                data,
-                                ctx,
-                                {},
-                                dict(DEFAULT_TREND_HORIZON_STORE),
-                                dict(DEFAULT_MEV_FILTER_STORE),
-                            ),
+                            children=build_pd_apply_prompt(),
                         ),
                     ],
                 ),

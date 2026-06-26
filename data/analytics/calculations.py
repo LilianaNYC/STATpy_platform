@@ -94,6 +94,69 @@ class PdFilterContext:
 
 
 # ---------------------------------------------------------------------------
+# Precomputed-metrics store
+# ---------------------------------------------------------------------------
+# The PD Performance tab reads metrics straight from the ``PD_Performance_Metrics``
+# workbook tab rather than recomputing them from facility-level data. The loader
+# builds a lookup keyed by ``(model_key, segment_key, quarter, horizon_key)`` and
+# installs it here; the metric functions below consult it and return the
+# pre-calculated values verbatim. ``model_key`` is the model name, or ``"ALL"``
+# when every model is selected; ``segment_key`` is the segment name or ``"all"``.
+
+_PRECOMPUTED_METRICS: dict | None = None
+
+
+def set_precomputed_metrics(store: dict | None) -> None:
+    """Install (or clear) the precomputed-metrics lookup the engine reads from."""
+    global _PRECOMPUTED_METRICS
+    _PRECOMPUTED_METRICS = store
+
+
+def _ctx_store_keys(ctx: "PdFilterContext") -> tuple[str, str]:
+    """Resolve the (level, value) the precomputed store is keyed by.
+
+    The PD filters are mutually exclusive (a portfolio segment OR specific
+    models, never both), so the selection collapses to a single entity:
+    a chosen segment, a single model, or the all-models portfolio.
+    """
+    if ctx.segment and ctx.segment != "all":
+        return "segment", ctx.segment
+    models = sorted(m for m in ctx.models if m)
+    if len(models) == 1:
+        return "model", models[0]
+    return "model", "All Models"
+
+
+def precomputed_row(ctx: "PdFilterContext", quarter, horizon_key):
+    """Return the precomputed sheet row for ``(ctx, quarter, horizon)`` or ``None``."""
+    if _PRECOMPUTED_METRICS is None:
+        return None
+    level, value = _ctx_store_keys(ctx)
+    return _PRECOMPUTED_METRICS.get((level, value, quarter, horizon_key))
+
+
+def _row_to_rag_metrics(row: dict) -> dict:
+    """Map a precomputed sheet row to the engine's RAG-metrics dict."""
+    return {
+        "Observed Default Rate": row.get("observed_default_rate"),
+        "Predicted Default Rate": row.get("predicted_default_rate"),
+        "Actual / Expected Ratio": row.get("actual_expected_ratio"),
+        "Confidence Interval Test": row.get("confidence_interval_test"),
+        "Accuracy Ratio": row.get("accuracy_ratio"),
+        "Go Live Accuracy Ratio": row.get("go_live_accuracy_ratio"),
+        "Go Live Quarter": row.get("go_live_quarter") or "",
+        "Delta Accuracy Ratio": row.get("delta_accuracy_ratio"),
+        "Gini Coefficient": row.get("gini_coefficient"),
+        "KS Statistic": row.get("ks_statistic"),
+        "Brier Score": row.get("brier_score"),
+        "Population Stability Index": row.get("population_stability_index"),
+        "Rating Migration Index": row.get("rating_migration_index"),
+        "Notching Test": row.get("notching_test_abs"),
+        "Kendall's Tau": row.get("kendall_tau"),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Quarter helpers (getPreviousPdQuarter / shiftMonitoringQuarterYear)
 # ---------------------------------------------------------------------------
 
@@ -473,6 +536,26 @@ def calculate_pd_notching_test(rows, crr_scale):
     return calculate_pd_notching_components(rows, crr_scale)["difference"]
 
 
+def precomputed_notching_components(ctx: "PdFilterContext", quarter, horizon_key, crr_scale):
+    """Notching components built from the precomputed sheet row (or ``None``).
+
+    The signed and absolute notch differences come straight from the sheet;
+    the individual actual/predicted notch grades are a deterministic CRR lookup
+    of the observed/predicted default rates for display.
+    """
+    row = precomputed_row(ctx, quarter, horizon_key)
+    if row is None:
+        return None
+    predicted_dr = row.get("predicted_default_rate")
+    observed_dr = row.get("observed_default_rate")
+    return {
+        "actual_notch": map_pd_probability_to_crr(observed_dr, crr_scale) if observed_dr is not None else None,
+        "predicted_notch": map_pd_probability_to_crr(predicted_dr, crr_scale) if predicted_dr is not None else None,
+        "signed_difference": row.get("notching_test_signed"),
+        "difference": row.get("notching_test_abs"),
+    }
+
+
 def get_pd_confidence_interval_bucket(value):
     if value is None or not math.isfinite(value):
         return ""
@@ -749,6 +832,13 @@ def calculate_pd_metric_rag(thresholds, metric, value):
 
 
 def get_pd_go_live_quarter(performance_observations, horizon_key, ctx: PdFilterContext):
+    # Try the precomputed store first — go_live_quarter is stored on every row.
+    if _PRECOMPUTED_METRICS is not None:
+        for quarter in ctx.quarters:
+            row = precomputed_row(ctx, quarter, horizon_key)
+            if row and row.get("go_live_quarter"):
+                return str(row["go_live_quarter"])
+
     go_live_quarters = sorted(
         {
             quarter for quarter in ctx.quarters
@@ -765,6 +855,10 @@ def get_pd_go_live_quarter(performance_observations, horizon_key, ctx: PdFilterC
 
 
 def calculate_pd_rag_metrics_for_horizon(performance_observations, rating_observations, quarter, horizon_key, ctx: PdFilterContext, crr_scale):
+    row = precomputed_row(ctx, quarter, horizon_key)
+    if row is not None:
+        return _row_to_rag_metrics(row)
+
     previous_quarter = get_previous_pd_quarter(quarter)
     current_rows = filter_pd_performance_observations_for_horizon(performance_observations, quarter, horizon_key, ctx)
     previous_rows = filter_pd_performance_observations_for_horizon(performance_observations, previous_quarter, horizon_key, ctx)
@@ -813,6 +907,10 @@ def calculate_pd_rag_metrics(performance_observations, rating_observations, quar
 def calculate_pd_default_count_for_horizon(performance_observations, quarter, horizon_key, ctx: PdFilterContext):
     if not quarter:
         return 0
+    precomp = precomputed_row(ctx, quarter, horizon_key)
+    if precomp is not None:
+        count = precomp.get("default_count_1y")
+        return int(count) if count is not None else 0
     rows = filter_pd_performance_observations_for_horizon(performance_observations, quarter, horizon_key, ctx)
     return sum(1 for row in rows if row["observed"] == 1)
 
@@ -891,11 +989,28 @@ def build_pd_overview_performance_rag_tooltip(calibration_rag, discrimination_ra
 
 
 def calculate_pd_ead_summaries(observations, quarter, ctx: PdFilterContext):
-    selected_rows = [row for row in observations if matches_pd_selected_population(row, quarter, ctx)]
     empty = {
         "1y": {"ead": None, "share": None, "combined_ead": None},
         "2y": {"ead": None, "share": None, "combined_ead": None},
     }
+
+    row_1y = precomputed_row(ctx, quarter, "1y")
+    row_2y = precomputed_row(ctx, quarter, "2y")
+    if row_1y is not None or row_2y is not None:
+        ead_1y = (row_1y or {}).get("ead") or 0.0
+        ead_2y = (row_2y or {}).get("ead") or 0.0
+        combined_ead = ead_1y + ead_2y
+
+        def summary(ead):
+            return {
+                "ead": ead if ead else None,
+                "share": (ead / combined_ead) if combined_ead > 0 else None,
+                "combined_ead": combined_ead if combined_ead > 0 else None,
+            }
+
+        return {"1y": summary(ead_1y), "2y": summary(ead_2y)}
+
+    selected_rows = [row for row in observations if matches_pd_selected_population(row, quarter, ctx)]
     if not selected_rows:
         return empty
 
@@ -937,18 +1052,28 @@ def calculate_pd_calibration_conservatism_details(observations, rating_observati
         snapshot_quarter = shift_monitoring_quarter_year(monitoring_quarter, -years)
         if not snapshot_quarter:
             continue
-        horizon_values = calculate_pd_rag_metrics_for_horizon(
-            observations, rating_observations, snapshot_quarter, horizon_key, ctx, crr_scale,
-        )
-        horizon_notching = calculate_pd_notching_components(
-            filter_pd_performance_observations_for_horizon(observations, snapshot_quarter, horizon_key, ctx),
-            crr_scale,
-        )
+
+        precomp = precomputed_row(ctx, snapshot_quarter, horizon_key)
+        if precomp is not None:
+            confidence_interval = precomp.get("confidence_interval_test")
+            signed_notch = precomp.get("notching_test_signed")
+            weight = precomp.get("ead_share")
+        else:
+            horizon_values = calculate_pd_rag_metrics_for_horizon(
+                observations, rating_observations, snapshot_quarter, horizon_key, ctx, crr_scale,
+            )
+            horizon_notching = calculate_pd_notching_components(
+                filter_pd_performance_observations_for_horizon(observations, snapshot_quarter, horizon_key, ctx),
+                crr_scale,
+            )
+            confidence_interval = horizon_values["Confidence Interval Test"]
+            signed_notch = horizon_notching["signed_difference"]
+            weight = (ead_summaries.get(horizon_key) or {}).get("share")
+
         rag = calculate_pd_calibration_assignment_rag(
-            horizon_values["Confidence Interval Test"], horizon_notching["signed_difference"], monitoring_thresholds,
+            confidence_interval, signed_notch, monitoring_thresholds,
         )
         score = pd_rag_score(rag)
-        weight = (ead_summaries.get(horizon_key) or {}).get("share")
         if score is not None and _finite(weight):
             weighted_scores.append({"key": horizon_key, "score": score, "weight": weight, "rag": rag})
 
@@ -1111,11 +1236,15 @@ def build_pd_balance_sheet_calibration_rag_trend(observations, rating_observatio
     trend = []
     for quarter in quarters:
         values = calculate_pd_rag_metrics_for_horizon(observations, rating_observations, quarter, "nco_1y", ctx, crr_scale)
-        notching = calculate_pd_notching_components(
-            filter_pd_performance_observations_for_horizon(observations, quarter, "nco_1y", ctx), crr_scale,
-        )
+        precomp = precomputed_row(ctx, quarter, "nco_1y")
+        if precomp is not None:
+            signed_difference = precomp.get("notching_test_signed")
+        else:
+            signed_difference = calculate_pd_notching_components(
+                filter_pd_performance_observations_for_horizon(observations, quarter, "nco_1y", ctx), crr_scale,
+            )["signed_difference"]
         assignment_rag = calculate_pd_calibration_assignment_rag(
-            values["Confidence Interval Test"], notching["signed_difference"], monitoring_thresholds,
+            values["Confidence Interval Test"], signed_difference, monitoring_thresholds,
         )
         if assignment_rag == "N/A":
             rag = get_worst_pd_rag([
@@ -1130,17 +1259,55 @@ def build_pd_balance_sheet_calibration_rag_trend(observations, rating_observatio
             "rag_score": pd_rag_score(rag),
             "confidence_interval": values["Confidence Interval Test"],
             "confidence_rag": calculate_pd_metric_rag(thresholds, "Confidence Interval Test", values["Confidence Interval Test"]),
-            "notching_difference": notching["signed_difference"],
-            "notching_rag": calculate_pd_metric_rag(thresholds, "Notching Test", notching["signed_difference"]),
+            "notching_difference": signed_difference,
+            "notching_rag": calculate_pd_metric_rag(thresholds, "Notching Test", signed_difference),
             "assignment_rag": assignment_rag,
         })
     return trend
+
+
+def _precomputed_trend_row(precomp: dict, quarter: str, crr_scale) -> dict:
+    """Build one trend row entirely from precomputed sheet values."""
+    predicted_dr = precomp.get("predicted_default_rate")
+    observed_dr = precomp.get("observed_default_rate")
+    signed = precomp.get("notching_test_signed")
+    abs_notch = precomp.get("notching_test_abs")
+    # The individual actual/predicted notch grades are a deterministic CRR lookup.
+    predicted_notch = map_pd_probability_to_crr(predicted_dr, crr_scale) if predicted_dr is not None else None
+    actual_notch = map_pd_probability_to_crr(observed_dr, crr_scale) if observed_dr is not None else None
+    accuracy_ratio = precomp.get("accuracy_ratio")
+    return {
+        "quarter": quarter,
+        "observed_default_rate": observed_dr,
+        "predicted_default_rate": predicted_dr,
+        "actual_expected_ratio": precomp.get("actual_expected_ratio"),
+        "accuracy_ratio": accuracy_ratio,
+        "gini_coefficient": precomp.get("gini_coefficient"),
+        "ks_statistic": precomp.get("ks_statistic"),
+        "brier_score": precomp.get("brier_score"),
+        "population_stability_index": precomp.get("population_stability_index"),
+        "rating_migration_index": precomp.get("rating_migration_index"),
+        "notching_test": abs_notch,
+        "actual_notch": actual_notch,
+        "predicted_notch": predicted_notch,
+        "notching_difference": abs_notch if abs_notch is not None else (abs(signed) if signed is not None else None),
+        "confidence_interval": precomp.get("confidence_interval_test"),
+        "go_live_accuracy_ratio": precomp.get("go_live_accuracy_ratio"),
+        "go_live_quarter": precomp.get("go_live_quarter") or "",
+        "delta_accuracy_ratio": precomp.get("delta_accuracy_ratio"),
+        "kendall_tau": precomp.get("kendall_tau"),
+    }
 
 
 def build_pd_performance_trend_for_horizon(observations, rating_observations, snapshot_quarter, horizon_key, ctx: PdFilterContext, crr_scale):
     quarters = sorted({q for q in ctx.quarters if q and q <= snapshot_quarter})
     trend = []
     for quarter in quarters:
+        precomp = precomputed_row(ctx, quarter, horizon_key)
+        if precomp is not None:
+            trend.append(_precomputed_trend_row(precomp, quarter, crr_scale))
+            continue
+
         current_rows = filter_pd_performance_observations_for_horizon(observations, quarter, horizon_key, ctx)
         rag_metrics = calculate_pd_rag_metrics_for_horizon(observations, rating_observations, quarter, horizon_key, ctx, crr_scale)
         notching = calculate_pd_notching_components(current_rows, crr_scale)

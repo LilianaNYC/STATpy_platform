@@ -11,6 +11,7 @@ from .....components.charts import (
     build_lgd_discrimination_rag_trend_figure,
     build_lgd_metric_trend_figure,
 )
+from .....components import filters as shared_filters
 from .....components.filters import build_chart_header
 from .....data.analytics.calculations import (
     fmt_n,
@@ -40,13 +41,30 @@ from ..pd_performance.cards import (
 )
 
 CONTENT_ID = "lgd-dashboard-content"
+REPORTING_CYCLE_ID = "lgd-reporting-cycle"
+REPORTING_CYCLE_TOGGLE_ID = "lgd-reporting-cycle-toggle"
+REPORTING_CYCLE_MENU_ID = "lgd-reporting-cycle-menu"
+REPORTING_CYCLE_FILTER_KEY = "lgd-reporting-cycle"
 MODEL_DROPDOWN_ID = "lgd-model-dropdown"
 SEGMENT_DROPDOWN_ID = "lgd-segment-dropdown"
 MONITORING_POINT_DROPDOWN_ID = "lgd-monitoring-point-dropdown"
+MODEL_TOGGLE_ID = "lgd-model-toggle"
+MODEL_MENU_ID = "lgd-model-menu"
+MODEL_SELECT_ALL_ID = "lgd-model-select-all"
+SEGMENT_TOGGLE_ID = "lgd-segment-toggle"
+SEGMENT_MENU_ID = "lgd-segment-menu"
+MONITORING_POINT_TOGGLE_ID = "lgd-monitoring-point-toggle"
+MONITORING_POINT_MENU_ID = "lgd-monitoring-point-menu"
+MODEL_FILTER_KEY = "lgd-model"
+SEGMENT_FILTER_KEY = "lgd-segment"
+MONITORING_POINT_FILTER_KEY = "lgd-monitoring-point"
 LGD_SUBNAV_ID = "lgd-subnav"
 RANGE_STORE_ID = "lgd-range-store"
 CALIBRATION_RAG_RANGE_KEY = "lgd_calibration_rag"
 DISCRIMINATION_RAG_RANGE_KEY = "lgd_discrimination_rag"
+ME_RANGE_KEY = "lgd_me"
+RMSE_RANGE_KEY = "lgd_rmse"
+KENDALL_RANGE_KEY = "lgd_kendall"
 
 _GRAPH_CONFIG = {"displayModeBar": False, "responsive": True}
 
@@ -89,7 +107,7 @@ def _format_delta(metric: str, current_value: Any, previous_value: Any) -> tuple
     return formatted, tone
 
 
-def _build_filter(label: str, component: dcc.Dropdown) -> html.Div:
+def _build_filter(label: str, component) -> html.Div:
     return html.Div(className="monitoring-filter", children=[html.Label(label), component])
 
 
@@ -265,74 +283,95 @@ def _flow_stage(text: str) -> html.Div:
 
 
 def _build_lgd_overview_flow(summary: dict) -> html.Div:
+    from .....components.kpis import (
+        build_pd_overview_flow_input,
+        build_pd_overview_flow_metric,
+        build_pd_overview_flow_stage,
+        build_pd_overview_flow_test_stack,
+        pd_rag_dot as _kpi_rag_dot,
+    )
+
+    me_rag = summary["metric_rags"].get("ME", "N/A")
+    rmse_rag = summary["metric_rags"].get("RMSE", "N/A")
+    tau_rag = summary["metric_rags"].get("Kendall's Tau", "N/A")
+    calibration_rag = summary["calibration_rag"]
+    discrimination_rag = summary["discrimination_rag"]
+    performance_rag = summary["performance_rag"]
+
+    flow_children = [
+        html.Div(build_pd_overview_flow_stage("1.", "Component"), className="lgd-flow-stage-input"),
+        html.Div(build_pd_overview_flow_stage("2.", "Tests"), className="lgd-flow-stage-tests"),
+        html.Div(build_pd_overview_flow_stage("3.", "Monitoring Dimension RAG"), className="lgd-flow-stage-dimension"),
+        html.Div(build_pd_overview_flow_stage("4.", "Performance RAG"), className="lgd-flow-stage-performance"),
+
+        html.Div(
+            build_pd_overview_flow_input("LGD", {"note": "1 year monitoring"}),
+            className="lgd-flow-input",
+        ),
+
+        build_pd_overview_flow_test_stack(
+            [
+                build_pd_overview_flow_metric(
+                    "Mean Error 1 year", summary["current"].get("ME"), "percent", me_rag,
+                    {"href": "#lgd-calibration"},
+                ),
+                build_pd_overview_flow_metric(
+                    "RMSE 1 year", summary["current"].get("RMSE"), "percent", rmse_rag,
+                    {"href": "#lgd-calibration"},
+                ),
+            ],
+            {"incoming": True, "extra_class": "lgd-flow-tests-calibration"},
+        ),
+
+        build_pd_overview_flow_test_stack(
+            [
+                build_pd_overview_flow_metric(
+                    "Kendall's Tau 1 year", summary["current"].get("Kendall's Tau"), "ratio", tau_rag,
+                    {"href": "#lgd-discrimination"},
+                ),
+            ],
+            {"incoming": True, "extra_class": "lgd-flow-tests-discrimination"},
+        ),
+
+        build_pd_overview_flow_metric(
+            "Calibration Conservatism RAG", calibration_rag, "rag", calibration_rag,
+            {
+                "is_rag": True,
+                "href": "#lgd-calibration",
+                "incoming": True,
+                "outgoing": True,
+                "extra_class": "lgd-flow-dimension-calibration",
+            },
+        ),
+
+        build_pd_overview_flow_metric(
+            "Discriminatory Power RAG", discrimination_rag, "rag", discrimination_rag,
+            {
+                "is_rag": True,
+                "href": "#lgd-discrimination",
+                "incoming": True,
+                "outgoing": True,
+                "extra_class": "lgd-flow-dimension-discrimination",
+            },
+        ),
+
+        html.Div(
+            className="lgd-flow-performance",
+            children=html.Article(
+                className=f"pd-overview-flow-performance pd-overview-flow-performance-{pd_tone_class(performance_rag)}",
+                children=[
+                    html.Span("Performance RAG", className="pd-overview-flow-performance-title"),
+                    html.Strong([pd_rag_dot(performance_rag), f" {performance_rag}"]),
+                ],
+            ),
+        ),
+    ]
+
     return html.Div(
         className="pd-overview-flow-wrap",
         children=html.Div(
+            flow_children,
             className="lgd-overview-flow",
-            children=[
-                html.Div(_flow_stage("1. Component"), className="lgd-flow-stage-input"),
-                html.Div(_flow_stage("2. Tests"), className="lgd-flow-stage-tests"),
-                html.Div(_flow_stage("3. Monitoring Dimension RAG"), className="lgd-flow-stage-dimension"),
-                html.Div(_flow_stage("4. Performance RAG"), className="lgd-flow-stage-performance"),
-                html.Div(
-                    className="pd-overview-flow-input lgd-flow-input",
-                    children=[html.Strong("LGD"), html.Span("1 year monitoring")],
-                ),
-                html.Div(
-                    className="pd-overview-flow-test-stack lgd-flow-tests-calibration",
-                    children=[
-                        *_flow_connector_spans(incoming=True, outgoing=True),
-                        _flow_metric(
-                            "ME 1 year",
-                            summary["current"].get("ME"),
-                            "ME",
-                            summary["metric_rags"].get("ME", "N/A"),
-                            "#lgd-calibration",
-                            previous_value=summary["previous"].get("ME"),
-                            previous_period=summary["previous_monitoring_point"],
-                        ),
-                        _flow_metric(
-                            "RMSE 1 year",
-                            summary["current"].get("RMSE"),
-                            "RMSE",
-                            summary["metric_rags"].get("RMSE", "N/A"),
-                            "#lgd-calibration",
-                            previous_value=summary["previous"].get("RMSE"),
-                            previous_period=summary["previous_monitoring_point"],
-                        ),
-                    ],
-                ),
-                html.Div(
-                    className="pd-overview-flow-test-stack lgd-flow-tests-discrimination",
-                    children=[
-                        *_flow_connector_spans(incoming=True, outgoing=True),
-                        _flow_metric(
-                            "Kendall's Tau 1 year",
-                            summary["current"].get("Kendall's Tau"),
-                            "Kendall's Tau",
-                            summary["metric_rags"].get("Kendall's Tau", "N/A"),
-                            "#lgd-discrimination",
-                            previous_value=summary["previous"].get("Kendall's Tau"),
-                            previous_period=summary["previous_monitoring_point"],
-                        ),
-                    ],
-                ),
-                html.Div(
-                    _flow_rag("Calibration Conservatism RAG", summary["calibration_rag"], "#lgd-calibration", incoming=True, outgoing=True),
-                    className="lgd-flow-dimension-calibration",
-                ),
-                html.Div(
-                    _flow_rag("Discriminatory Power RAG", summary["discrimination_rag"], "#lgd-discrimination", incoming=True, outgoing=True),
-                    className="lgd-flow-dimension-discrimination",
-                ),
-                html.Div(
-                    className=f"pd-overview-flow-performance pd-overview-flow-performance-{pd_tone_class(summary['performance_rag'])} lgd-flow-performance",
-                    children=[
-                        html.Span("Performance RAG", className="pd-overview-flow-performance-title"),
-                        html.Strong([pd_rag_dot(summary["performance_rag"]), f" {summary['performance_rag']}"]),
-                    ],
-                ),
-            ],
             **{"aria-label": "LGD monitoring overview process flow"},
         ),
     )
@@ -469,26 +508,38 @@ def render_lgd_performance_content(
         ]
 
     calibration_cards = [
-        build_pd_test_card(
-            metric,
-            summary["current"],
-            summary["previous"],
-            thresholds,
-            context,
-            {"format": "percent", "card_title": f"{metric} 1 year"},
-        )
-        for metric in LGD_CALIBRATION_METRICS
-    ]
-    calibration_cards.append(
         build_pd_section_rag_card(
             "Calibration Conservatism RAG",
             summary["calibration_rag"],
             summary["previous_calibration_rag"],
             context,
             {"hide_status": True, "hide_comparison": True, "meta_label": "Monitoring point"},
-        )
-    )
+        ),
+        build_pd_test_card(
+            "RMSE",
+            summary["current"],
+            summary["previous"],
+            thresholds,
+            context,
+            {"format": "percent", "card_title": "RMSE 1 year"},
+        ),
+        build_pd_test_card(
+            "ME",
+            summary["current"],
+            summary["previous"],
+            thresholds,
+            context,
+            {"format": "percent", "card_title": "Mean Error 1 year"},
+        ),
+    ]
     discrimination_cards = [
+        build_pd_section_rag_card(
+            "Discriminatory Power RAG",
+            summary["discrimination_rag"],
+            summary["previous_discrimination_rag"],
+            context,
+            {"hide_status": True, "hide_comparison": True, "meta_label": "Monitoring point"},
+        ),
         build_pd_test_card(
             "Kendall's Tau",
             summary["current"],
@@ -496,13 +547,6 @@ def render_lgd_performance_content(
             thresholds,
             context,
             {"format": "ratio", "card_title": "Kendall's Tau 1 year"},
-        ),
-        build_pd_section_rag_card(
-            "Discriminatory Power RAG",
-            summary["discrimination_rag"],
-            summary["previous_discrimination_rag"],
-            context,
-            {"hide_status": True, "hide_comparison": True, "meta_label": "Monitoring point"},
         ),
         build_pd_section_rag_card(
             "Performance RAG",
@@ -540,10 +584,10 @@ def render_lgd_performance_content(
         children=[
             build_pd_section_heading(
                 "1.1 Overview",
-                "RAG Assignment Overview",
+                "LGD RAG Assignment Overview",
                 "At-a-glance summary of the 1 year LGD monitoring flow from metric tests to dimension RAGs and Performance RAG.",
                 summary["performance_rag"],
-                {"status_label": "Performance RAG"},
+                {"show_rag": False},
             ),
             _build_lgd_overview_flow(summary),
         ],
@@ -560,7 +604,7 @@ def render_lgd_performance_content(
                 summary["calibration_rag"],
                 {"show_rag": False},
             ),
-            html.Div(className="pd-test-grid pd-calibration-test-grid", children=calibration_cards),
+            html.Div(className="pd-test-grid pd-test-grid-3", children=calibration_cards),
             html.Div(
                 id="lgd-calibration-rag-trend-panel",
                 className="section-card pd-default-rate-trend-section",
@@ -587,8 +631,44 @@ def render_lgd_performance_content(
             html.Div(
                 className="pd-trend-detail-grid",
                 children=[
-                    _build_chart_panel("ME Trend", "Mean error by monitoring point with LGD threshold shading.", build_lgd_metric_trend_figure(metric_rows, data["monitoring_thresholds"], "ME", monitoring_point)),
-                    _build_chart_panel("RMSE Trend", "Root mean squared error by monitoring point with LGD threshold shading.", build_lgd_metric_trend_figure(metric_rows, data["monitoring_thresholds"], "RMSE", monitoring_point)),
+                    html.Div(
+                        id="lgd-me-trend-panel",
+                        className="section-card pd-default-rate-trend-section",
+                        children=[
+                            build_chart_header(
+                                "Mean Error Trend",
+                                "Mean error by monitoring point with LGD threshold shading.",
+                                ME_RANGE_KEY,
+                                calibration_rag_periods,
+                                range_store.get(ME_RANGE_KEY),
+                            ),
+                            dcc.Graph(
+                                id="lgd-me-trend-chart",
+                                figure=build_lgd_metric_trend_figure(metric_rows, data["monitoring_thresholds"], "ME", monitoring_point),
+                                config=_GRAPH_CONFIG,
+                                className="pd-default-rate-trend-chart pd-default-rate-trend-chart-compact pd-default-rate-trend-chart-axis-room-compact",
+                            ),
+                        ],
+                    ),
+                    html.Div(
+                        id="lgd-rmse-trend-panel",
+                        className="section-card pd-default-rate-trend-section",
+                        children=[
+                            build_chart_header(
+                                "RMSE Trend",
+                                "Root mean squared error by monitoring point with LGD threshold shading.",
+                                RMSE_RANGE_KEY,
+                                calibration_rag_periods,
+                                range_store.get(RMSE_RANGE_KEY),
+                            ),
+                            dcc.Graph(
+                                id="lgd-rmse-trend-chart",
+                                figure=build_lgd_metric_trend_figure(metric_rows, data["monitoring_thresholds"], "RMSE", monitoring_point),
+                                config=_GRAPH_CONFIG,
+                                className="pd-default-rate-trend-chart pd-default-rate-trend-chart-compact pd-default-rate-trend-chart-axis-room-compact",
+                            ),
+                        ],
+                    ),
                 ],
             ),
         ],
@@ -605,34 +685,53 @@ def render_lgd_performance_content(
                 summary["discrimination_rag"],
                 {"show_rag": False},
             ),
-            html.Div(className="pd-test-grid pd-discrimination-test-grid", children=discrimination_cards[:2]),
+            html.Div(className="pd-test-grid", style={"gridTemplateColumns": "repeat(2, minmax(0, 1fr))"}, children=discrimination_cards[:2]),
             html.Div(
-                id="lgd-discrimination-rag-trend-panel",
-                className="section-card pd-default-rate-trend-section",
+                className="pd-trend-detail-grid",
                 children=[
-                    build_chart_header(
-                        "Discriminatory Power RAG Trend",
-                        "Quarter-by-quarter Discriminatory Power RAG shown as a simple color-coded dot timeline.",
-                        DISCRIMINATION_RAG_RANGE_KEY,
-                        discrimination_rag_periods,
-                        range_store.get(DISCRIMINATION_RAG_RANGE_KEY),
+                    html.Div(
+                        id="lgd-discrimination-rag-trend-panel",
+                        className="section-card pd-default-rate-trend-section",
+                        children=[
+                            build_chart_header(
+                                "Discriminatory Power RAG Trend",
+                                "Quarter-by-quarter Discriminatory Power RAG shown as a simple color-coded dot timeline.",
+                                DISCRIMINATION_RAG_RANGE_KEY,
+                                discrimination_rag_periods,
+                                range_store.get(DISCRIMINATION_RAG_RANGE_KEY),
+                            ),
+                            dcc.Graph(
+                                id="lgd-discrimination-rag-trend-chart",
+                                figure=build_lgd_discrimination_rag_trend_figure(
+                                    discrimination_rag_trend,
+                                    monitoring_point,
+                                    range_store.get(DISCRIMINATION_RAG_RANGE_KEY),
+                                ),
+                                config=_GRAPH_CONFIG,
+                                className="pd-default-rate-trend-chart pd-default-rate-trend-chart-compact pd-default-rate-trend-chart-axis-room-compact",
+                            ),
+                        ],
                     ),
-                    dcc.Graph(
-                        id="lgd-discrimination-rag-trend-chart",
-                        figure=build_lgd_discrimination_rag_trend_figure(
-                            discrimination_rag_trend,
-                            monitoring_point,
-                            range_store.get(DISCRIMINATION_RAG_RANGE_KEY),
-                        ),
-                        config=_GRAPH_CONFIG,
-                        className="pd-default-rate-trend-chart pd-default-rate-trend-chart-compact pd-default-rate-trend-chart-axis-room-compact",
+                    html.Div(
+                        id="lgd-kendall-trend-panel",
+                        className="section-card pd-default-rate-trend-section",
+                        children=[
+                            build_chart_header(
+                                "Kendall's Tau Trend",
+                                "Rank-ordering strength by monitoring point with LGD threshold shading.",
+                                KENDALL_RANGE_KEY,
+                                discrimination_rag_periods,
+                                range_store.get(KENDALL_RANGE_KEY),
+                            ),
+                            dcc.Graph(
+                                id="lgd-kendall-trend-chart",
+                                figure=build_lgd_metric_trend_figure(metric_rows, data["monitoring_thresholds"], "Kendall's Tau", monitoring_point),
+                                config=_GRAPH_CONFIG,
+                                className="pd-default-rate-trend-chart pd-default-rate-trend-chart-compact pd-default-rate-trend-chart-axis-room-compact",
+                            ),
+                        ],
                     ),
                 ],
-            ),
-            _build_chart_panel(
-                "Kendall's Tau Trend",
-                "Rank-ordering strength by monitoring point with LGD threshold shading.",
-                build_lgd_metric_trend_figure(metric_rows, data["monitoring_thresholds"], "Kendall's Tau", monitoring_point),
             ),
         ],
     )
@@ -728,11 +827,24 @@ def build_layout() -> list:
 
 def page_layout(data: dict) -> list:
     """Build the LGD page with top controls and live content."""
-    model_options = get_lgd_model_options(data)
-    default_model = model_options[0] if model_options else get_lgd_default_model(data)
-    segment_options = get_lgd_segments_for_model(data, default_model)
-    monitoring_options = get_lgd_monitoring_point_options(data, default_model, "All")
-    default_monitoring_point = monitoring_options[1] if monitoring_options[:1] == ["Latest"] and len(monitoring_options) > 1 else (monitoring_options[0] if monitoring_options else "")
+    from .....data.monitoring.filters_config import load_filter_config, model_names, segment_values
+    from .....data.analytics.lgd import set_lgd_metrics
+    cfg = load_filter_config()
+    model_options = model_names("lgd")
+    default_model = "all"
+    segment_options = ["All", *segment_values()]
+    reporting_cycle_options = [{"label": c["label"], "value": c["value"]} for c in cfg["reporting_cycles"]]
+    default_cycle = reporting_cycle_options[0]["value"] if reporting_cycle_options else "CCAR 2026"
+    cycle_data = (data.get("lgd_observations_by_cycle") or {}).get(default_cycle)
+    if cycle_data:
+        set_lgd_metrics(cycle_data.get("metrics_store"), cycle_data.get("quarters"))
+    else:
+        set_lgd_metrics(None, [])
+    cycle_quarters = shared_filters.REPORTING_CYCLE_QUARTERS.get(default_cycle, [])
+    monitoring_options = cycle_quarters if cycle_quarters else get_lgd_monitoring_point_options(data, None, "All")
+    default_monitoring_point = monitoring_options[0] if monitoring_options else ""
+
+    model_select_options = [{"label": "All models", "value": "all"}] + [{"label": name, "value": name} for name in model_options]
 
     return [
         dcc.Store(id=RANGE_STORE_ID, data={}),
@@ -747,33 +859,47 @@ def page_layout(data: dict) -> list:
                             className="monitoring-controls",
                             children=[
                                 _build_filter(
+                                    "Reporting Cycle",
+                                    shared_filters.build_single_select_dropdown(
+                                        value_id=REPORTING_CYCLE_ID,
+                                        toggle_id=REPORTING_CYCLE_TOGGLE_ID,
+                                        menu_id=REPORTING_CYCLE_MENU_ID,
+                                        filter_key=REPORTING_CYCLE_FILTER_KEY,
+                                        options=reporting_cycle_options,
+                                        value=default_cycle,
+                                    ),
+                                ),
+                                _build_filter(
                                     "Monitoring Point",
-                                    dcc.Dropdown(
-                                        id=MONITORING_POINT_DROPDOWN_ID,
-                                        options=_dropdown_options(monitoring_options),
+                                    shared_filters.build_single_select_dropdown(
+                                        value_id=MONITORING_POINT_DROPDOWN_ID,
+                                        toggle_id=MONITORING_POINT_TOGGLE_ID,
+                                        menu_id=MONITORING_POINT_MENU_ID,
+                                        filter_key=MONITORING_POINT_FILTER_KEY,
+                                        options=[{"label": q, "value": q} for q in monitoring_options],
                                         value=default_monitoring_point,
-                                        clearable=False,
-                                        className="monitoring-top-select monitoring-point-select",
                                     ),
                                 ),
                                 _build_filter(
                                     "Segment",
-                                    dcc.Dropdown(
-                                        id=SEGMENT_DROPDOWN_ID,
+                                    shared_filters.build_single_select_dropdown(
+                                        value_id=SEGMENT_DROPDOWN_ID,
+                                        toggle_id=SEGMENT_TOGGLE_ID,
+                                        menu_id=SEGMENT_MENU_ID,
+                                        filter_key=SEGMENT_FILTER_KEY,
                                         options=_dropdown_options(segment_options),
                                         value="All",
-                                        clearable=False,
-                                        className="monitoring-top-select",
                                     ),
                                 ),
                                 _build_filter(
                                     "Specific Models",
-                                    dcc.Dropdown(
-                                        id=MODEL_DROPDOWN_ID,
-                                        options=_dropdown_options(model_options),
-                                        value=default_model,
-                                        clearable=False,
-                                        className="monitoring-top-select",
+                                    shared_filters.build_single_select_dropdown(
+                                        value_id=MODEL_DROPDOWN_ID,
+                                        toggle_id=MODEL_TOGGLE_ID,
+                                        menu_id=MODEL_MENU_ID,
+                                        filter_key=MODEL_FILTER_KEY,
+                                        options=model_select_options,
+                                        value="all",
                                     ),
                                 ),
                             ],

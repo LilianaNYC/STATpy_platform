@@ -12,11 +12,11 @@ whenever any of it changes.
 
 from __future__ import annotations
 
-from dash import ALL, Input, Output, State, ctx, no_update
+from dash import ALL, Input, Output, State, ctx, html, no_update
 
 from . import page as layout
 from .....components import filters
-from .....data.analytics.calculations import PdFilterContext
+from .....data.analytics.calculations import PdFilterContext, set_precomputed_metrics
 from .....shared.registration import already_registered
 from ...data_access import PD_PERFORMANCE_DATA
 
@@ -33,92 +33,60 @@ def register_callbacks(app) -> None:
     segment_labels = {"all": "All", **{value: value for value in data["segment_values"]}}
 
     # -----------------------------------------------------------------
-    # Models checklist <-> "All" select-all checkbox
+    # Reporting Cycle -> Monitoring Point options
     # -----------------------------------------------------------------
+    all_quarters_desc = sorted(data["quarters"], reverse=True)
+
     @app.callback(
-        Output(filters.MODELS_ID, "value"),
-        Output(filters.MODELS_SELECT_ALL_ID, "value"),
-        Input(filters.MODELS_SELECT_ALL_ID, "value"),
-        Input(filters.MODELS_ID, "value"),
-        State(filters.MODELS_ID, "options"),
-        prevent_initial_call=True,
+        Output(filters.MONITORING_POINT_ID, "options"),
+        Output(filters.MONITORING_POINT_ID, "value"),
+        Output(filters.MONITORING_POINT_TOGGLE_ID, "children"),
+        Output(filters.MONITORING_POINT_MENU_ID, "children"),
+        Input(filters.REPORTING_CYCLE_ID, "value"),
+        State(filters.MONITORING_POINT_ID, "value"),
     )
-    def sync_pd_model_selection(select_all_value, models_value, models_options):
-        all_names = [option["value"] for option in models_options]
-        if ctx.triggered_id == filters.MODELS_SELECT_ALL_ID:
-            if "all" in (select_all_value or []):
-                return all_names, no_update
-            return [], no_update
-        select_all = ["all"] if all_names and set(models_value or []) == set(all_names) else []
-        return no_update, select_all
+    def sync_reporting_cycle_to_monitoring_point(cycle, current_mp):
+        allowed = filters.REPORTING_CYCLE_QUARTERS.get(cycle)
+        if allowed is None:
+            quarters = all_quarters_desc
+        else:
+            quarters = list(allowed)
+        options = [{"label": q, "value": q} for q in quarters]
+        value = current_mp if current_mp in quarters else quarters[0] if quarters else ""
+        menu_children = [
+            html.Button(
+                [
+                    html.Span(opt["label"], className="single-select-option-label"),
+                    html.Span("✓", className="single-select-option-check", **{"aria-hidden": "true"}),
+                ],
+                id={"type": filters.SINGLE_SELECT_OPTION_ID, "filter": "monitoring-point", "value": opt["value"]},
+                type="button",
+                n_clicks=0,
+                className="single-select-option is-selected" if opt["value"] == value else "single-select-option",
+            )
+            for opt in options
+        ]
+        return options, value, value, menu_children
 
     # -----------------------------------------------------------------
     # Portfolio segment <-> specific models mutual exclusivity
-    # (port of syncMonitoringFilterControls's isPerformanceTab branch)
     # -----------------------------------------------------------------
     @app.callback(
         Output(filters.PORTFOLIO_SEGMENT_ID, "disabled"),
         Output(filters.PORTFOLIO_SEGMENT_TOGGLE_ID, "disabled"),
-        Output(filters.MODELS_ID, "options"),
-        Output(filters.MODELS_SELECT_ALL_ID, "options"),
-        Output(filters.MODELS_TOGGLE_ID, "children"),
         Output(filters.MODELS_TOGGLE_ID, "disabled"),
-        Output(filters.FILTER_HELP_ID, "children"),
         Input(filters.PORTFOLIO_SEGMENT_ID, "value"),
         Input(filters.MODELS_ID, "value"),
-        State(filters.MODELS_ID, "options"),
-        State(filters.MODELS_SELECT_ALL_ID, "options"),
     )
-    def sync_pd_segment_model_exclusivity(segment, models_value, models_options, select_all_options):
-        all_names = [option["value"] for option in models_options]
-        models_value = models_value or []
+    def sync_pd_segment_model_exclusivity(segment, model):
         has_segment_selection = segment != "all"
-        has_specific_model_selection = 0 < len(models_value) < len(all_names)
-
-        new_models_options = [{**option, "disabled": has_segment_selection} for option in models_options]
-        new_select_all_options = [{**option, "disabled": has_segment_selection} for option in select_all_options]
-
-        if has_segment_selection:
-            toggle_label = "Disabled while Segment is selected"
-        elif not models_value:
-            toggle_label = "Select models"
-        elif len(models_value) == len(all_names):
-            toggle_label = "All models"
-        elif len(models_value) == 1:
-            toggle_label = models_value[0]
-        else:
-            toggle_label = f"{len(models_value)} models selected"
-
-        if has_segment_selection:
-            help_text = "Segment filtering is active. Reset Segment to All to select specific models."
-        elif has_specific_model_selection:
-            help_text = "Specific Models filtering is active. Reset models to All to select a portfolio segment."
-        else:
-            help_text = "Choose a portfolio segment or specific models. These filters cannot be combined."
+        has_specific_model_selection = model not in ("all", None, "")
 
         return (
-            has_specific_model_selection,
-            has_specific_model_selection,
-            new_models_options,
-            new_select_all_options,
-            toggle_label,
-            has_segment_selection,
-            help_text,
+            has_specific_model_selection,  # disable Segment when a specific model is chosen
+            has_specific_model_selection,  # ...and its toggle
+            has_segment_selection,         # disable Specific Models when a segment is chosen
         )
-
-    # -----------------------------------------------------------------
-    # Checkbox-dropdown open/close toggles
-    # -----------------------------------------------------------------
-    @app.callback(
-        Output(filters.MODELS_MENU_ID, "className"),
-        Input(filters.MODELS_TOGGLE_ID, "n_clicks"),
-        State(filters.MODELS_MENU_ID, "className"),
-        prevent_initial_call=True,
-    )
-    def toggle_pd_models_menu(_n_clicks, current_class):
-        if "open" in (current_class or "").split():
-            return "checkbox-dropdown-menu"
-        return "checkbox-dropdown-menu open"
 
     # -----------------------------------------------------------------
     # Single-select dropdown open/close toggles
@@ -153,7 +121,8 @@ def register_callbacks(app) -> None:
     # Each filter_key routes to its own hidden dcc.Dropdown value.
     # -----------------------------------------------------------------
     @app.callback(
-        Output(filters.MONITORING_POINT_ID, "value"),
+        Output(filters.MONITORING_POINT_ID, "value", allow_duplicate=True),
+        Output(filters.MONITORING_POINT_TOGGLE_ID, "children", allow_duplicate=True),
         Output(filters.MONITORING_POINT_MENU_ID, "className", allow_duplicate=True),
         Input({"type": filters.SINGLE_SELECT_OPTION_ID, "filter": "monitoring-point", "value": ALL}, "n_clicks"),
         prevent_initial_call=True,
@@ -161,8 +130,9 @@ def register_callbacks(app) -> None:
     def select_monitoring_point(_clicks):
         triggered = ctx.triggered_id
         if not triggered:
-            return no_update, no_update
-        return triggered["value"], "checkbox-dropdown-menu single-select-menu"
+            return no_update, no_update, no_update
+        value = triggered["value"]
+        return value, value, "checkbox-dropdown-menu single-select-menu"
 
     @app.callback(
         Output(filters.PORTFOLIO_SEGMENT_ID, "value"),
@@ -180,20 +150,6 @@ def register_callbacks(app) -> None:
     # Single-select dropdown shell sync (toggle label + option highlights)
     # -----------------------------------------------------------------
     @app.callback(
-        Output(filters.MONITORING_POINT_TOGGLE_ID, "children"),
-        Output({"type": filters.SINGLE_SELECT_OPTION_ID, "filter": "monitoring-point", "value": ALL}, "className"),
-        Input(filters.MONITORING_POINT_ID, "value"),
-        State({"type": filters.SINGLE_SELECT_OPTION_ID, "filter": "monitoring-point", "value": ALL}, "id"),
-    )
-    def sync_monitoring_point_shell(value, option_ids):
-        label = monitoring_point_labels.get(value, value or "Select")
-        classes = [
-            "single-select-option is-selected" if option_id["value"] == value else "single-select-option"
-            for option_id in option_ids
-        ]
-        return label, classes
-
-    @app.callback(
         Output(filters.PORTFOLIO_SEGMENT_TOGGLE_ID, "children"),
         Output({"type": filters.SINGLE_SELECT_OPTION_ID, "filter": "portfolio-segment", "value": ALL}, "className"),
         Input(filters.PORTFOLIO_SEGMENT_ID, "value"),
@@ -201,6 +157,126 @@ def register_callbacks(app) -> None:
     )
     def sync_segment_shell(value, option_ids):
         label = segment_labels.get(value, value or "Select")
+        classes = [
+            "single-select-option is-selected" if option_id["value"] == value else "single-select-option"
+            for option_id in option_ids
+        ]
+        return label, classes
+
+    # Reporting Cycle toggle
+    @app.callback(
+        Output(filters.REPORTING_CYCLE_MENU_ID, "className"),
+        Input(filters.REPORTING_CYCLE_TOGGLE_ID, "n_clicks"),
+        State(filters.REPORTING_CYCLE_MENU_ID, "className"),
+        prevent_initial_call=True,
+    )
+    def toggle_reporting_cycle_menu(_n_clicks, current_class):
+        if "open" in (current_class or "").split():
+            return "checkbox-dropdown-menu single-select-menu"
+        return "checkbox-dropdown-menu single-select-menu open"
+
+    @app.callback(
+        Output(filters.REPORTING_CYCLE_ID, "value"),
+        Output(filters.REPORTING_CYCLE_MENU_ID, "className", allow_duplicate=True),
+        Input({"type": filters.SINGLE_SELECT_OPTION_ID, "filter": "reporting-cycle", "value": ALL}, "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def select_reporting_cycle(_clicks):
+        triggered = ctx.triggered_id
+        if not triggered:
+            return no_update, no_update
+        return triggered["value"], "checkbox-dropdown-menu single-select-menu"
+
+    @app.callback(
+        Output(filters.REPORTING_CYCLE_TOGGLE_ID, "children"),
+        Output({"type": filters.SINGLE_SELECT_OPTION_ID, "filter": "reporting-cycle", "value": ALL}, "className"),
+        Input(filters.REPORTING_CYCLE_ID, "value"),
+        State({"type": filters.SINGLE_SELECT_OPTION_ID, "filter": "reporting-cycle", "value": ALL}, "id"),
+    )
+    def sync_reporting_cycle_shell(value, option_ids):
+        classes = [
+            "single-select-option is-selected" if option_id["value"] == value else "single-select-option"
+            for option_id in option_ids
+        ]
+        return value or "Select", classes
+
+    # Scenario toggle
+    scenario_labels = {"intsevere": "intsevere", "baseline": "baseline", "other": "other"}
+
+    @app.callback(
+        Output(filters.SCENARIO_MENU_ID, "className"),
+        Input(filters.SCENARIO_TOGGLE_ID, "n_clicks"),
+        State(filters.SCENARIO_MENU_ID, "className"),
+        prevent_initial_call=True,
+    )
+    def toggle_scenario_menu(_n_clicks, current_class):
+        if "open" in (current_class or "").split():
+            return "checkbox-dropdown-menu single-select-menu"
+        return "checkbox-dropdown-menu single-select-menu open"
+
+    @app.callback(
+        Output(filters.SCENARIO_ID, "value"),
+        Output(filters.SCENARIO_MENU_ID, "className", allow_duplicate=True),
+        Input({"type": filters.SINGLE_SELECT_OPTION_ID, "filter": "scenario", "value": ALL}, "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def select_scenario(_clicks):
+        triggered = ctx.triggered_id
+        if not triggered:
+            return no_update, no_update
+        return triggered["value"], "checkbox-dropdown-menu single-select-menu"
+
+    @app.callback(
+        Output(filters.SCENARIO_TOGGLE_ID, "children"),
+        Output({"type": filters.SINGLE_SELECT_OPTION_ID, "filter": "scenario", "value": ALL}, "className"),
+        Input(filters.SCENARIO_ID, "value"),
+        State({"type": filters.SINGLE_SELECT_OPTION_ID, "filter": "scenario", "value": ALL}, "id"),
+    )
+    def sync_scenario_shell(value, option_ids):
+        label = scenario_labels.get(value, value or "Select")
+        classes = [
+            "single-select-option is-selected" if option_id["value"] == value else "single-select-option"
+            for option_id in option_ids
+        ]
+        return label, classes
+
+    # Specific Models toggle
+    @app.callback(
+        Output(filters.MODELS_MENU_ID, "className"),
+        Input(filters.MODELS_TOGGLE_ID, "n_clicks"),
+        State(filters.MODELS_MENU_ID, "className"),
+        State(filters.MODELS_TOGGLE_ID, "disabled"),
+        prevent_initial_call=True,
+    )
+    def toggle_models_menu(_n_clicks, current_class, is_disabled):
+        if is_disabled:
+            return "checkbox-dropdown-menu single-select-menu"
+        if "open" in (current_class or "").split():
+            return "checkbox-dropdown-menu single-select-menu"
+        return "checkbox-dropdown-menu single-select-menu open"
+
+    @app.callback(
+        Output(filters.MODELS_ID, "value"),
+        Output(filters.MODELS_MENU_ID, "className", allow_duplicate=True),
+        Input({"type": filters.SINGLE_SELECT_OPTION_ID, "filter": "specific-models", "value": ALL}, "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def select_model(_clicks):
+        triggered = ctx.triggered_id
+        if not triggered:
+            return no_update, no_update
+        return triggered["value"], "checkbox-dropdown-menu single-select-menu"
+
+    model_labels = {"all": "All models", **{name: name for name in data["model_names"]}}
+
+    @app.callback(
+        Output(filters.MODELS_TOGGLE_ID, "children"),
+        Output({"type": filters.SINGLE_SELECT_OPTION_ID, "filter": "specific-models", "value": ALL}, "className"),
+        Input(filters.MODELS_ID, "value"),
+        State({"type": filters.SINGLE_SELECT_OPTION_ID, "filter": "specific-models", "value": ALL}, "id"),
+    )
+    def sync_models_shell(value, option_ids):
+        label = model_labels.get(value, value or "Select")
         classes = [
             "single-select-option is-selected" if option_id["value"] == value else "single-select-option"
             for option_id in option_ids
@@ -288,6 +364,17 @@ def register_callbacks(app) -> None:
         return trend_horizon_store
 
     # -----------------------------------------------------------------
+    # Scenario Ranking selector -> pd-scenario-ranking-store
+    # -----------------------------------------------------------------
+    @app.callback(
+        Output(layout.SCENARIO_RANKING_STORE_ID, "data"),
+        Input(layout.SCENARIO_RANKING_FILTER_ID, "value"),
+        prevent_initial_call=True,
+    )
+    def update_pd_scenario_ranking_store(selected_scenarios):
+        return {"scenarios": selected_scenarios or []}
+
+    # -----------------------------------------------------------------
     # Apply filters: snapshot current filter values into the applied store
     # -----------------------------------------------------------------
     @app.callback(
@@ -296,14 +383,24 @@ def register_callbacks(app) -> None:
         State(filters.MONITORING_POINT_ID, "value"),
         State(filters.PORTFOLIO_SEGMENT_ID, "value"),
         State(filters.MODELS_ID, "value"),
+        State(filters.REPORTING_CYCLE_ID, "value"),
+        State(filters.SCENARIO_ID, "value"),
         prevent_initial_call=True,
     )
-    def apply_pd_filters(_n_clicks, monitoring_point, segment, models):
-        """Snapshot the current top filters so the content renders only on Apply."""
+    def apply_pd_filters(_n_clicks, monitoring_point, segment, models, reporting_cycle, scenario):
+        """Snapshot the current top filters so the content renders only on Apply.
+
+        Guard against spurious fires when the page is (re)inserted by the router:
+        only snapshot once the button has actually been clicked.
+        """
+        if not _n_clicks:
+            return no_update
         return {
             "monitoring_point": monitoring_point,
             "segment": segment,
             "models": models,
+            "reporting_cycle": reporting_cycle,
+            "scenario": scenario,
         }
 
     # -----------------------------------------------------------------
@@ -315,22 +412,59 @@ def register_callbacks(app) -> None:
         Input(layout.RANGE_STORE_ID, "data"),
         Input(layout.TREND_HORIZON_STORE_ID, "data"),
         Input(layout.MEV_FILTER_STORE_ID, "data"),
+        Input(layout.SCENARIO_RANKING_STORE_ID, "data"),
         Input(layout.APP_THEME_ID, "value"),
+        prevent_initial_call=True,
     )
     def render_pd_performance_content(
-        applied, range_store, trend_horizon_store, mev_filter_store, theme_value,
+        applied, range_store, trend_horizon_store, mev_filter_store, scenario_ranking_store, theme_value,
     ):
+        # Until the user clicks "Apply filters", keep the getting-started guide
+        # that ``page_layout`` rendered into the content container.
+        if not applied:
+            return layout.build_pd_apply_prompt()
+
+        from .....data.monitoring.filters_config import load_filter_config
+        cfg = load_filter_config()
+        default_cycle = cfg["reporting_cycles"][0]["value"] if cfg["reporting_cycles"] else "CCAR 2026"
+        default_scenario = cfg["scenarios"][0]["value"] if cfg["scenarios"] else "intsevere"
+
         applied = applied or {}
-        monitoring_point = applied.get("monitoring_point") or data.get("latest_quarter") or ""
+        reporting_cycle = applied.get("reporting_cycle") or default_cycle
+        scenario = applied.get("scenario") or default_scenario
+
+        cycle_data = (data.get("observations_by_cycle") or {}).get(reporting_cycle)
+        if cycle_data:
+            quarters = cycle_data["quarters"]
+            performance_observations = cycle_data["performance_observations"]
+            rating_migration_observations = cycle_data["rating_migration_observations"]
+            metrics_store = cycle_data.get("metrics_store")
+        else:
+            quarters = data["quarters"]
+            performance_observations = data["performance_observations"]
+            rating_migration_observations = data["rating_migration_observations"]
+            metrics_store = None
+
+        # The PD Performance tab reads every metric straight from the workbook.
+        set_precomputed_metrics(metrics_store)
+
+        render_data = {**data, "quarters": quarters, "performance_observations": performance_observations, "rating_migration_observations": rating_migration_observations}
+
+        monitoring_point = applied.get("monitoring_point") or (quarters[-1] if quarters else "")
         segment = applied.get("segment") or "all"
-        models = applied.get("models") or data["model_names"]
+        models_value = applied.get("models") or "all"
+        if models_value == "all" or not models_value:
+            models = set(data["model_names"])
+        else:
+            models = {models_value}
         filter_ctx = PdFilterContext(
-            quarters=data["quarters"],
-            models=set(models),
+            quarters=quarters,
+            models=models,
             segment=segment,
             monitoring_point=monitoring_point,
         )
         return layout.render_pd_performance_content(
-            data, filter_ctx, range_store or {}, trend_horizon_store or {}, mev_filter_store or {},
-            theme_value=theme_value,
+            render_data, filter_ctx, range_store or {}, trend_horizon_store or {}, mev_filter_store or {},
+            scenario_ranking_store or {},
+            theme_value=theme_value, reporting_cycle=reporting_cycle, scenario=scenario,
         )

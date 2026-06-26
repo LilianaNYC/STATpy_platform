@@ -20,6 +20,50 @@ LGD_DISCRIMINATION_METRICS = ["Kendall's Tau"]
 LGD_ALL_MODELS_LABEL = "All models"
 
 
+# ---------------------------------------------------------------------------
+# Precomputed-metrics store
+# ---------------------------------------------------------------------------
+# The LGD tab reads metric rows straight from ``LGD_Performance_Metrics`` via a
+# store keyed by ``(level, value)`` (``level`` = ``model``/``segment``;
+# ``value`` = the model name, ``"All Models"``, or a segment name). The cycle
+# callback installs the selected reporting cycle's store and quarters here.
+
+_LGD_STORE: dict | None = None
+_LGD_QUARTERS: list[str] = []
+
+
+def set_lgd_metrics(store: dict | None, quarters: list[str] | None = None) -> None:
+    """Install (or clear) the precomputed LGD metrics store and its quarters."""
+    global _LGD_STORE, _LGD_QUARTERS
+    _LGD_STORE = store
+    _LGD_QUARTERS = list(quarters or [])
+
+
+def _lgd_store_key(selected_model, selected_segment) -> tuple[str, str]:
+    """Map a (model, segment) selection to a ``(level, value)`` store key.
+
+    The model and segment filters are mutually exclusive, so the selection
+    collapses to a single entity: a segment, a single model, or all models.
+    """
+    segment = selected_segment if isinstance(selected_segment, str) else None
+    if segment and segment not in ("All", "all", ""):
+        return "segment", segment
+    if isinstance(selected_model, (list, tuple, set)):
+        models = [m for m in selected_model if m]
+        model = models[0] if len(models) == 1 else None
+    else:
+        model = selected_model
+    if model and model not in ("all", "All", LGD_ALL_MODELS_LABEL, ""):
+        return "model", str(model)
+    return "model", "All Models"
+
+
+def _lgd_store_rows(selected_model, selected_segment) -> list[dict] | None:
+    if _LGD_STORE is None:
+        return None
+    return _LGD_STORE.get(_lgd_store_key(selected_model, selected_segment), [])
+
+
 def _is_finite(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
@@ -82,8 +126,12 @@ def get_lgd_thresholds(data: dict) -> list[dict[str, Any]]:
 
 
 def get_lgd_model_options(data: dict) -> list[str]:
-    portfolio: pl.DataFrame = data["portfolio"]
-    if config.LGD_MODEL_COLUMN not in portfolio.columns:
+    from ..monitoring.filters_config import model_names
+    options = model_names("lgd")
+    if options:
+        return options
+    portfolio: pl.DataFrame = data.get("portfolio")
+    if portfolio is None or config.LGD_MODEL_COLUMN not in portfolio.columns:
         return []
     values = portfolio.select(config.LGD_MODEL_COLUMN).to_series().to_list()
     return sorted({text for value in values if (text := _clean_text(value))}, key=str.lower)
@@ -93,44 +141,56 @@ def get_lgd_default_model(data: dict) -> str:
     return LGD_ALL_MODELS_LABEL
 
 
-def resolve_lgd_model(data: dict, selected_model: str | None) -> str:
-    if selected_model in {LGD_ALL_MODELS_LABEL, "All", None, ""}:
-        return LGD_ALL_MODELS_LABEL
+def resolve_lgd_models(data: dict, selected_model: str | list[str] | tuple[str, ...] | set[str] | None) -> list[str]:
     models = get_lgd_model_options(data)
+    if isinstance(selected_model, (list, tuple, set)):
+        selected = [str(value) for value in selected_model if value in models]
+        return selected
+    if selected_model in {LGD_ALL_MODELS_LABEL, "All", None, ""}:
+        return []
     if selected_model in models:
-        return str(selected_model)
-    return LGD_ALL_MODELS_LABEL
+        return [str(selected_model)]
+    return []
 
 
-def get_lgd_segments_for_model(data: dict, selected_model: str | None) -> list[str]:
-    portfolio: pl.DataFrame = data["portfolio"]
-    model = resolve_lgd_model(data, selected_model)
-    if config.SEGMENT_COLUMN not in portfolio.columns or config.LGD_MODEL_COLUMN not in portfolio.columns:
+
+def get_lgd_segments_for_model(data: dict, selected_model: str | list[str] | tuple[str, ...] | set[str] | None) -> list[str]:
+    from ..monitoring.filters_config import segment_values
+    segments = segment_values()
+    if segments:
+        return ["All", *segments]
+    portfolio: pl.DataFrame = data.get("portfolio")
+    if portfolio is None or config.SEGMENT_COLUMN not in portfolio.columns or config.LGD_MODEL_COLUMN not in portfolio.columns:
         return ["All"]
-
     df = portfolio.filter(pl.col(config.LGD_MODEL_COLUMN).cast(pl.String).str.strip_chars() != "")
-    if model != LGD_ALL_MODELS_LABEL:
-        df = df.filter(pl.col(config.LGD_MODEL_COLUMN).cast(pl.String) == model)
     values = df.select(config.SEGMENT_COLUMN).to_series().to_list()
     segments = sorted({text for value in values if (text := _clean_text(value))}, key=str.lower)
     return ["All", *segments]
 
 
-def resolve_lgd_segment(data: dict, selected_model: str | None, selected_segment: str | None) -> str:
+def resolve_lgd_segment(
+    data: dict,
+    selected_model: str | list[str] | tuple[str, ...] | set[str] | None,
+    selected_segment: str | None,
+) -> str:
     segments = get_lgd_segments_for_model(data, selected_model)
     return selected_segment if selected_segment in segments else "All"
 
 
-def filter_lgd_portfolio(data: dict, selected_model: str | None, selected_segment: str | None = "All") -> pl.DataFrame:
+def filter_lgd_portfolio(
+    data: dict,
+    selected_model: str | list[str] | tuple[str, ...] | set[str] | None,
+    selected_segment: str | None = "All",
+) -> pl.DataFrame:
     portfolio: pl.DataFrame = data["portfolio"]
-    model = resolve_lgd_model(data, selected_model)
+    selected_models = resolve_lgd_models(data, selected_model)
     if config.LGD_MODEL_COLUMN not in portfolio.columns:
         return portfolio.clear()
 
     df = portfolio.filter(pl.col(config.LGD_MODEL_COLUMN).cast(pl.String).str.strip_chars() != "")
-    if model != LGD_ALL_MODELS_LABEL:
-        df = df.filter(pl.col(config.LGD_MODEL_COLUMN).cast(pl.String) == model)
-    segment = resolve_lgd_segment(data, model, selected_segment)
+    if selected_models:
+        df = df.filter(pl.col(config.LGD_MODEL_COLUMN).cast(pl.String).is_in(selected_models))
+    segment = resolve_lgd_segment(data, selected_models, selected_segment)
     if segment != "All" and config.SEGMENT_COLUMN in df.columns:
         df = df.filter(pl.col(config.SEGMENT_COLUMN).cast(pl.String) == segment)
     return df
@@ -178,6 +238,9 @@ def build_lgd_observations(data: dict, selected_model: str | None, selected_segm
 
 
 def get_lgd_periods(data: dict, selected_model: str | None, selected_segment: str | None = "All") -> list[str]:
+    rows = _lgd_store_rows(selected_model, selected_segment)
+    if rows is not None:
+        return sorted({str(r["Monitoring Period"]) for r in rows if r.get("Monitoring Period")}, key=_quarter_sort_key)
     observations = build_lgd_observations(data, selected_model, selected_segment)
     if observations.is_empty():
         return []
@@ -205,6 +268,10 @@ def resolve_lgd_monitoring_point(
 
 
 def lgd_metrics_by_period(data: dict, selected_model: str | None, selected_segment: str | None = "All") -> list[dict[str, Any]]:
+    rows = _lgd_store_rows(selected_model, selected_segment)
+    if rows is not None:
+        return sorted((dict(r) for r in rows), key=lambda r: _quarter_sort_key(r["Monitoring Period"]))
+
     observations = build_lgd_observations(data, selected_model, selected_segment)
     if observations.is_empty():
         return []

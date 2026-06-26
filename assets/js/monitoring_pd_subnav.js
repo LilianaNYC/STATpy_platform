@@ -16,7 +16,7 @@
     "pd-post-subjective-overview",
     "pd-transition-matrix-distance",
     "pd-population-stability-index",
-    "pd-rank-ordering",
+    "pd-scenario-ranking",
     "pd-sensitivity-analysis",
     "pd-mev-range",
   ];

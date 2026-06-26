@@ -192,7 +192,7 @@ def filter_overview_rows(
     rows: list[dict[str, Any]],
     monitoring_period: str = "All",
     model_group: str = "All",
-    model: str = "All",
+    model: str | list[str] | tuple[str, ...] | set[str] = "All",
     segment: str = "All",
 ) -> list[dict[str, Any]]:
     filtered = rows
@@ -200,7 +200,11 @@ def filter_overview_rows(
         filtered = [row for row in filtered if row["Monitoring Period"] == monitoring_period]
     if model_group != "All":
         filtered = [row for row in filtered if row["Model Group"] == model_group]
-    if model != "All":
+    if isinstance(model, (list, tuple, set)):
+        selected_models = {str(value) for value in model if value not in {"All", "", None}}
+        if selected_models:
+            filtered = [row for row in filtered if row["Model"] in selected_models]
+    elif model != "All":
         filtered = [row for row in filtered if row["Model"] == model]
     if segment != "All":
         filtered = [row for row in filtered if row["Segment"] == segment]

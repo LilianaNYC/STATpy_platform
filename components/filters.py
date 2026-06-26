@@ -18,10 +18,25 @@ from __future__ import annotations
 from dash import dcc, html
 
 from ..data.analytics.calculations import get_pd_range_preset, get_pd_range_selection
+from ..data.monitoring.filters_config import monitoring_points_by_cycle
 
 # ---------------------------------------------------------------------------
 # Component ids
 # ---------------------------------------------------------------------------
+
+REPORTING_CYCLE_ID = "pd-reporting-cycle"
+REPORTING_CYCLE_TOGGLE_ID = "pd-reporting-cycle-toggle"
+REPORTING_CYCLE_MENU_ID = "pd-reporting-cycle-menu"
+
+# Monitoring points available per reporting cycle, sourced from the workbook's
+# ``Filters`` tab so cycles/quarters can be edited without code changes.
+REPORTING_CYCLE_QUARTERS = monitoring_points_by_cycle()
+SCENARIO_ID = "pd-scenario"
+SCENARIO_TOGGLE_ID = "pd-scenario-toggle"
+SCENARIO_MENU_ID = "pd-scenario-menu"
+SCENARIO_ID = "pd-scenario"
+SCENARIO_TOGGLE_ID = "pd-scenario-toggle"
+SCENARIO_MENU_ID = "pd-scenario-menu"
 
 MONITORING_POINT_ID = "pd-monitoring-point"
 PORTFOLIO_SEGMENT_ID = "pd-portfolio-segment"
@@ -70,7 +85,7 @@ POST_SUBJECTIVE_REVIEW_LINKS = [
     ("pd-post-subjective-overview", "Overview"),
     ("pd-transition-matrix-distance", "Transition Matrix"),
     ("pd-population-stability-index", "PSI"),
-    ("pd-rank-ordering", "Scenario Rank Ordering"),
+    ("pd-scenario-ranking", "Scenario Ranking"),
     ("pd-sensitivity-analysis", "Sensitivity Analysis"),
     ("pd-mev-range", "MEV Range"),
 ]
@@ -212,14 +227,52 @@ def build_checkbox_dropdown(
 
 def build_global_filters(data: dict, extra_controls=None) -> html.Div:
     """The top filter bar: monitoring point, segment, models."""
+    from ..data.monitoring.filters_config import (
+        load_filter_config, model_names as cfg_model_names, segment_values as cfg_segment_values,
+    )
+
+    cfg = load_filter_config()
     quarters_desc = sorted(data["quarters"], reverse=True)
     latest_quarter = quarters_desc[0] if quarters_desc else ""
-    model_names = data["model_names"]
-    segment_values = data["segment_values"]
+    model_names = cfg_model_names("pd")
+    segment_values = cfg_segment_values()
     monitoring_point_options = [{"label": q, "value": q} for q in quarters_desc]
     segment_options = [{"label": "All", "value": "all"}] + [{"label": value, "value": value} for value in segment_values]
 
+    reporting_cycle_options = [{"label": c["label"], "value": c["value"]} for c in cfg["reporting_cycles"]]
+    scenario_options = [{"label": s["label"], "value": s["value"]} for s in cfg["scenarios"]]
+    default_cycle = reporting_cycle_options[0]["value"] if reporting_cycle_options else "CCAR 2026"
+    default_scenario = scenario_options[0]["value"] if scenario_options else "intsevere"
+
     children = [
+        html.Div(
+            className="monitoring-filter",
+            children=[
+                html.Label("Reporting Cycle", htmlFor=REPORTING_CYCLE_TOGGLE_ID),
+                build_single_select_dropdown(
+                    value_id=REPORTING_CYCLE_ID,
+                    toggle_id=REPORTING_CYCLE_TOGGLE_ID,
+                    menu_id=REPORTING_CYCLE_MENU_ID,
+                    filter_key="reporting-cycle",
+                    options=reporting_cycle_options,
+                    value=default_cycle,
+                ),
+            ],
+        ),
+        html.Div(
+            className="monitoring-filter",
+            children=[
+                html.Label("Scenario", htmlFor=SCENARIO_TOGGLE_ID),
+                build_single_select_dropdown(
+                    value_id=SCENARIO_ID,
+                    toggle_id=SCENARIO_TOGGLE_ID,
+                    menu_id=SCENARIO_MENU_ID,
+                    filter_key="scenario",
+                    options=scenario_options,
+                    value=default_scenario,
+                ),
+            ],
+        ),
         html.Div(
             className="monitoring-filter",
             children=[
@@ -249,31 +302,23 @@ def build_global_filters(data: dict, extra_controls=None) -> html.Div:
             ],
         ),
         html.Div(
-            className="monitoring-filter monitoring-model-filter",
+            className="monitoring-filter",
             children=[
                 html.Label("Specific Models", htmlFor=MODELS_TOGGLE_ID),
-                build_checkbox_dropdown(
-                    checklist_id=MODELS_ID,
-                    select_all_id=MODELS_SELECT_ALL_ID,
+                build_single_select_dropdown(
+                    value_id=MODELS_ID,
                     toggle_id=MODELS_TOGGLE_ID,
                     menu_id=MODELS_MENU_ID,
-                    options=[{"label": name, "value": name} for name in model_names],
-                    value=list(model_names),
-                    toggle_label="All models",
+                    filter_key="specific-models",
+                    options=[{"label": "All models", "value": "all"}] + [{"label": name, "value": name} for name in model_names],
+                    value="all",
                 ),
             ],
         ),
     ]
     if extra_controls is not None:
         children.append(extra_controls)
-    children.extend([
-        html.Div(
-            "Choose a portfolio segment or specific models. These filters cannot be combined.",
-            id=FILTER_HELP_ID,
-            className="monitoring-filter-help",
-        ),
-        build_section_subnav(),
-    ])
+    children.append(build_section_subnav())
 
     return html.Div(className="monitoring-controls", children=children)
 
