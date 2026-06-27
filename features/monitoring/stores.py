@@ -8,7 +8,7 @@ shared state, its stores should be added here too.
 
 from __future__ import annotations
 
-from .pages.pd_performance.page import (
+from .ui.views.pd_performance import (
     MEV_FILTER_STORE_ID,
     RANGE_STORE_ID,
     TREND_HORIZON_STORE_ID,
