@@ -4,6 +4,7 @@ pandas>=2.0
 numpy>=1.24
 polars>=1.0
 openpyxl>=3.1
+pyyaml>=6.0
 
 # Dev / test
 pytest>=8.0
