@@ -8,16 +8,16 @@ a page means adding one :class:`PageDefinition` here and nothing else.
 from __future__ import annotations
 
 from ...shared.types import PageDefinition
-from .pages.ead_performance import callbacks as ead_callbacks
-from .pages.ead_performance import page as ead_page
-from .pages.lgd_performance import callbacks as lgd_callbacks
-from .pages.lgd_performance import page as lgd_page
-from .pages.loss_performance import callbacks as loss_callbacks
-from .pages.loss_performance import page as loss_page
-from .pages.overview import callbacks as overview_callbacks
-from .pages.overview import page as overview_page
-from .pages.pd_performance import callbacks as pd_callbacks
-from .pages.pd_performance import page as pd_page
+from .callbacks import ead_performance as ead_callbacks
+from .callbacks import lgd_performance as lgd_callbacks
+from .callbacks import loss_performance as loss_callbacks
+from .callbacks import overview as overview_callbacks
+from .callbacks import pd_performance as pd_callbacks
+from .ui.pages import ead_performance as ead_page
+from .ui.pages import lgd_performance as lgd_page
+from .ui.pages import loss_performance as loss_page
+from .ui.pages import overview as overview_page
+from .ui.pages import pd_performance as pd_page
 
 PAGES: tuple[PageDefinition, ...] = (
     PageDefinition(

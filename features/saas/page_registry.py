@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from ...shared.types import PageDefinition
-from .pages.workspace import callbacks as workspace_callbacks
-from .pages.workspace import page as workspace_page
+from .callbacks import workspace as workspace_callbacks
+from .ui.pages import workspace as workspace_page
 
 PAGES: tuple[PageDefinition, ...] = (
     PageDefinition(
