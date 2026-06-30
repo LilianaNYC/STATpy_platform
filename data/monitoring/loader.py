@@ -334,6 +334,7 @@ def load_pd_mev_catalog() -> dict[str, Any]:
 
     dev_dates: dict[str, str] = {}
     descriptive_names: dict[str, str] = {}
+    model_types: dict[str, str] = {}
     for _, row in mc_df.iterrows():
         model_key = str(row.get("Model Name", "")).strip()
         if not model_key:
@@ -344,6 +345,9 @@ def load_pd_mev_catalog() -> dict[str, Any]:
         desc = row.get("Model descriptive name", "")
         if desc:
             descriptive_names[model_key] = str(desc).strip()
+        model_type = str(row.get("Model Type", "")).strip().upper()
+        if model_type:
+            model_types[model_key] = model_type
 
     # -- transformed_mevs_description: model→segment and model→MEV mapping
     desc_df = pd.read_excel(
@@ -476,6 +480,7 @@ def load_pd_mev_catalog() -> dict[str, Any]:
             contributions[display_name] = value
 
         catalog[model_name] = {
+            "model_type": model_types.get(model_key, ""),
             "segments": model_segments.get(model_key, []),
             "severe_scenario_date": "",
             "mevs": mevs,

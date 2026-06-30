@@ -213,10 +213,16 @@ def _build_tick_values(categories: list[str], max_ticks: int) -> list[str]:
     if not categories or len(categories) <= max_ticks:
         return categories
     step = max(2, math.ceil(len(categories) / max_ticks))
+    last_index = len(categories) - 1
     tickvals = [
         value for index, value in enumerate(categories)
-        if index == 0 or index == len(categories) - 1 or index % step == 0
+        if index % step == 0
     ]
+    # Add the last label only when it isn't immediately adjacent to the previous
+    # step tick — a gap of 1 causes horizontal labels to visually overlap.
+    last_step_index = (last_index // step) * step
+    if last_step_index < last_index and (last_index - last_step_index) > 1:
+        tickvals.append(categories[last_index])
     seen = set()
     deduped = []
     for value in tickvals:
@@ -565,7 +571,7 @@ def build_pd_default_rate_trend_figure(performance_trend, monitoring_thresholds,
         annotations=legend_annotations,
         shapes=shapes,
     )
-    axis_kwargs = {"title": "Portfolio Quarter", "gridcolor": ratio_grid_color, "gridwidth": ratio_grid_width}
+    axis_kwargs = {"title": "Quarter", "gridcolor": ratio_grid_color, "gridwidth": ratio_grid_width}
     fig.update_xaxes(build_pd_time_series_xaxis(quarters, axis_kwargs, density="compact"), row=1, col=1)
     fig.update_xaxes(build_pd_time_series_xaxis(quarters, axis_kwargs, density="compact"), row=1, col=2)
     fig.update_yaxes(dict(title="Default Rate", tickformat=".1%", rangemode="tozero", gridcolor=ratio_grid_color, gridwidth=ratio_grid_width, zeroline=False, automargin=True), row=1, col=1)
@@ -614,7 +620,7 @@ def _rag_dot_figure(quarters, rag_scores, rag_labels, customdata, hovertemplate,
         hovermode="closest",
         showlegend=False,
         shapes=shapes,
-        xaxis=build_pd_time_series_xaxis(quarters, {"title": "Monitoring Point", "gridcolor": GRID_COLOR}, density="compact"),
+        xaxis=build_pd_time_series_xaxis(quarters, {"title": "Quarter", "gridcolor": GRID_COLOR}, density="tight"),
         yaxis=_rag_score_yaxis(yaxis_title),
     )
     _apply_transparent_background(fig)
@@ -753,7 +759,7 @@ def build_lgd_calibration_rag_trend_figure(rag_trend, monitoring_quarter, range_
         monitoring_quarter,
         "Calibration Conservatism Score",
     )
-    fig.update_layout(xaxis=build_pd_time_series_xaxis(quarters, {"title": "Monitoring Point", "gridcolor": GRID_COLOR}, density="tight"))
+    fig.update_layout(xaxis=build_pd_time_series_xaxis(quarters, {"title": "Quarter", "gridcolor": GRID_COLOR}, density="tight"))
     return fig
 
 
@@ -785,7 +791,7 @@ def build_lgd_discrimination_rag_trend_figure(rag_trend, monitoring_quarter, ran
         monitoring_quarter,
         "Discriminatory Power Score",
     )
-    fig.update_layout(xaxis=build_pd_time_series_xaxis(quarters, {"title": "Monitoring Point", "gridcolor": GRID_COLOR}, density="tight"))
+    fig.update_layout(xaxis=build_pd_time_series_xaxis(quarters, {"title": "Quarter", "gridcolor": GRID_COLOR}, density="tight"))
     return fig
 
 
@@ -797,14 +803,14 @@ def build_lgd_discrimination_rag_trend_figure(rag_trend, monitoring_quarter, ran
 def build_ead_calibration_rag_trend_figure(rag_trend, monitoring_quarter, range_value=None) -> go.Figure:
     fig = build_lgd_calibration_rag_trend_figure(rag_trend, monitoring_quarter, range_value)
     quarters = [row["quarter"] for row in rag_trend if row["quarter"] in (filter_pd_periods_by_range(range_value, [r["quarter"] for r in rag_trend]))]
-    fig.update_layout(xaxis=build_pd_time_series_xaxis(quarters, {"title": "Monitoring Point", "gridcolor": GRID_COLOR}, density="tight"))
+    fig.update_layout(xaxis=build_pd_time_series_xaxis(quarters, {"title": "Quarter", "gridcolor": GRID_COLOR}, density="tight"))
     return fig
 
 
 def build_ead_discrimination_rag_trend_figure(rag_trend, monitoring_quarter, range_value=None) -> go.Figure:
     fig = build_lgd_discrimination_rag_trend_figure(rag_trend, monitoring_quarter, range_value)
     quarters = [row["quarter"] for row in rag_trend if row["quarter"] in (filter_pd_periods_by_range(range_value, [r["quarter"] for r in rag_trend]))]
-    fig.update_layout(xaxis=build_pd_time_series_xaxis(quarters, {"title": "Monitoring Point", "gridcolor": GRID_COLOR}, density="tight"))
+    fig.update_layout(xaxis=build_pd_time_series_xaxis(quarters, {"title": "Quarter", "gridcolor": GRID_COLOR}, density="tight"))
     return fig
 
 
@@ -843,7 +849,7 @@ def build_lgd_metric_trend_figure(metric_rows, monitoring_thresholds, metric: st
         hovermode="x unified",
         showlegend=False,
         shapes=shapes,
-        xaxis=build_pd_time_series_xaxis(quarters, {"title": "Monitoring Point", "gridcolor": GRID_COLOR}, density="tight"),
+        xaxis=build_pd_time_series_xaxis(quarters, {"title": "Quarter", "gridcolor": GRID_COLOR}, density="tight"),
         yaxis=dict(title=display_name, tickformat=tick_format, range=bands["axis_range"], gridcolor=GRID_COLOR, zeroline=False),
     )
     _apply_transparent_background(fig)
@@ -885,7 +891,7 @@ def build_ead_metric_trend_figure(metric_rows, monitoring_thresholds, metric: st
         hovermode="x unified",
         showlegend=False,
         shapes=shapes,
-        xaxis=build_pd_time_series_xaxis(quarters, {"title": "Monitoring Point", "gridcolor": GRID_COLOR}, density="tight"),
+        xaxis=build_pd_time_series_xaxis(quarters, {"title": "Quarter", "gridcolor": GRID_COLOR}, density="tight"),
         yaxis=dict(title=display_name, tickformat=tick_format, range=bands["axis_range"], gridcolor=GRID_COLOR, zeroline=False),
     )
     _apply_transparent_background(fig)
@@ -932,7 +938,7 @@ def build_loss_rag_trend_figure(rag_trend, monitoring_quarter, range_value=None)
         monitoring_quarter,
         "Performance Score",
     )
-    fig.update_layout(xaxis=build_pd_time_series_xaxis(quarters, {"title": "Monitoring Point", "gridcolor": GRID_COLOR}, density="tight"))
+    fig.update_layout(xaxis=build_pd_time_series_xaxis(quarters, {"title": "Quarter", "gridcolor": GRID_COLOR}, density="tight"))
     return fig
 
 
@@ -969,7 +975,7 @@ def build_loss_metric_trend_figure(metric_rows, monitoring_thresholds, monitorin
         hovermode="x unified",
         showlegend=False,
         shapes=shapes,
-        xaxis=build_pd_time_series_xaxis(quarters, {"title": "Monitoring Point", "gridcolor": GRID_COLOR}, density="tight"),
+        xaxis=build_pd_time_series_xaxis(quarters, {"title": "Quarter", "gridcolor": GRID_COLOR}, density="tight"),
         yaxis=dict(title="Mean Error", tickformat=".0%", range=bands["axis_range"], gridcolor=GRID_COLOR, zeroline=False),
     )
     _apply_transparent_background(fig)
@@ -1062,7 +1068,7 @@ def build_pd_notching_trend_figure(performance_trend, monitoring_thresholds, ran
         annotations=legend_annotations,
         shapes=shapes,
     )
-    axis_kwargs = {"title": "Portfolio Quarter", "gridcolor": notching_grid_color, "gridwidth": notching_grid_width}
+    axis_kwargs = {"title": "Quarter", "gridcolor": notching_grid_color, "gridwidth": notching_grid_width}
     fig.update_xaxes(build_pd_time_series_xaxis(quarters, axis_kwargs, density="compact"), row=1, col=1)
     fig.update_xaxes(build_pd_time_series_xaxis(quarters, axis_kwargs, density="compact"), row=1, col=2)
     fig.update_yaxes(dict(title="CRR Notch", tickmode="linear", dtick=1, range=[0.5, 9.5], gridcolor=notching_grid_color, gridwidth=notching_grid_width, zeroline=False, automargin=True), row=1, col=1)
@@ -1110,7 +1116,7 @@ def build_pd_confidence_interval_trend_figure(performance_trend, monitoring_thre
         hovermode="x unified",
         legend=dict(orientation="h", x=0, y=1.08),
         shapes=shapes,
-        xaxis=build_pd_time_series_xaxis(quarters, {"title": "Portfolio Quarter", "gridcolor": GRID_COLOR}, density="compact"),
+        xaxis=build_pd_time_series_xaxis(quarters, {"title": "Quarter", "gridcolor": GRID_COLOR}, density="compact"),
         yaxis=dict(title="Confidence Interval Test", tickformat=".0%", range=confidence_bands["axis_range"], gridcolor=GRID_COLOR, zeroline=False),
     )
     _apply_transparent_background(fig)
@@ -1151,7 +1157,7 @@ def build_pd_psi_trend_figure(performance_trend, monitoring_thresholds, snapshot
         hovermode="x unified",
         showlegend=False,
         shapes=shapes,
-        xaxis=build_pd_time_series_xaxis(quarters, {"title": "Monitoring Point", "gridcolor": GRID_COLOR}, density="compact"),
+        xaxis=build_pd_time_series_xaxis(quarters, {"title": "Quarter", "gridcolor": GRID_COLOR}, density="compact"),
         yaxis=dict(title="Population Stability Index", tickformat=".3f", range=bands["axis_range"], gridcolor=GRID_COLOR, zeroline=False),
     )
     _apply_transparent_background(fig)
@@ -1186,7 +1192,6 @@ def build_pd_transition_combined_figure(rows, range_value=None, monitoring_thres
     fig = make_subplots(
         rows=1, cols=2, horizontal_spacing=0.10,
         column_widths=[0.55, 0.45],
-        subplot_titles=("MM_P0 vs MM_Pm", "Delta (MM_Pm − MM_P0)"),
     )
 
     fig.add_trace(go.Scatter(
@@ -1273,7 +1278,6 @@ def build_pd_sensitivity_combined_figure(rows, threshold: float | None, range_va
     fig = make_subplots(
         rows=1, cols=2, horizontal_spacing=0.10,
         column_widths=[0.55, 0.45],
-        subplot_titles=("Projected PD Sensitivity", "Relative Shock Impact"),
     )
 
     # --- Left: baseline vs shocked PD paths ---
@@ -1573,7 +1577,7 @@ def build_pd_discrimination_trend_figures(performance_trend, monitoring_threshol
             hovermode="x unified",
             showlegend=False,
             shapes=shapes,
-            xaxis=build_pd_time_series_xaxis(quarters, {"title": "Portfolio Quarter", "gridcolor": GRID_COLOR}, density="compact"),
+            xaxis=build_pd_time_series_xaxis(quarters, {"title": "Quarter", "gridcolor": GRID_COLOR}, density="compact"),
             yaxis=dict(title=metric["name"], range=bands["axis_range"], gridcolor=GRID_COLOR, zeroline=False),
         )
         _apply_transparent_background(fig)
@@ -1644,7 +1648,7 @@ def build_pd_go_live_accuracy_trend_figure(performance_trend, monitoring_thresho
         annotations=legend_annotations,
         shapes=shapes,
     )
-    fig.update_xaxes(build_pd_time_series_xaxis(quarters, {"title": "Portfolio Quarter", "gridcolor": delta_grid_color, "gridwidth": delta_grid_width}, density="compact"), row=1, col=1)
+    fig.update_xaxes(build_pd_time_series_xaxis(quarters, {"title": "Quarter", "gridcolor": delta_grid_color, "gridwidth": delta_grid_width}, density="compact"), row=1, col=1)
     fig.update_xaxes(build_pd_time_series_xaxis(quarters, {"title": f"Portfolio Quarter (from {go_live_quarter})", "gridcolor": delta_grid_color, "gridwidth": delta_grid_width}, density="compact"), row=1, col=2)
     fig.update_yaxes(dict(title="Accuracy Ratio", gridcolor=delta_grid_color, gridwidth=delta_grid_width, zeroline=False, automargin=True), row=1, col=1)
     fig.update_yaxes(dict(title=dict(text="Delta Accuracy Ratio", standoff=8), range=delta_bands["axis_range"], gridcolor=delta_grid_color, gridwidth=delta_grid_width, zeroline=False, automargin=True), row=1, col=2)
