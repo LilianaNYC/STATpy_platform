@@ -232,9 +232,49 @@ def calculate_pd_mev_worst_rag_after_quarter(
 # ---------------------------------------------------------------------------
 
 
+def get_mev_selected_models_simple(
+    mev_catalog: dict[str, Any],
+    selected_model: str | None,
+    selected_segment: str | None,
+    model_type: str | None = None,
+) -> list[str]:
+    """Select models from the MEV catalog using the LGD/EAD filter pattern.
+
+    Unlike :func:`get_pd_mev_selected_models` which takes a
+    :class:`PdFilterContext`, this accepts the simpler ``selected_model`` /
+    ``selected_segment`` pair used by the LGD and EAD tabs.
+
+    When *model_type* is given (e.g. ``"PD"``, ``"LGD"``, ``"EAD"``), only
+    catalog entries whose ``model_type`` matches are returned.
+    """
+    available = list(mev_catalog.keys())
+    if model_type:
+        mt = model_type.strip().upper()
+        available = [
+            m for m in available
+            if (mev_catalog.get(m, {}).get("model_type") or "").upper() == mt
+        ]
+    if selected_model and selected_model not in ("all", "All", "All models"):
+        available = [m for m in available if m == selected_model]
+    if selected_segment and selected_segment not in ("All", "all", ""):
+        available = [
+            m for m in available
+            if selected_segment in (mev_catalog.get(m, {}).get("segments") or [])
+        ]
+    return available
+
+
 def get_pd_mev_chart_id(model_name: str, mev_name: str) -> str:
     """Port of ``getPdMevChartId``."""
     return f"pd-mev-chart-{slugify_pd_token(model_name)}-{slugify_pd_token(mev_name)}"
+
+
+def get_lgd_mev_chart_id(model_name: str, mev_name: str) -> str:
+    return f"lgd-mev-chart-{slugify_pd_token(model_name)}-{slugify_pd_token(mev_name)}"
+
+
+def get_ead_mev_chart_id(model_name: str, mev_name: str) -> str:
+    return f"ead-mev-chart-{slugify_pd_token(model_name)}-{slugify_pd_token(mev_name)}"
 
 
 def get_pd_mev_chart_color(index: int) -> str:

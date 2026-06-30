@@ -31,6 +31,7 @@ def register_callbacks(app) -> None:
 
     for value_id, toggle_id, menu_id, filter_key in (
         (layout.REPORTING_CYCLE_ID, layout.REPORTING_CYCLE_TOGGLE_ID, layout.REPORTING_CYCLE_MENU_ID, layout.REPORTING_CYCLE_FILTER_KEY),
+        (layout.SCENARIO_ID, layout.SCENARIO_TOGGLE_ID, layout.SCENARIO_MENU_ID, layout.SCENARIO_FILTER_KEY),
         (layout.MONITORING_POINT_DROPDOWN_ID, layout.MONITORING_POINT_TOGGLE_ID, layout.MONITORING_POINT_MENU_ID, layout.MONITORING_POINT_FILTER_KEY),
         (layout.SEGMENT_DROPDOWN_ID, layout.SEGMENT_TOGGLE_ID, layout.SEGMENT_MENU_ID, layout.SEGMENT_FILTER_KEY),
         (layout.MODEL_DROPDOWN_ID, layout.MODEL_TOGGLE_ID, layout.MODEL_MENU_ID, layout.MODEL_FILTER_KEY),
@@ -132,20 +133,59 @@ def register_callbacks(app) -> None:
         value = selected_monitoring_point if selected_monitoring_point in options else (options[0] if options else "")
         return _dropdown_options(options), value
 
+    # -----------------------------------------------------------------
+    # Apply filters: snapshot current filter values into the applied store
+    # -----------------------------------------------------------------
+    @app.callback(
+        Output(layout.APPLIED_FILTERS_STORE_ID, "data"),
+        Input(layout.APPLY_FILTERS_ID, "n_clicks"),
+        State(layout.REPORTING_CYCLE_ID, "value"),
+        State(layout.SCENARIO_ID, "value"),
+        State(layout.MODEL_DROPDOWN_ID, "value"),
+        State(layout.SEGMENT_DROPDOWN_ID, "value"),
+        State(layout.MONITORING_POINT_DROPDOWN_ID, "value"),
+        prevent_initial_call=True,
+    )
+    def apply_lgd_filters(_n_clicks, reporting_cycle, scenario, selected_model, selected_segment, selected_monitoring_point):
+        if not _n_clicks:
+            return no_update
+        return {
+            "reporting_cycle": reporting_cycle,
+            "scenario": scenario,
+            "model": selected_model,
+            "segment": selected_segment,
+            "monitoring_point": selected_monitoring_point,
+        }
+
+    # -----------------------------------------------------------------
+    # Master re-render: applied store + range store -> lgd-dashboard-content
+    # -----------------------------------------------------------------
     @app.callback(
         Output(layout.CONTENT_ID, "children"),
-        Input(layout.REPORTING_CYCLE_ID, "value"),
-        Input(layout.MODEL_DROPDOWN_ID, "value"),
-        Input(layout.SEGMENT_DROPDOWN_ID, "value"),
-        Input(layout.MONITORING_POINT_DROPDOWN_ID, "value"),
+        Input(layout.APPLIED_FILTERS_STORE_ID, "data"),
         Input(layout.RANGE_STORE_ID, "data"),
+        prevent_initial_call=True,
     )
-    def update_lgd_content(reporting_cycle, selected_model, selected_segment, selected_monitoring_point, range_store):
+    def render_lgd_content(applied, range_store):
+        if not applied:
+            return layout.build_lgd_apply_prompt()
+
+        from ....data.monitoring.filters_config import load_filter_config
+        cfg = load_filter_config()
+        default_cycle = cfg["reporting_cycles"][0]["value"] if cfg["reporting_cycles"] else "CCAR 2026"
+        default_scenario = cfg["scenarios"][0]["value"] if cfg["scenarios"] else "intsevere"
+
+        reporting_cycle = applied.get("reporting_cycle") or default_cycle
+        scenario = applied.get("scenario") or default_scenario
+
         _install_lgd_store(reporting_cycle)
+
         return layout.render_lgd_performance_content(
             data,
-            selected_model,
-            selected_segment,
-            selected_monitoring_point,
+            applied.get("model"),
+            applied.get("segment"),
+            applied.get("monitoring_point"),
             range_store or {},
+            reporting_cycle=reporting_cycle,
+            scenario=scenario,
         )

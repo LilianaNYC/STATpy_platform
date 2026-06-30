@@ -2361,7 +2361,34 @@ def render_pd_performance_content(
         children=[section_2_1, section_2_2, section_2_3, section_2_4, section_2_5, section_2_6],
     )
 
-    return [chapter_1, chapter_1_body, chapter_2, chapter_2_body]
+    _exec_style = (
+        {
+            "background": "linear-gradient(180deg, rgba(21,34,56,.96) 0%, rgba(17,28,47,.97) 100%)",
+            "borderLeft": "3px solid #38bdf8",
+            "borderRadius": "10px",
+        }
+        if theme == "dark" else
+        {
+            "background": "linear-gradient(135deg, #eff6ff 0%, #f0f9ff 50%, #f8fafc 100%)",
+            "borderLeft": "3px solid #2563eb",
+            "borderRadius": "10px",
+        }
+    )
+    executive_summary = html.Div(
+        className="pd-performance-note",
+        style=_exec_style,
+        children=[
+            html.Strong("Executive summary: "),
+            "The PD Performance dashboard is the monitoring view for Probability of Default (PD) models "
+            "across the wholesale portfolio. It tracks each model's calibration, discriminatory power, and "
+            "population stability against agreed RAG thresholds, for both the ECL point-in-time and balance "
+            "sheet horizons, and adds a post subjective review layer (transition migration, scenario rank "
+            "ordering, sensitivity, and MEV range) so reviewers can judge whether model behaviour remains "
+            "defensible across reporting cycles and stress scenarios.",
+        ],
+    )
+
+    return [executive_summary, chapter_1, chapter_1_body, chapter_2, chapter_2_body]
 
 
 # ---------------------------------------------------------------------------
@@ -2398,7 +2425,7 @@ def _build_top_bar(data: dict) -> html.Div:
                 style={"flex": "1"},
                 children=[
                     html.Div(
-                        "Wholesale Portfolio Model Monitoring Dashboard",
+                        "PD Performance Monitoring Dashboard",
                         className="monitoring-dashboard-title",
                     ),
                     build_global_filters(data, extra_controls=_build_apply_button()),

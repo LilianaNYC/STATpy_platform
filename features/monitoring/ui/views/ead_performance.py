@@ -23,6 +23,20 @@ from .....data.analytics.calculations import (
     format_pd_metric,
     pd_tone_class,
 )
+from .....data.analytics.mev_range import (
+    calculate_pd_mev_thresholds,
+    calculate_pd_mev_worst_rag_after_quarter,
+    format_pd_mev_value,
+    get_mev_selected_models_simple,
+    get_pd_mev_available_names_for_models,
+    get_ead_mev_chart_id,
+    get_pd_mev_model_development_dates,
+    get_pd_mev_scenario_quarter,
+    get_pd_mev_visible_periods,
+)
+from .....data.analytics.rank_ordering import iso_date_to_pd_quarter
+from .....components.charts import build_pd_mev_range_figure
+from .....shared.theme import normalize_theme_value
 from ...domain.ead import (
     EAD_CALIBRATION_METRICS,
     build_ead_calibration_rag_trend,
@@ -44,10 +58,16 @@ from .cards import (
 )
 
 CONTENT_ID = "ead-dashboard-content"
+APPLY_FILTERS_ID = "ead-apply-filters"
+APPLIED_FILTERS_STORE_ID = "ead-applied-filters-store"
 REPORTING_CYCLE_ID = "ead-reporting-cycle"
 REPORTING_CYCLE_TOGGLE_ID = "ead-reporting-cycle-toggle"
 REPORTING_CYCLE_MENU_ID = "ead-reporting-cycle-menu"
 REPORTING_CYCLE_FILTER_KEY = "ead-reporting-cycle"
+SCENARIO_ID = "ead-scenario"
+SCENARIO_TOGGLE_ID = "ead-scenario-toggle"
+SCENARIO_MENU_ID = "ead-scenario-menu"
+SCENARIO_FILTER_KEY = "ead-scenario"
 MODEL_DROPDOWN_ID = "ead-model-dropdown"
 SEGMENT_DROPDOWN_ID = "ead-segment-dropdown"
 MONITORING_POINT_DROPDOWN_ID = "ead-monitoring-point-dropdown"
@@ -230,6 +250,409 @@ def _build_chart_panel(title: str, description: str, figure) -> html.Div:
     )
 
 
+MEV_RANGE_KEY = "ead_mev"
+
+# ---------------------------------------------------------------------------
+# MEV Range helpers (mirroring PD Performance)
+# ---------------------------------------------------------------------------
+
+
+def _build_ead_mev_threshold_chips(thresholds: dict | None) -> list:
+    if not thresholds:
+        return []
+
+    def chip(label, value, tone):
+        return html.Span([html.Strong(label), value], className=f"pd-mev-threshold-chip pd-mev-threshold-chip-{tone}")
+
+    return [
+        chip("Green", f"{format_pd_mev_value(thresholds['green_min'])} to {format_pd_mev_value(thresholds['green_max'])}", "green"),
+        chip("Amber low", f"{format_pd_mev_value(thresholds['amber_lower'])} to {format_pd_mev_value(thresholds['green_min'])}", "amber"),
+        chip("Amber high", f"{format_pd_mev_value(thresholds['green_max'])} to {format_pd_mev_value(thresholds['amber_upper'])}", "amber"),
+        chip("Red", f"< {format_pd_mev_value(thresholds['amber_lower'])} or > {format_pd_mev_value(thresholds['amber_upper'])}", "red"),
+    ]
+
+
+def _ead_mev_marker_legend_item(
+    label: str,
+    value_text: str,
+    tone: str,
+    *,
+    line_color: str | None = None,
+    line_dash: str | None = None,
+) -> html.Div:
+    line_style = {}
+    if line_color:
+        line_style["borderTopColor"] = line_color
+    if line_dash:
+        line_style["borderTopStyle"] = line_dash
+    return html.Div(
+        className=f"pd-mev-marker-legend-item pd-mev-marker-legend-item-{tone}",
+        children=[
+            html.Span(
+                className=f"pd-mev-marker-legend-line pd-mev-marker-legend-line-{tone}",
+                style=line_style or None,
+                **{"aria-hidden": "true"},
+            ),
+            html.Span(
+                className="pd-mev-marker-legend-copy",
+                children=[
+                    html.Span(label, className="pd-mev-marker-legend-label"),
+                    html.Span(value_text, className="pd-mev-marker-legend-date"),
+                ],
+            ),
+        ],
+    )
+
+
+def _build_ead_mev_marker_items(
+    model_data: dict,
+    mev_data: dict,
+    monitoring_point: str | None,
+    theme_value: str | None = None,
+    scenario: str = "intsevere",
+    reporting_cycle: str | None = None,
+) -> list:
+    items = []
+    scenario_color = "#fb7185" if normalize_theme_value(theme_value) == "dark" else "#dc2626"
+    items.append(
+        _ead_mev_marker_legend_item("Scenario", scenario, "series", line_color=scenario_color, line_dash="solid")
+    )
+    development_date = (mev_data.get("dev_range") or {}).get("development_date")
+    if development_date:
+        dev_label = str(development_date).replace("-Q", "Q")
+        items.append(_ead_mev_marker_legend_item("Development Date", dev_label, "development"))
+    scenario_quarter = get_pd_mev_scenario_quarter(mev_data, reporting_cycle, scenario)
+    if scenario_quarter:
+        items.append(
+            _ead_mev_marker_legend_item("Scenario Date", str(scenario_quarter).replace("-Q", "Q"), "current")
+        )
+    return items
+
+
+def _build_ead_mev_monitoring_summary(
+    thresholds: dict | None,
+    model_data: dict,
+    mev_data: dict,
+    monitoring_point: str | None,
+    theme_value: str | None = None,
+    scenario: str = "intsevere",
+    reporting_cycle: str | None = None,
+):
+    threshold_items = _build_ead_mev_threshold_chips(thresholds)
+    marker_items = _build_ead_mev_marker_items(
+        model_data, mev_data, monitoring_point, theme_value,
+        scenario=scenario, reporting_cycle=reporting_cycle,
+    )
+    summary_rows = []
+    if threshold_items:
+        summary_rows.append(html.Div(threshold_items, className="pd-mev-monitoring-summary-row pd-mev-monitoring-summary-row-thresholds"))
+    if marker_items:
+        summary_rows.append(html.Div(marker_items, className="pd-mev-monitoring-summary-row pd-mev-monitoring-summary-row-markers"))
+    if not summary_rows:
+        return None
+    return html.Div(summary_rows, className="pd-mev-monitoring-summary", **{"aria-label": "Monitoring summary"})
+
+
+def _ead_mev_rag_sort_weight(rag: str) -> int:
+    return {"Red": 0, "Amber": 1, "Green": 2}.get(rag, 3)
+
+
+def _format_ead_mev_quarter(value: str | None) -> str:
+    if not value:
+        return "—"
+    return str(value).replace("-Q", "Q")
+
+
+def _build_ead_mev_rag_summary_panel(
+    selected_models: list[str],
+    catalog: dict,
+    monitoring_point: str | None,
+    reporting_cycle: str | None = None,
+    scenario: str = "intsevere",
+) -> html.Div:
+    summaries = []
+    for model_name in selected_models:
+        model_data = catalog.get(model_name, {})
+        severe_quarter = ""
+        for mev_data in (model_data.get("mevs") or {}).values():
+            severe_quarter = get_pd_mev_scenario_quarter(mev_data, reporting_cycle, scenario)
+            if severe_quarter:
+                break
+        if not severe_quarter:
+            severe_quarter = iso_date_to_pd_quarter(model_data.get("severe_scenario_date"))
+        dev_dates = get_pd_mev_model_development_dates(model_data)
+        contributions = model_data.get("contributions") or {}
+        mev_rags = []
+        for mev_name, mev_data in (model_data.get("mevs") or {}).items():
+            rag = calculate_pd_mev_worst_rag_after_quarter(
+                mev_data, severe_quarter,
+                reporting_cycle=reporting_cycle, scenario=scenario,
+            )
+            contrib = contributions.get(mev_name)
+            mev_rags.append({"name": mev_name, "rag": rag, "contribution": contrib})
+        mev_rags.sort(key=lambda entry: (-(entry.get("contribution") or 0), entry["name"]))
+        worst = min(mev_rags, key=lambda e: _ead_mev_rag_sort_weight(e["rag"]))["rag"] if mev_rags else "N/A"
+        summaries.append({
+            "model_name": model_name,
+            "severe_quarter": severe_quarter,
+            "development_dates": dev_dates,
+            "mev_rags": mev_rags,
+            "worst_rag": worst,
+            "segments": model_data.get("segments") or [],
+        })
+
+    if not summaries:
+        return html.Div(
+            className="section-card pd-mev-rag-panel pd-mev-rag-panel-empty",
+            children=[
+                html.Div("No EAD models in scope", className="pd-mev-chart-title"),
+                html.P("Adjust the dashboard filters above to bring models into scope.", className="pd-section-subtitle"),
+            ],
+        )
+
+    model_rows = []
+    for summary in summaries:
+        worst = summary["worst_rag"]
+        worst_tone = worst.lower() if worst in ("Green", "Amber", "Red") else "na"
+        dev_label = " / ".join(_format_ead_mev_quarter(d) for d in summary["development_dates"]) if summary["development_dates"] else "—"
+        severe_label = _format_ead_mev_quarter(summary["severe_quarter"]) if summary["severe_quarter"] else (monitoring_point or "—")
+
+        strip_segments = []
+        for entry in summary["mev_rags"]:
+            contrib = entry.get("contribution")
+            if contrib is None or contrib <= 0:
+                continue
+            tone = entry["rag"].lower() if entry["rag"] in ("Green", "Amber", "Red") else "na"
+            pct_val = contrib * 100
+            pct_label = f"{pct_val:.0f}%"
+            strip_segments.append(
+                html.Div(
+                    className=f"pd-mev-strip-seg pd-mev-strip-seg-{tone}",
+                    style={"flex": str(contrib)},
+                    title=f"{entry['name']}: {pct_label} — RAG {entry['rag']}",
+                    children=[
+                        html.Span(entry["name"], className="pd-mev-strip-name"),
+                        html.Span(pct_label, className="pd-mev-strip-pct"),
+                    ],
+                )
+            )
+
+        model_rows.append(
+            html.Div(
+                className="pd-mev-summary-row",
+                children=[
+                    html.Div(
+                        className="pd-mev-summary-row-sidebar",
+                        children=[
+                            html.Div(summary["model_name"], className="pd-mev-summary-row-name"),
+                            html.Div(
+                                className="pd-mev-summary-row-meta",
+                                children=[
+                                    html.Div([html.Span("Segments: "), html.Strong(", ".join(summary["segments"]) if summary["segments"] else "—")]),
+                                    html.Div([html.Span("Development date: "), html.Strong(dev_label)]),
+                                    html.Div([html.Span("Severe scenario: "), html.Strong(severe_label)]),
+                                ],
+                            ),
+                        ],
+                    ),
+                    html.Div(
+                        className="pd-mev-summary-row-body",
+                        children=[html.Div(strip_segments, className="pd-mev-strip")],
+                    ),
+                ],
+            )
+        )
+
+    return html.Div(
+        className="section-card pd-mev-summary-panel",
+        children=[
+            html.Div(
+                className="pd-mev-summary-panel-header",
+                children=[
+                    html.H4("Post-Scenario MEV Summary", className="pd-mev-summary-panel-title"),
+                    html.Span(
+                        f"{len(summaries)} model{'s' if len(summaries) != 1 else ''} in scope"
+                        f" — contribution weights at development, colored by post-scenario RAG",
+                        className="pd-mev-summary-panel-subtitle",
+                    ),
+                ],
+            ),
+            html.Div(model_rows, className="pd-mev-summary-rows"),
+        ],
+    )
+
+
+def _build_ead_mev_range_section(
+    data: dict,
+    selected_model: str | None,
+    selected_segment: str | None,
+    monitoring_point: str | None,
+    range_store: dict,
+    theme_value: str | None = None,
+    reporting_cycle: str = "CCAR 2026",
+    scenario: str = "intsevere",
+) -> html.Section:
+    catalog = data.get("mev_catalog") or {}
+    mev_mnemonic_map = data.get("mev_mnemonic_map") or {}
+    mev_description_map = data.get("mev_description_map") or {}
+    selected_models = get_mev_selected_models_simple(catalog, selected_model, selected_segment, model_type="EAD")
+
+    available_mev_names = get_pd_mev_available_names_for_models(catalog, selected_models)
+
+    model_panels = []
+    for model_name in selected_models:
+        model_data = catalog.get(model_name, {})
+        mev_entries = sorted(
+            ((name, mdata) for name, mdata in (model_data.get("mevs") or {}).items() if name in available_mev_names),
+            key=lambda kv: kv[0],
+        )
+        if not mev_entries:
+            continue
+
+        scenario_quarter = ""
+        for _, mev_data in mev_entries:
+            scenario_quarter = get_pd_mev_scenario_quarter(mev_data, reporting_cycle, scenario)
+            if scenario_quarter:
+                break
+
+        chart_cards = []
+        for mev_name, mev_data in mev_entries:
+            mev_mnemonic = mev_mnemonic_map.get(mev_name, mev_name)
+            mev_description = mev_description_map.get(mev_name, "")
+            thresholds = calculate_pd_mev_thresholds(mev_data.get("dev_range") or {})
+            chart_id = get_ead_mev_chart_id(model_name, mev_name)
+            theme = normalize_theme_value(theme_value)
+            trace_color = "#fb7185" if theme == "dark" else "#dc2626"
+            fig = build_pd_mev_range_figure(
+                model_data, mev_name, mev_data, trace_color,
+                range_store.get("mev"),
+                theme=theme,
+                reporting_cycle=reporting_cycle,
+                scenario=scenario,
+            )
+            monitoring_summary = _build_ead_mev_monitoring_summary(
+                thresholds, model_data, mev_data, monitoring_point,
+                theme_value, scenario=scenario, reporting_cycle=reporting_cycle,
+            )
+            chart_cards.append(
+                html.Article(
+                    className="pd-mev-chart-card",
+                    children=[
+                        html.Div(
+                            className="pd-mev-chart-header",
+                            children=[html.Div([
+                                html.Div(mev_name, className="pd-mev-chart-title"),
+                                html.Div(
+                                    f"{mev_mnemonic}: {mev_description}" if mev_description else mev_mnemonic,
+                                    className="pd-mev-chart-meta",
+                                ),
+                            ])],
+                        ),
+                        monitoring_summary,
+                        dcc.Graph(id=chart_id, figure=fig, config=_GRAPH_CONFIG, className="pd-mev-chart"),
+                    ],
+                )
+            )
+
+        model_panels.append(
+            html.Div(
+                className="section-card pd-mev-model-panel",
+                children=[
+                    html.Div(
+                        className="pd-mev-model-heading",
+                        children=[
+                            html.Div(
+                                className="pd-mev-model-copy",
+                                children=[
+                                    html.Div("Model Scope", className="pd-content-kicker"),
+                                    html.H4(model_name),
+                                    html.P(f"Segments covered: {', '.join(model_data.get('segments') or []) or '—'}"),
+                                ],
+                            ),
+                            html.Div(
+                                className="pd-mev-model-meta",
+                                children=[
+                                    html.Div([
+                                        html.Span("MEVs", className="pd-mev-model-meta-label"),
+                                        html.Span(f"{len(mev_entries)}", className="pd-mev-model-meta-value"),
+                                    ], className="pd-mev-model-meta-item"),
+                                    html.Div([
+                                        html.Span(f"Scenario: {scenario}", className="pd-mev-model-meta-label"),
+                                        html.Span(
+                                            _format_ead_mev_quarter(scenario_quarter),
+                                            className="pd-mev-model-meta-value pd-mev-model-meta-value-scenario",
+                                        ),
+                                    ], className="pd-mev-model-meta-item"),
+                                ],
+                            ),
+                        ],
+                    ),
+                    html.Div(chart_cards, className="pd-mev-chart-grid"),
+                ],
+            )
+        )
+
+    empty_state = html.Div(
+        className="section-card pd-mev-empty-state",
+        children=[
+            html.Div("No MEV charts match the current filters", className="pd-mev-chart-title"),
+            html.P(
+                "Adjust the model or segment filters above, or check that the MEV catalog contains EAD model data.",
+                className="pd-section-subtitle",
+            ),
+        ],
+    )
+
+    body = model_panels if (selected_models and available_mev_names and model_panels) else [empty_state]
+
+    return html.Section(
+        id="ead-mev-range",
+        className="pd-content-section pd-live-section",
+        children=[
+            build_pd_section_heading(
+                "2.1 MEV Range",
+                "MEV Range",
+                "Checks whether the macro-economic variables (MEVs) driving EAD models under stress remain within their trained operating range.",
+                "N/A",
+                options={"show_rag": False},
+            ),
+            html.Div(
+                className="pd-performance-note",
+                style={"marginBottom": "16px"},
+                children=[
+                    html.Strong("How it works: "),
+                    "At development time, the model observed a range of MEV values that defined its confidence boundaries. "
+                    "Each MEV's current scenario value is compared against these thresholds:",
+                    html.Div(
+                        style={"display": "flex", "gap": "12px", "marginTop": "8px", "marginBottom": "8px", "flexWrap": "wrap"},
+                        children=[
+                            html.Span([
+                                html.Span("", style={"display": "inline-block", "width": "10px", "height": "10px", "borderRadius": "2px", "background": "rgba(34,197,94,0.5)", "marginRight": "5px", "verticalAlign": "middle"}),
+                                html.Strong("Green"), " — within development min / max",
+                            ], style={"fontSize": "11px"}),
+                            html.Span([
+                                html.Span("", style={"display": "inline-block", "width": "10px", "height": "10px", "borderRadius": "2px", "background": "rgba(245,158,11,0.5)", "marginRight": "5px", "verticalAlign": "middle"}),
+                                html.Strong("Amber"), " — within ±2 standard deviations",
+                            ], style={"fontSize": "11px"}),
+                            html.Span([
+                                html.Span("", style={"display": "inline-block", "width": "10px", "height": "10px", "borderRadius": "2px", "background": "rgba(239,68,68,0.5)", "marginRight": "5px", "verticalAlign": "middle"}),
+                                html.Strong("Red"), " — outside amber boundary",
+                            ], style={"fontSize": "11px"}),
+                        ],
+                    ),
+                    "Values in the Red zone indicate the MEV has moved significantly beyond the model's trained operating range, "
+                    "which may affect model reliability.",
+                ],
+            ),
+            _build_ead_mev_rag_summary_panel(
+                selected_models, catalog, monitoring_point,
+                reporting_cycle=reporting_cycle, scenario=scenario,
+            ),
+            *body,
+        ],
+    )
+
+
 # ---------------------------------------------------------------------------
 # Sub-nav
 # ---------------------------------------------------------------------------
@@ -261,7 +684,8 @@ def _build_ead_subnav() -> html.Div:
                     html.Div(
                         className="monitoring-section-subnav-links",
                         children=[
-                            _subnav_link("ead-mev-scenario", "MEV Range and Scenario Tests"),
+                            _subnav_link("ead-mev-range", "MEV Range"),
+                            _subnav_link("ead-mev-scenario", "Scenario Tests"),
                             _subnav_link("ead-post-subjective-review", "Post Subjective Review"),
                         ],
                     ),
@@ -381,6 +805,8 @@ def render_ead_performance_content(
     selected_segment: str | None,
     selected_monitoring_point: str | None,
     range_store: dict | None = None,
+    reporting_cycle: str = "CCAR 2026",
+    scenario: str = "intsevere",
 ) -> list:
     range_store = range_store or {}
     summary = build_ead_period_summary(data, selected_model, selected_segment, selected_monitoring_point)
@@ -636,13 +1062,18 @@ def render_ead_performance_content(
         ],
     )
 
-    mev_section = html.Section(
+    mev_range_section = _build_ead_mev_range_section(
+        data, selected_model, selected_segment, monitoring_point,
+        range_store, reporting_cycle=reporting_cycle, scenario=scenario,
+    )
+
+    scenario_section = html.Section(
         id="ead-mev-scenario",
         className="pd-content-section pd-live-section",
         children=[
             build_pd_section_heading(
-                "2.1 MEV Range and Scenario Tests",
-                "MEV Range and Scenario Tests",
+                "2.2 Scenario Tests",
+                "Scenario Tests",
                 "Dashboard2 review sections are represented here using dashboard1's current source data availability.",
                 summary["performance_rag"],
                 {"show_rag": False},
@@ -650,14 +1081,6 @@ def render_ead_performance_content(
             html.Div(
                 className="pd-test-grid pd-discrimination-test-grid",
                 children=[
-                    html.Article(
-                        className=f"pd-test-card pd-test-{pd_tone_class(summary['performance_rag'])}",
-                        children=[
-                            html.Div(className="pd-test-card-heading", children=[html.Div([html.Div([html.H4("MEV Range Analysis")], className="pd-card-title-row")])]),
-                            html.Div("Reference", className="pd-test-value"),
-                            html.Div("No EAD MEV catalog is configured in dashboard1 source data.", className="pd-test-meta"),
-                        ],
-                    ),
                     html.Article(
                         className=f"pd-test-card pd-test-{pd_tone_class(summary['performance_rag'])}",
                         children=[
@@ -676,7 +1099,7 @@ def render_ead_performance_content(
         className="pd-content-section pd-placeholder-section",
         children=[
             build_pd_section_heading(
-                "2.2 Post Subjective Review",
+                "2.3 Post Subjective Review",
                 "Post Subjective Review",
                 "Future landing area for the post subjective review analysis package.",
                 "N/A",
@@ -698,8 +1121,86 @@ def render_ead_performance_content(
         chapter_1,
         html.Div(className="pd-chapter-body pd-chapter-body-primary", children=[overview_section, calibration_section, discrimination_section]),
         chapter_2,
-        html.Div(className="pd-chapter-body pd-chapter-body-secondary", children=[mev_section, post_review_section]),
+        html.Div(className="pd-chapter-body pd-chapter-body-secondary", children=[mev_range_section, scenario_section, post_review_section]),
     ]
+
+
+# ---------------------------------------------------------------------------
+# Apply filters UI
+# ---------------------------------------------------------------------------
+
+
+def _build_ead_apply_button() -> html.Div:
+    return html.Div(
+        className="monitoring-filter saas-top-filter-action",
+        children=[
+            html.Div(
+                className="pd-mev-filter-actions",
+                children=[
+                    html.Button(
+                        "Apply filters",
+                        id=APPLY_FILTERS_ID,
+                        className="btn pd-mev-filter-reset saas-top-filter-reset saas-top-filter-apply",
+                        n_clicks=0,
+                        type="button",
+                        title="Load the dashboard using the selected filters.",
+                    ),
+                ],
+            ),
+        ],
+    )
+
+
+def build_ead_apply_prompt() -> html.Section:
+    return html.Section(
+        className="pd-content-section pd-live-section",
+        children=[
+            html.Div(
+                className="pd-performance-note",
+                children=[
+                    html.Strong("Executive summary: "),
+                    "The EAD Performance dashboard is the monitoring view for Exposure at Default (EAD) models "
+                    "across the wholesale portfolio. It tracks each model's calibration conservatism and "
+                    "discriminatory power against agreed RAG thresholds, and adds a post subjective review layer "
+                    "(MEV range and scenario tests) so reviewers can judge whether model behaviour remains "
+                    "defensible across reporting cycles and stress scenarios.",
+                ],
+            ),
+            html.Div(
+                className="saas-model-panel-stack",
+                children=[
+                    html.Div(
+                        className="section-card pd-mev-empty-state saas-getting-started",
+                        children=[
+                            html.Div("Getting started with the EAD Performance dashboard", className="pd-mev-chart-title"),
+                            html.P(
+                                "Set your filters in the top bar, then click “Apply filters” to render the dashboard.",
+                                className="pd-section-subtitle",
+                            ),
+                            html.Div(
+                                className="saas-getting-started-summary",
+                                children=[
+                                    html.Div("Quick start", className="saas-getting-started-summary-title"),
+                                    html.Div(
+                                        className="saas-getting-started-highlights",
+                                        children=[
+                                            html.Span("1. Choose Reporting Cycle, Scenario, and Monitoring Point.", className="saas-getting-started-highlight"),
+                                            html.Span("2. Pick a Segment or a Specific Model.", className="saas-getting-started-highlight"),
+                                            html.Span("3. Click Apply filters to load the dashboard.", className="saas-getting-started-highlight"),
+                                        ],
+                                    ),
+                                    html.Div(
+                                        "The dashboard always reflects the most recent applied filter snapshot, not any unapplied edits still sitting in the top bar.",
+                                        className="saas-getting-started-summary-note",
+                                    ),
+                                ],
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+        ],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -717,7 +1218,9 @@ def page_layout() -> list:
     default_model = "all"
     segment_options = ["All", *segment_values()]
     reporting_cycle_options = [{"label": c["label"], "value": c["value"]} for c in cfg["reporting_cycles"]]
+    scenario_options = [{"label": s["label"], "value": s["value"]} for s in cfg["scenarios"]]
     default_cycle = reporting_cycle_options[0]["value"] if reporting_cycle_options else "CCAR 2026"
+    default_scenario = scenario_options[0]["value"] if scenario_options else "intsevere"
     cycle_data = (data.get("ead_observations_by_cycle") or {}).get(default_cycle)
     if cycle_data:
         set_ead_metrics(cycle_data.get("metrics_store"), cycle_data.get("quarters"))
@@ -731,13 +1234,14 @@ def page_layout() -> list:
 
     return [
         dcc.Store(id=RANGE_STORE_ID, data={}),
+        dcc.Store(id=APPLIED_FILTERS_STORE_ID),
         html.Div(
             className="top-bar",
             children=[
                 html.Div(
                     style={"flex": "1"},
                     children=[
-                        html.Div("Wholesale Portfolio Model Monitoring Dashboard", className="monitoring-dashboard-title"),
+                        html.Div("EAD Performance Monitoring Dashboard", className="monitoring-dashboard-title"),
                         html.Div(
                             className="monitoring-controls",
                             children=[
@@ -750,6 +1254,17 @@ def page_layout() -> list:
                                         filter_key=REPORTING_CYCLE_FILTER_KEY,
                                         options=reporting_cycle_options,
                                         value=default_cycle,
+                                    ),
+                                ),
+                                _build_filter(
+                                    "Scenario",
+                                    shared_filters.build_single_select_dropdown(
+                                        value_id=SCENARIO_ID,
+                                        toggle_id=SCENARIO_TOGGLE_ID,
+                                        menu_id=SCENARIO_MENU_ID,
+                                        filter_key=SCENARIO_FILTER_KEY,
+                                        options=scenario_options,
+                                        value=default_scenario,
                                     ),
                                 ),
                                 _build_filter(
@@ -785,6 +1300,7 @@ def page_layout() -> list:
                                         value="all",
                                     ),
                                 ),
+                                _build_ead_apply_button(),
                             ],
                         ),
                         html.Div(style={"marginTop": "12px"}, children=[_build_ead_subnav()]),
@@ -799,7 +1315,7 @@ def page_layout() -> list:
                     className="tab-panel active pd-performance-app",
                     children=html.Div(
                         id=CONTENT_ID,
-                        children=render_ead_performance_content(data, default_model, "All", default_monitoring_point, {}),
+                        children=build_ead_apply_prompt(),
                     ),
                 ),
             ],
