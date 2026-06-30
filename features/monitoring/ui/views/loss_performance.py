@@ -447,7 +447,7 @@ def build_layout() -> list:
 
 def page_layout(data: dict) -> list:
     """Build the Loss page with top controls and live content."""
-    from .....data.monitoring.filters_config import load_filter_config, model_names, segment_values
+    from .....data.filters.filters_config import load_filter_config, model_names, segment_values
     from ...domain.loss import set_loss_metrics
     cfg = load_filter_config()
     model_options = model_names("loss")

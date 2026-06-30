@@ -15,7 +15,7 @@ import re
 from typing import Any
 
 from . import constants as config
-from .rank_ordering import compare_pd_quarter_labels, _pd_quarter_sort_key
+from .quarter_labels import compare_pd_quarter_labels, _pd_quarter_sort_key
 from .calculations import PdFilterContext, _finite, _to_number
 
 _SLUG_NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")

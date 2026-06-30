@@ -1,4 +1,4 @@
-"""Source-data loading for the PD Performance Dash app.
+"""Persistence / source-data loading for the PD Performance Dash app.
 
 This is a trimmed port of ``data_manager.py`` and the data-layer helpers in
 ``callbacks/monitoring_pd_models_callbacks.py`` from the original monitoring
@@ -17,6 +17,12 @@ ported -- they feed the model-overview tables on other tabs and are not
 referenced by ``renderPdModels()``'s live PD Performance sections. The model
 and segment filter option lists are instead derived directly from the
 portfolio dataframe.
+
+Feature-private -- only :mod:`features.monitoring.services.data_service`
+reads from this module (plus one cross-feature read from
+:mod:`features.saas.repositories.loader` as a best-effort MEV catalog
+fallback). The ``Filters`` sheet reader lives in ``data/filters/`` instead
+-- see that package's docstring for why.
 """
 
 from __future__ import annotations
@@ -27,8 +33,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from ..analytics import constants as config
-from ..common.text import normalize_model_name as _normalize_model_name
+from ....data.analytics import constants as config
+from ....data.common.text import normalize_model_name as _normalize_model_name
 
 log = logging.getLogger(__name__)
 

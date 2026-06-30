@@ -37,11 +37,9 @@ from ..data.analytics.mev_range import (
     get_pd_mev_scenario_quarter,
     get_pd_mev_scenario_series,
 )
-from ..data.analytics.rank_ordering import (
-    build_pd_rank_ordering_period_label_map,
+from ..data.analytics.quarter_labels import (
     compare_pd_quarter_labels,
     format_pd_compact_quarter_label,
-    get_pd_rank_ordering_scenario_quarter,
     iso_date_to_pd_quarter,
     _pd_quarter_sort_key,
 )

@@ -34,7 +34,7 @@ from .....data.analytics.mev_range import (
     get_pd_mev_scenario_quarter,
     get_pd_mev_visible_periods,
 )
-from .....data.analytics.rank_ordering import iso_date_to_pd_quarter
+from .....data.analytics.quarter_labels import iso_date_to_pd_quarter
 from .....components.charts import build_pd_mev_range_figure
 from .....shared.theme import normalize_theme_value
 from ...domain.ead import (
@@ -1210,7 +1210,7 @@ def build_ead_apply_prompt() -> html.Section:
 
 def page_layout() -> list:
     """Build the EAD page with top controls and live content."""
-    from .....data.monitoring.filters_config import load_filter_config, model_names, segment_values
+    from .....data.filters.filters_config import load_filter_config, model_names, segment_values
     from ...domain.ead import set_ead_metrics
     data = PD_PERFORMANCE_DATA
     cfg = load_filter_config()

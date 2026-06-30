@@ -122,7 +122,7 @@ def get_ead_thresholds(data: dict) -> list[dict[str, Any]]:
 
 
 def get_ead_model_options(data: dict) -> list[str]:
-    from ....data.monitoring.filters_config import model_names
+    from ....data.filters.filters_config import model_names
     options = model_names("ead")
     if options:
         return options
@@ -151,7 +151,7 @@ def resolve_ead_models(data: dict, selected_model: str | list[str] | tuple[str, 
 
 
 def get_ead_segments_for_model(data: dict, selected_model: str | list[str] | tuple[str, ...] | set[str] | None) -> list[str]:
-    from ....data.monitoring.filters_config import segment_values
+    from ....data.filters.filters_config import segment_values
     segments = segment_values()
     if segments:
         return ["All", *segments]

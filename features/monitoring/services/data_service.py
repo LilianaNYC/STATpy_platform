@@ -1,7 +1,7 @@
 """Monitoring data orchestration (load + enrich the source snapshot).
 
-Pulls the aggregated PD/LGD/EAD/Loss metrics from the shared ``data`` layer
-(the repository), attaches run metadata, and normalizes the portfolio frame.
+Pulls the aggregated PD/LGD/EAD/Loss metrics from this feature's own
+repository layer, attaches run metadata, and normalizes the portfolio frame.
 ``data_access`` calls :func:`load_monitoring_data` once at import time and caches
 the result; everything else reads that cached snapshot.
 """
@@ -13,7 +13,7 @@ from datetime import datetime
 import polars as pl
 
 from ....config.settings import settings
-from ....data.monitoring.loader import (
+from ..repositories.loader import (
     load_pd_performance_data_from_aggregated as _load_source_snapshot,
 )
 

@@ -18,7 +18,7 @@ from __future__ import annotations
 from dash import dcc, html
 
 from ..data.analytics.calculations import get_pd_range_preset, get_pd_range_selection
-from ..data.monitoring.filters_config import monitoring_points_by_cycle
+from ..data.filters.filters_config import monitoring_points_by_cycle
 
 # ---------------------------------------------------------------------------
 # Component ids
@@ -227,7 +227,7 @@ def build_checkbox_dropdown(
 
 def build_global_filters(data: dict, extra_controls=None) -> html.Div:
     """The top filter bar: monitoring point, segment, models."""
-    from ..data.monitoring.filters_config import (
+    from ..data.filters.filters_config import (
         load_filter_config, model_names as cfg_model_names, segment_values as cfg_segment_values,
     )
 

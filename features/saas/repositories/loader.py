@@ -1,13 +1,13 @@
-"""Source-data loading for the SAAS dashboard.
+"""Persistence / source-data loading for the SAAS dashboard.
 
 Loads the dummy MEV workbook (``dummy_mev_data.xlsx``) used by the SAAS
 workspace's top filters and MEV time-series chart: model/segment/MEV catalogs,
 descriptive label maps, development dates and the cleaned time-series frame.
 
-Split out of the original monolithic ``data/data_loader.py`` so the SAAS data
-layer is self-contained. The model-name filter falls back to the monitoring PD
-MEV catalog keys when the workbook can't be read (best effort), which is the
-one place the SAAS loader reuses a monitoring data helper.
+Feature-private -- only :mod:`features.saas.data_access` reads from this
+module. The model-name filter falls back to the monitoring PD MEV catalog
+keys when the workbook can't be read (best effort), which is the one place
+this module reaches into monitoring's repository.
 """
 
 from __future__ import annotations
@@ -17,10 +17,10 @@ from typing import Any
 
 import pandas as pd
 
-from ..analytics import constants as config
-from ..common.text import normalize_model_name as _normalize_model_name
-from ..common.text import ordered_unique_strings as _ordered_unique_strings
-from ..monitoring.loader import load_pd_mev_catalog
+from ....data.analytics import constants as config
+from ....data.common.text import normalize_model_name as _normalize_model_name
+from ....data.common.text import ordered_unique_strings as _ordered_unique_strings
+from ...monitoring.repositories.loader import load_pd_mev_catalog
 
 log = logging.getLogger(__name__)
 

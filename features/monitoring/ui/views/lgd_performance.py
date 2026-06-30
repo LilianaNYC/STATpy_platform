@@ -29,7 +29,7 @@ from .....data.analytics.mev_range import (
     get_pd_mev_scenario_quarter,
     get_pd_mev_visible_periods,
 )
-from .....data.analytics.rank_ordering import iso_date_to_pd_quarter
+from .....data.analytics.quarter_labels import iso_date_to_pd_quarter
 from .....components.charts import build_pd_mev_range_figure
 from .....shared.theme import normalize_theme_value
 from ...domain.lgd import (
@@ -1323,7 +1323,7 @@ def build_layout() -> list:
 
 def page_layout(data: dict) -> list:
     """Build the LGD page with top controls and live content."""
-    from .....data.monitoring.filters_config import load_filter_config, model_names, segment_values
+    from .....data.filters.filters_config import load_filter_config, model_names, segment_values
     from ...domain.lgd import set_lgd_metrics
     cfg = load_filter_config()
     model_options = model_names("lgd")

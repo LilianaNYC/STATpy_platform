@@ -66,7 +66,7 @@ from .....data.analytics.mev_range import (
     get_pd_mev_scenario_quarter,
     get_pd_mev_visible_periods,
 )
-from .....data.analytics.rank_ordering import (
+from .....data.analytics.quarter_labels import (
     iso_date_to_pd_quarter,
 )
 from .....data.analytics.calculations import (
