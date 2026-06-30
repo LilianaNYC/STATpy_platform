@@ -6,12 +6,12 @@ logic. These cover the shared range-selection helpers used by both dashboards.
 
 from __future__ import annotations
 
-from STATpy_platform.data.analytics.calculations import (
+from STATpy_platform.shared.domain.calculations import (
     filter_pd_periods_by_range,
     get_pd_range_periods,
     get_pd_range_selection,
 )
-from STATpy_platform.data.common.text import normalize_model_name, ordered_unique_strings
+from STATpy_platform.shared.text import normalize_model_name, ordered_unique_strings
 
 PERIODS = ["2022Q1", "2022Q2", "2022Q3", "2022Q4"]
 

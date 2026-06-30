@@ -21,7 +21,7 @@ portfolio dataframe.
 Feature-private -- only :mod:`features.monitoring.services.data_service`
 reads from this module (plus one cross-feature read from
 :mod:`features.saas.repositories.loader` as a best-effort MEV catalog
-fallback). The ``Filters`` sheet reader lives in ``data/filters/`` instead
+fallback). The ``Filters`` sheet reader lives in ``shared/repositories/`` instead
 -- see that package's docstring for why.
 """
 
@@ -33,8 +33,9 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from ....data.analytics import constants as config
-from ....data.common.text import normalize_model_name as _normalize_model_name
+from ....shared.domain import constants as config
+from ....config.settings import settings
+from ....shared.text import normalize_model_name as _normalize_model_name
 
 log = logging.getLogger(__name__)
 
@@ -59,10 +60,10 @@ def load_portfolio() -> pd.DataFrame:
     ``PD_Performance_Metrics``). If the sheet is absent, return an empty frame
     so the app still loads.
     """
-    log.info("Loading portfolio from %s [%s]", config.PORTFOLIO_FILE, config.PORTFOLIO_SHEET_NAME)
+    log.info("Loading portfolio from %s [%s]", settings.portfolio_file, config.PORTFOLIO_SHEET_NAME)
 
     try:
-        df = pd.read_excel(config.PORTFOLIO_FILE, sheet_name=config.PORTFOLIO_SHEET_NAME)
+        df = pd.read_excel(settings.portfolio_file, sheet_name=config.PORTFOLIO_SHEET_NAME)
     except (ValueError, KeyError):
         log.info("Portfolio sheet '%s' not found; using empty portfolio.", config.PORTFOLIO_SHEET_NAME)
         return pd.DataFrame(columns=[config.DATE_COLUMN, "_quarter", "_snapshot_date"])
@@ -132,7 +133,7 @@ def load_monitoring_thresholds() -> dict[str, list[dict[str, Any]]]:
         ("scenario_test_thresholds", "Scenario_Test_Thresholds"),
     ):
         try:
-            df = pd.read_excel(config.MONITORING_THRESHOLDS_FILE, sheet_name=sheet_name)
+            df = pd.read_excel(settings.monitoring_thresholds_file, sheet_name=sheet_name)
             thresholds[key] = _records(df)
             log.info("Loaded thresholds sheet '%s' as %s (%d rows)", sheet_name, key, len(df))
         except Exception as exc:  # noqa: BLE001 - mirror original best-effort loading
@@ -325,7 +326,7 @@ def load_pd_mev_catalog() -> dict[str, Any]:
     statistics (``dev_range``) are computed from baseline observations up
     to each model's development date.
     """
-    path = config.DUMMY_MEV_DATA_FILE
+    path = settings.dummy_mev_data_file
     try:
         xls = pd.ExcelFile(path)
     except FileNotFoundError:
@@ -545,7 +546,7 @@ def _build_metric_rows_store(sheet_name: str, column_map: dict[str, str]) -> dic
     Values are taken verbatim from the sheet — no metric is recomputed.
     """
     try:
-        df = pd.read_excel(config.PORTFOLIO_FILE, sheet_name=sheet_name)
+        df = pd.read_excel(settings.portfolio_file, sheet_name=sheet_name)
     except (FileNotFoundError, ValueError, KeyError):
         return {}
     df = df.dropna(how="all")
@@ -597,7 +598,7 @@ def load_loss_performance_metrics() -> dict[str, Any]:
 def load_pd_sensitivity_projections() -> list[dict[str, Any]]:
     """Load projected PD sensitivity rows from ``PD_Sensitivity_Projections``."""
     try:
-        df = pd.read_excel(config.PORTFOLIO_FILE, sheet_name=PD_SENSITIVITY_SHEET_NAME)
+        df = pd.read_excel(settings.portfolio_file, sheet_name=PD_SENSITIVITY_SHEET_NAME)
     except (FileNotFoundError, ValueError, KeyError):
         return []
 
@@ -735,9 +736,9 @@ def _build_metrics_store(cycle_df: pd.DataFrame) -> dict:
 
 def load_pd_performance_data_from_aggregated() -> dict[str, Any]:
     """Load from the PD_Performance_Metrics sheet instead of facility-level data."""
-    log.info("Loading PD aggregated metrics from %s [%s]", config.PORTFOLIO_FILE, PD_AGGREGATED_SHEET_NAME)
+    log.info("Loading PD aggregated metrics from %s [%s]", settings.portfolio_file, PD_AGGREGATED_SHEET_NAME)
 
-    agg_df = pd.read_excel(config.PORTFOLIO_FILE, sheet_name=PD_AGGREGATED_SHEET_NAME)
+    agg_df = pd.read_excel(settings.portfolio_file, sheet_name=PD_AGGREGATED_SHEET_NAME)
     agg_df = agg_df.dropna(how="all")
 
     portfolio = load_portfolio()
@@ -798,7 +799,7 @@ def load_pd_performance_data_from_aggregated() -> dict[str, Any]:
         "previous_quarter": previous_quarter,
         "latest_snapshot_date": latest_quarter,
         "previous_snapshot_date": previous_quarter,
-        "source_file": config.PORTFOLIO_FILE.name,
+        "source_file": settings.portfolio_file.name,
         "model_names": model_names,
         "segment_values": segment_values,
         "monitoring_thresholds": monitoring_thresholds,
@@ -840,7 +841,7 @@ def load_pd_performance_data() -> dict[str, Any]:
         "previous_quarter": previous_quarter,
         "latest_snapshot_date": get_snapshot_date(portfolio, latest_quarter),
         "previous_snapshot_date": get_snapshot_date(portfolio, previous_quarter) if previous_quarter else "",
-        "source_file": config.PORTFOLIO_FILE.name,
+        "source_file": settings.portfolio_file.name,
         "model_names": get_model_names(portfolio),
         "segment_values": get_segment_values(portfolio),
         "monitoring_thresholds": monitoring_thresholds,

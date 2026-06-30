@@ -3,7 +3,7 @@
 Ports the small ``YYYY-Qn`` quarter-label utilities from
 ``pages/monitoring_pd_models_page.py`` that are shared by the MEV range
 section (:mod:`mev_range`), the monitoring PD/LGD/EAD performance views, and
-the shared chart helpers (:mod:`components.charts`).
+the shared chart helpers (:mod:`shared.ui.charts`).
 
 Note: these labels use the ``YYYY-Qn`` format (produced by
 :func:`iso_date_to_pd_quarter` from ISO dates and used directly as keys in

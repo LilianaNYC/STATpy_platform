@@ -23,8 +23,8 @@ import math
 
 from dash import dcc, html
 
-from .....data.analytics import constants as config
-from .....components.charts import (
+from .....shared.domain import constants as config
+from .....shared.ui.charts import (
     build_pd_balance_sheet_calibration_rag_trend_figure,
     build_pd_calibration_rag_trend_figure,
     build_pd_confidence_interval_trend_figure,
@@ -40,7 +40,7 @@ from .....components.charts import (
     build_pd_scenario_rank_figure,
     build_pd_sensitivity_combined_figure,
 )
-from .....components.filters import (
+from .....shared.ui.controls import (
     build_chart_header,
     build_frozen_horizon_control,
     build_global_filters,
@@ -55,7 +55,7 @@ from .cards import (
     build_pd_section_rag_card,
     build_pd_test_card,
 )
-from .....data.analytics.mev_range import (
+from .....shared.domain.mev_range import (
     calculate_pd_mev_thresholds,
     calculate_pd_mev_worst_rag_after_quarter,
     format_pd_mev_value,
@@ -66,10 +66,10 @@ from .....data.analytics.mev_range import (
     get_pd_mev_scenario_quarter,
     get_pd_mev_visible_periods,
 )
-from .....data.analytics.quarter_labels import (
+from .....shared.domain.quarter_labels import (
     iso_date_to_pd_quarter,
 )
-from .....data.analytics.calculations import (
+from .....shared.domain.calculations import (
     PdFilterContext,
     build_pd_balance_sheet_calibration_rag_trend,
     build_pd_calibration_assignment_tooltip,
@@ -492,7 +492,7 @@ def _build_pd_transition_matrix_section(
             ],
         )
 
-    from .....data.analytics.calculations import calculate_pd_metric_rag, get_pd_thresholds
+    from .....shared.domain.calculations import calculate_pd_metric_rag, get_pd_thresholds
 
     thresholds = get_pd_thresholds(data.get("monitoring_thresholds") or {})
     _rank = {"Green": 0, "Amber": 1, "Red": 2, "N/A": -1}
@@ -932,7 +932,7 @@ def _pd_post_review_summaries(
     crr_scale,
 ) -> list[dict]:
     """Headline status + key metric + takeaway for each Chapter 2 test."""
-    from .....data.analytics.calculations import (
+    from .....shared.domain.calculations import (
         build_pd_performance_trend_for_horizon,
         calculate_pd_metric_rag,
         get_pd_thresholds,

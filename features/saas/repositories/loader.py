@@ -17,9 +17,10 @@ from typing import Any
 
 import pandas as pd
 
-from ....data.analytics import constants as config
-from ....data.common.text import normalize_model_name as _normalize_model_name
-from ....data.common.text import ordered_unique_strings as _ordered_unique_strings
+from ....shared.domain import constants as config
+from ....config.settings import settings
+from ....shared.text import normalize_model_name as _normalize_model_name
+from ....shared.text import ordered_unique_strings as _ordered_unique_strings
 from ...monitoring.repositories.loader import load_pd_mev_catalog
 
 log = logging.getLogger(__name__)
@@ -29,7 +30,7 @@ def load_saas_model_names() -> list[str]:
     """Load SAAS model-name filter options from the dummy MEV workbook."""
     try:
         df = pd.read_excel(
-            config.DUMMY_MEV_DATA_FILE,
+            settings.dummy_mev_data_file,
             sheet_name=config.DUMMY_MEV_TRANSFORMED_DESCRIPTION_SHEET_NAME,
             usecols=[config.DUMMY_MEV_MODEL_NAME_COLUMN],
         )
@@ -46,13 +47,13 @@ def load_saas_model_names() -> list[str]:
             return model_names
         log.warning(
             "No SAAS model names found in %s [%s]; falling back to MEV catalog keys.",
-            config.DUMMY_MEV_DATA_FILE,
+            settings.dummy_mev_data_file,
             config.DUMMY_MEV_TRANSFORMED_DESCRIPTION_SHEET_NAME,
         )
     except Exception as exc:  # noqa: BLE001 - best-effort loading keeps the page available
         log.warning(
             "Unable to load SAAS model names from %s [%s]: %s",
-            config.DUMMY_MEV_DATA_FILE,
+            settings.dummy_mev_data_file,
             config.DUMMY_MEV_TRANSFORMED_DESCRIPTION_SHEET_NAME,
             exc,
         )
@@ -111,23 +112,23 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
 
     try:
         transformed_df = pd.read_excel(
-            config.DUMMY_MEV_DATA_FILE,
+            settings.dummy_mev_data_file,
             sheet_name=config.DUMMY_MEV_TRANSFORMED_DESCRIPTION_SHEET_NAME,
         )
         raw_df = pd.read_excel(
-            config.DUMMY_MEV_DATA_FILE,
+            settings.dummy_mev_data_file,
             sheet_name=config.DUMMY_MEV_RAW_DESCRIPTION_SHEET_NAME,
         )
         time_series_df = pd.read_excel(
-            config.DUMMY_MEV_DATA_FILE,
+            settings.dummy_mev_data_file,
             sheet_name=config.DUMMY_MEV_TIME_SERIES_SHEET_NAME,
         )
         model_characteristic_df = pd.read_excel(
-            config.DUMMY_MEV_DATA_FILE,
+            settings.dummy_mev_data_file,
             sheet_name=config.DUMMY_MEV_MODEL_CHARACTERISTIC_SHEET_NAME,
         )
     except Exception as exc:  # noqa: BLE001 - keep the page available if workbook loading fails
-        log.warning("Unable to load SAAS MEV workbook data from %s: %s", config.DUMMY_MEV_DATA_FILE, exc)
+        log.warning("Unable to load SAAS MEV workbook data from %s: %s", settings.dummy_mev_data_file, exc)
         return empty_payload
 
     transformed_df = transformed_df.where(pd.notna(transformed_df), None)

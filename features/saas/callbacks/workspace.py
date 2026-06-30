@@ -7,9 +7,9 @@ from datetime import datetime
 from dash import ALL, MATCH, Input, Output, State, ctx, dcc, no_update
 from dash.exceptions import PreventUpdate
 
-from ....components import filters as shared_filters
-from ....components.charts import SAAS_SCENARIO_LABEL_MAP
-from ....data.analytics.calculations import _finite
+from ....shared.ui import controls as shared_filters
+from ....shared.ui.charts import SAAS_SCENARIO_LABEL_MAP
+from ....shared.domain.calculations import is_finite_number
 from ....shared import theme
 from ....shared.registration import already_registered
 from ..data_access import SAAS_PAGE_DATA

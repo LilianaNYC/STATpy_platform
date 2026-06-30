@@ -1,4 +1,9 @@
-"""Filter controls for the PD Performance dashboard.
+"""Interactive controls & chrome for the PD Performance dashboard.
+
+Builds the filter bar, the per-chart range / PD-horizon controls, the chart
+header, and the section sub-navigation. (The name is ``controls`` rather than
+``filters`` because only the filter bar is a filter -- the rest are navigation
+and chart chrome.)
 
 Ports the global monitoring filter bar (``components/monitoring_layout.py``'s
 ``MONITORING_POINT`` / ``MONITORING_PORTFOLIO_SEGMENT`` / ``MONITORING_MODELS``
@@ -17,8 +22,8 @@ from __future__ import annotations
 
 from dash import dcc, html
 
-from ..data.analytics.calculations import get_pd_range_preset, get_pd_range_selection
-from ..data.filters.filters_config import monitoring_points_by_cycle
+from ..domain.calculations import get_pd_range_preset, get_pd_range_selection
+from ..repositories.filters_config import monitoring_points_by_cycle
 
 # ---------------------------------------------------------------------------
 # Component ids
@@ -31,9 +36,6 @@ REPORTING_CYCLE_MENU_ID = "pd-reporting-cycle-menu"
 # Monitoring points available per reporting cycle, sourced from the workbook's
 # ``Filters`` tab so cycles/quarters can be edited without code changes.
 REPORTING_CYCLE_QUARTERS = monitoring_points_by_cycle()
-SCENARIO_ID = "pd-scenario"
-SCENARIO_TOGGLE_ID = "pd-scenario-toggle"
-SCENARIO_MENU_ID = "pd-scenario-menu"
 SCENARIO_ID = "pd-scenario"
 SCENARIO_TOGGLE_ID = "pd-scenario-toggle"
 SCENARIO_MENU_ID = "pd-scenario-menu"
@@ -227,7 +229,7 @@ def build_checkbox_dropdown(
 
 def build_global_filters(data: dict, extra_controls=None) -> html.Div:
     """The top filter bar: monitoring point, segment, models."""
-    from ..data.filters.filters_config import (
+    from ..repositories.filters_config import (
         load_filter_config, model_names as cfg_model_names, segment_values as cfg_segment_values,
     )
 

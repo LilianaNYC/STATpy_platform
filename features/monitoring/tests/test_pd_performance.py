@@ -49,7 +49,7 @@ def _collect_prop_values(node, prop_name: str) -> list[str]:
 def _render_pd_content():
     """Render the live dashboard content (post-Apply), not the getting-started prompt."""
     from STATpy_platform.features.monitoring.data_access import PD_PERFORMANCE_DATA as data
-    from STATpy_platform.data.analytics.calculations import PdFilterContext, set_precomputed_metrics
+    from STATpy_platform.shared.domain.calculations import PdFilterContext, set_precomputed_metrics
 
     cycle = data["observations_by_cycle"]["CCAR 2026"]
     set_precomputed_metrics(cycle["metrics_store"])

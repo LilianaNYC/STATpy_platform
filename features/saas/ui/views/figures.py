@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .....components.charts import build_saas_mev_time_series_figure
+from .....shared.ui.charts import build_saas_mev_time_series_figure
 from . import workspace as layout
 from ...domain import records, selectors
 

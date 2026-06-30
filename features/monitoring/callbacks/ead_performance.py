@@ -6,7 +6,7 @@ from dash import ALL, Input, Output, State, ctx, no_update
 
 from ..ui import common as filter_shell
 from ..ui.views import ead_performance as layout
-from ....components import filters
+from ....shared.ui import controls
 from ..domain.ead import (
     get_ead_monitoring_point_options,
     get_ead_segments_for_model,
@@ -58,13 +58,13 @@ def register_callbacks(app) -> None:
     # -----------------------------------------------------------------
     @app.callback(
         Output(layout.RANGE_STORE_ID, "data"),
-        Input({"type": filters.RANGE_WINDOW_ID, "key": ALL}, "value"),
-        Input({"type": filters.RANGE_FROM_ID, "key": ALL}, "value"),
-        Input({"type": filters.RANGE_TO_ID, "key": ALL}, "value"),
-        State({"type": filters.RANGE_WINDOW_ID, "key": ALL}, "id"),
-        State({"type": filters.RANGE_FROM_ID, "key": ALL}, "id"),
-        State({"type": filters.RANGE_TO_ID, "key": ALL}, "id"),
-        State({"type": filters.RANGE_FROM_ID, "key": ALL}, "options"),
+        Input({"type": controls.RANGE_WINDOW_ID, "key": ALL}, "value"),
+        Input({"type": controls.RANGE_FROM_ID, "key": ALL}, "value"),
+        Input({"type": controls.RANGE_TO_ID, "key": ALL}, "value"),
+        State({"type": controls.RANGE_WINDOW_ID, "key": ALL}, "id"),
+        State({"type": controls.RANGE_FROM_ID, "key": ALL}, "id"),
+        State({"type": controls.RANGE_TO_ID, "key": ALL}, "id"),
+        State({"type": controls.RANGE_FROM_ID, "key": ALL}, "options"),
         State(layout.RANGE_STORE_ID, "data"),
         prevent_initial_call=True,
         allow_duplicate=True,
@@ -86,9 +86,9 @@ def register_callbacks(app) -> None:
         range_key = triggered["key"]
         range_store = dict(range_store or {})
 
-        if triggered["type"] == filters.RANGE_WINDOW_ID:
+        if triggered["type"] == controls.RANGE_WINDOW_ID:
             preset = window_values[window_ids.index(triggered)]
-            from_id = {"type": filters.RANGE_FROM_ID, "key": range_key}
+            from_id = {"type": controls.RANGE_FROM_ID, "key": range_key}
             if from_id not in from_ids:
                 return no_update
             from_idx = from_ids.index(from_id)
@@ -100,8 +100,8 @@ def register_callbacks(app) -> None:
                 if not count or not periods:
                     return no_update
                 range_store[range_key] = {"from": periods[max(0, len(periods) - count)], "to": periods[-1]}
-        elif triggered["type"] in (filters.RANGE_FROM_ID, filters.RANGE_TO_ID):
-            boundary = "from" if triggered["type"] == filters.RANGE_FROM_ID else "to"
+        elif triggered["type"] in (controls.RANGE_FROM_ID, controls.RANGE_TO_ID):
+            boundary = "from" if triggered["type"] == controls.RANGE_FROM_ID else "to"
             ids = from_ids if boundary == "from" else to_ids
             values = from_values if boundary == "from" else to_values
             if triggered not in ids:
@@ -145,7 +145,7 @@ def register_callbacks(app) -> None:
         Input(layout.MONITORING_POINT_DROPDOWN_ID, "value"),
     )
     def sync_ead_monitoring_point_dropdown(reporting_cycle, selected_monitoring_point):
-        options = filters.REPORTING_CYCLE_QUARTERS.get(reporting_cycle, [])
+        options = controls.REPORTING_CYCLE_QUARTERS.get(reporting_cycle, [])
         value = selected_monitoring_point if selected_monitoring_point in options else (options[0] if options else "")
         return _dropdown_options(options), value
 
@@ -186,7 +186,7 @@ def register_callbacks(app) -> None:
         if not applied:
             return layout.build_ead_apply_prompt()
 
-        from ....data.filters.filters_config import load_filter_config
+        from ....shared.repositories.filters_config import load_filter_config
         cfg = load_filter_config()
         default_cycle = cfg["reporting_cycles"][0]["value"] if cfg["reporting_cycles"] else "CCAR 2026"
         default_scenario = cfg["scenarios"][0]["value"] if cfg["scenarios"] else "intsevere"

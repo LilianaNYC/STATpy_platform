@@ -7,11 +7,11 @@ import re
 
 from dash import dcc, html
 
-from .....components.charts import (
+from .....shared.ui.charts import (
     SAAS_SCENARIO_LABEL_MAP,
     compute_saas_monitoring_band_spec,
 )
-from .....data.analytics.mev_range import format_pd_mev_value
+from .....shared.domain.mev_range import format_pd_mev_value
 from ...data_access import SAAS_PAGE_DATA
 from . import workspace as layout
 from ...domain import metrics, records, selectors

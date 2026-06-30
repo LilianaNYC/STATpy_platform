@@ -15,8 +15,8 @@ from __future__ import annotations
 from dash import ALL, Input, Output, State, ctx, html, no_update
 
 from ..ui.views import pd_performance as layout
-from ....components import filters
-from ....data.analytics.calculations import PdFilterContext, set_precomputed_metrics
+from ....shared.ui import controls
+from ....shared.domain.calculations import PdFilterContext, set_precomputed_metrics
 from ....shared.registration import already_registered
 from ..data_access import PD_PERFORMANCE_DATA
 
@@ -38,15 +38,15 @@ def register_callbacks(app) -> None:
     all_quarters_desc = sorted(data["quarters"], reverse=True)
 
     @app.callback(
-        Output(filters.MONITORING_POINT_ID, "options"),
-        Output(filters.MONITORING_POINT_ID, "value"),
-        Output(filters.MONITORING_POINT_TOGGLE_ID, "children"),
-        Output(filters.MONITORING_POINT_MENU_ID, "children"),
-        Input(filters.REPORTING_CYCLE_ID, "value"),
-        State(filters.MONITORING_POINT_ID, "value"),
+        Output(controls.MONITORING_POINT_ID, "options"),
+        Output(controls.MONITORING_POINT_ID, "value"),
+        Output(controls.MONITORING_POINT_TOGGLE_ID, "children"),
+        Output(controls.MONITORING_POINT_MENU_ID, "children"),
+        Input(controls.REPORTING_CYCLE_ID, "value"),
+        State(controls.MONITORING_POINT_ID, "value"),
     )
     def sync_reporting_cycle_to_monitoring_point(cycle, current_mp):
-        allowed = filters.REPORTING_CYCLE_QUARTERS.get(cycle)
+        allowed = controls.REPORTING_CYCLE_QUARTERS.get(cycle)
         if allowed is None:
             quarters = all_quarters_desc
         else:
@@ -59,7 +59,7 @@ def register_callbacks(app) -> None:
                     html.Span(opt["label"], className="single-select-option-label"),
                     html.Span("✓", className="single-select-option-check", **{"aria-hidden": "true"}),
                 ],
-                id={"type": filters.SINGLE_SELECT_OPTION_ID, "filter": "monitoring-point", "value": opt["value"]},
+                id={"type": controls.SINGLE_SELECT_OPTION_ID, "filter": "monitoring-point", "value": opt["value"]},
                 type="button",
                 n_clicks=0,
                 className="single-select-option is-selected" if opt["value"] == value else "single-select-option",
@@ -72,11 +72,11 @@ def register_callbacks(app) -> None:
     # Portfolio segment <-> specific models mutual exclusivity
     # -----------------------------------------------------------------
     @app.callback(
-        Output(filters.PORTFOLIO_SEGMENT_ID, "disabled"),
-        Output(filters.PORTFOLIO_SEGMENT_TOGGLE_ID, "disabled"),
-        Output(filters.MODELS_TOGGLE_ID, "disabled"),
-        Input(filters.PORTFOLIO_SEGMENT_ID, "value"),
-        Input(filters.MODELS_ID, "value"),
+        Output(controls.PORTFOLIO_SEGMENT_ID, "disabled"),
+        Output(controls.PORTFOLIO_SEGMENT_TOGGLE_ID, "disabled"),
+        Output(controls.MODELS_TOGGLE_ID, "disabled"),
+        Input(controls.PORTFOLIO_SEGMENT_ID, "value"),
+        Input(controls.MODELS_ID, "value"),
     )
     def sync_pd_segment_model_exclusivity(segment, model):
         has_segment_selection = segment != "all"
@@ -92,9 +92,9 @@ def register_callbacks(app) -> None:
     # Single-select dropdown open/close toggles
     # -----------------------------------------------------------------
     @app.callback(
-        Output(filters.MONITORING_POINT_MENU_ID, "className"),
-        Input(filters.MONITORING_POINT_TOGGLE_ID, "n_clicks"),
-        State(filters.MONITORING_POINT_MENU_ID, "className"),
+        Output(controls.MONITORING_POINT_MENU_ID, "className"),
+        Input(controls.MONITORING_POINT_TOGGLE_ID, "n_clicks"),
+        State(controls.MONITORING_POINT_MENU_ID, "className"),
         prevent_initial_call=True,
     )
     def toggle_monitoring_point_menu(_n_clicks, current_class):
@@ -103,10 +103,10 @@ def register_callbacks(app) -> None:
         return "checkbox-dropdown-menu single-select-menu open"
 
     @app.callback(
-        Output(filters.PORTFOLIO_SEGMENT_MENU_ID, "className"),
-        Input(filters.PORTFOLIO_SEGMENT_TOGGLE_ID, "n_clicks"),
-        State(filters.PORTFOLIO_SEGMENT_MENU_ID, "className"),
-        State(filters.PORTFOLIO_SEGMENT_TOGGLE_ID, "disabled"),
+        Output(controls.PORTFOLIO_SEGMENT_MENU_ID, "className"),
+        Input(controls.PORTFOLIO_SEGMENT_TOGGLE_ID, "n_clicks"),
+        State(controls.PORTFOLIO_SEGMENT_MENU_ID, "className"),
+        State(controls.PORTFOLIO_SEGMENT_TOGGLE_ID, "disabled"),
         prevent_initial_call=True,
     )
     def toggle_segment_menu(_n_clicks, current_class, is_disabled):
@@ -121,10 +121,10 @@ def register_callbacks(app) -> None:
     # Each filter_key routes to its own hidden dcc.Dropdown value.
     # -----------------------------------------------------------------
     @app.callback(
-        Output(filters.MONITORING_POINT_ID, "value", allow_duplicate=True),
-        Output(filters.MONITORING_POINT_TOGGLE_ID, "children", allow_duplicate=True),
-        Output(filters.MONITORING_POINT_MENU_ID, "className", allow_duplicate=True),
-        Input({"type": filters.SINGLE_SELECT_OPTION_ID, "filter": "monitoring-point", "value": ALL}, "n_clicks"),
+        Output(controls.MONITORING_POINT_ID, "value", allow_duplicate=True),
+        Output(controls.MONITORING_POINT_TOGGLE_ID, "children", allow_duplicate=True),
+        Output(controls.MONITORING_POINT_MENU_ID, "className", allow_duplicate=True),
+        Input({"type": controls.SINGLE_SELECT_OPTION_ID, "filter": "monitoring-point", "value": ALL}, "n_clicks"),
         prevent_initial_call=True,
     )
     def select_monitoring_point(_clicks):
@@ -135,9 +135,9 @@ def register_callbacks(app) -> None:
         return value, value, "checkbox-dropdown-menu single-select-menu"
 
     @app.callback(
-        Output(filters.PORTFOLIO_SEGMENT_ID, "value"),
-        Output(filters.PORTFOLIO_SEGMENT_MENU_ID, "className", allow_duplicate=True),
-        Input({"type": filters.SINGLE_SELECT_OPTION_ID, "filter": "portfolio-segment", "value": ALL}, "n_clicks"),
+        Output(controls.PORTFOLIO_SEGMENT_ID, "value"),
+        Output(controls.PORTFOLIO_SEGMENT_MENU_ID, "className", allow_duplicate=True),
+        Input({"type": controls.SINGLE_SELECT_OPTION_ID, "filter": "portfolio-segment", "value": ALL}, "n_clicks"),
         prevent_initial_call=True,
     )
     def select_segment(_clicks):
@@ -150,10 +150,10 @@ def register_callbacks(app) -> None:
     # Single-select dropdown shell sync (toggle label + option highlights)
     # -----------------------------------------------------------------
     @app.callback(
-        Output(filters.PORTFOLIO_SEGMENT_TOGGLE_ID, "children"),
-        Output({"type": filters.SINGLE_SELECT_OPTION_ID, "filter": "portfolio-segment", "value": ALL}, "className"),
-        Input(filters.PORTFOLIO_SEGMENT_ID, "value"),
-        State({"type": filters.SINGLE_SELECT_OPTION_ID, "filter": "portfolio-segment", "value": ALL}, "id"),
+        Output(controls.PORTFOLIO_SEGMENT_TOGGLE_ID, "children"),
+        Output({"type": controls.SINGLE_SELECT_OPTION_ID, "filter": "portfolio-segment", "value": ALL}, "className"),
+        Input(controls.PORTFOLIO_SEGMENT_ID, "value"),
+        State({"type": controls.SINGLE_SELECT_OPTION_ID, "filter": "portfolio-segment", "value": ALL}, "id"),
     )
     def sync_segment_shell(value, option_ids):
         label = segment_labels.get(value, value or "Select")
@@ -165,9 +165,9 @@ def register_callbacks(app) -> None:
 
     # Reporting Cycle toggle
     @app.callback(
-        Output(filters.REPORTING_CYCLE_MENU_ID, "className"),
-        Input(filters.REPORTING_CYCLE_TOGGLE_ID, "n_clicks"),
-        State(filters.REPORTING_CYCLE_MENU_ID, "className"),
+        Output(controls.REPORTING_CYCLE_MENU_ID, "className"),
+        Input(controls.REPORTING_CYCLE_TOGGLE_ID, "n_clicks"),
+        State(controls.REPORTING_CYCLE_MENU_ID, "className"),
         prevent_initial_call=True,
     )
     def toggle_reporting_cycle_menu(_n_clicks, current_class):
@@ -176,9 +176,9 @@ def register_callbacks(app) -> None:
         return "checkbox-dropdown-menu single-select-menu open"
 
     @app.callback(
-        Output(filters.REPORTING_CYCLE_ID, "value"),
-        Output(filters.REPORTING_CYCLE_MENU_ID, "className", allow_duplicate=True),
-        Input({"type": filters.SINGLE_SELECT_OPTION_ID, "filter": "reporting-cycle", "value": ALL}, "n_clicks"),
+        Output(controls.REPORTING_CYCLE_ID, "value"),
+        Output(controls.REPORTING_CYCLE_MENU_ID, "className", allow_duplicate=True),
+        Input({"type": controls.SINGLE_SELECT_OPTION_ID, "filter": "reporting-cycle", "value": ALL}, "n_clicks"),
         prevent_initial_call=True,
     )
     def select_reporting_cycle(_clicks):
@@ -188,10 +188,10 @@ def register_callbacks(app) -> None:
         return triggered["value"], "checkbox-dropdown-menu single-select-menu"
 
     @app.callback(
-        Output(filters.REPORTING_CYCLE_TOGGLE_ID, "children"),
-        Output({"type": filters.SINGLE_SELECT_OPTION_ID, "filter": "reporting-cycle", "value": ALL}, "className"),
-        Input(filters.REPORTING_CYCLE_ID, "value"),
-        State({"type": filters.SINGLE_SELECT_OPTION_ID, "filter": "reporting-cycle", "value": ALL}, "id"),
+        Output(controls.REPORTING_CYCLE_TOGGLE_ID, "children"),
+        Output({"type": controls.SINGLE_SELECT_OPTION_ID, "filter": "reporting-cycle", "value": ALL}, "className"),
+        Input(controls.REPORTING_CYCLE_ID, "value"),
+        State({"type": controls.SINGLE_SELECT_OPTION_ID, "filter": "reporting-cycle", "value": ALL}, "id"),
     )
     def sync_reporting_cycle_shell(value, option_ids):
         classes = [
@@ -204,9 +204,9 @@ def register_callbacks(app) -> None:
     scenario_labels = {"intsevere": "intsevere", "baseline": "baseline", "other": "other"}
 
     @app.callback(
-        Output(filters.SCENARIO_MENU_ID, "className"),
-        Input(filters.SCENARIO_TOGGLE_ID, "n_clicks"),
-        State(filters.SCENARIO_MENU_ID, "className"),
+        Output(controls.SCENARIO_MENU_ID, "className"),
+        Input(controls.SCENARIO_TOGGLE_ID, "n_clicks"),
+        State(controls.SCENARIO_MENU_ID, "className"),
         prevent_initial_call=True,
     )
     def toggle_scenario_menu(_n_clicks, current_class):
@@ -215,9 +215,9 @@ def register_callbacks(app) -> None:
         return "checkbox-dropdown-menu single-select-menu open"
 
     @app.callback(
-        Output(filters.SCENARIO_ID, "value"),
-        Output(filters.SCENARIO_MENU_ID, "className", allow_duplicate=True),
-        Input({"type": filters.SINGLE_SELECT_OPTION_ID, "filter": "scenario", "value": ALL}, "n_clicks"),
+        Output(controls.SCENARIO_ID, "value"),
+        Output(controls.SCENARIO_MENU_ID, "className", allow_duplicate=True),
+        Input({"type": controls.SINGLE_SELECT_OPTION_ID, "filter": "scenario", "value": ALL}, "n_clicks"),
         prevent_initial_call=True,
     )
     def select_scenario(_clicks):
@@ -227,10 +227,10 @@ def register_callbacks(app) -> None:
         return triggered["value"], "checkbox-dropdown-menu single-select-menu"
 
     @app.callback(
-        Output(filters.SCENARIO_TOGGLE_ID, "children"),
-        Output({"type": filters.SINGLE_SELECT_OPTION_ID, "filter": "scenario", "value": ALL}, "className"),
-        Input(filters.SCENARIO_ID, "value"),
-        State({"type": filters.SINGLE_SELECT_OPTION_ID, "filter": "scenario", "value": ALL}, "id"),
+        Output(controls.SCENARIO_TOGGLE_ID, "children"),
+        Output({"type": controls.SINGLE_SELECT_OPTION_ID, "filter": "scenario", "value": ALL}, "className"),
+        Input(controls.SCENARIO_ID, "value"),
+        State({"type": controls.SINGLE_SELECT_OPTION_ID, "filter": "scenario", "value": ALL}, "id"),
     )
     def sync_scenario_shell(value, option_ids):
         label = scenario_labels.get(value, value or "Select")
@@ -242,10 +242,10 @@ def register_callbacks(app) -> None:
 
     # Specific Models toggle
     @app.callback(
-        Output(filters.MODELS_MENU_ID, "className"),
-        Input(filters.MODELS_TOGGLE_ID, "n_clicks"),
-        State(filters.MODELS_MENU_ID, "className"),
-        State(filters.MODELS_TOGGLE_ID, "disabled"),
+        Output(controls.MODELS_MENU_ID, "className"),
+        Input(controls.MODELS_TOGGLE_ID, "n_clicks"),
+        State(controls.MODELS_MENU_ID, "className"),
+        State(controls.MODELS_TOGGLE_ID, "disabled"),
         prevent_initial_call=True,
     )
     def toggle_models_menu(_n_clicks, current_class, is_disabled):
@@ -256,9 +256,9 @@ def register_callbacks(app) -> None:
         return "checkbox-dropdown-menu single-select-menu open"
 
     @app.callback(
-        Output(filters.MODELS_ID, "value"),
-        Output(filters.MODELS_MENU_ID, "className", allow_duplicate=True),
-        Input({"type": filters.SINGLE_SELECT_OPTION_ID, "filter": "specific-models", "value": ALL}, "n_clicks"),
+        Output(controls.MODELS_ID, "value"),
+        Output(controls.MODELS_MENU_ID, "className", allow_duplicate=True),
+        Input({"type": controls.SINGLE_SELECT_OPTION_ID, "filter": "specific-models", "value": ALL}, "n_clicks"),
         prevent_initial_call=True,
     )
     def select_model(_clicks):
@@ -270,10 +270,10 @@ def register_callbacks(app) -> None:
     model_labels = {"all": "All models", **{name: name for name in data["model_names"]}}
 
     @app.callback(
-        Output(filters.MODELS_TOGGLE_ID, "children"),
-        Output({"type": filters.SINGLE_SELECT_OPTION_ID, "filter": "specific-models", "value": ALL}, "className"),
-        Input(filters.MODELS_ID, "value"),
-        State({"type": filters.SINGLE_SELECT_OPTION_ID, "filter": "specific-models", "value": ALL}, "id"),
+        Output(controls.MODELS_TOGGLE_ID, "children"),
+        Output({"type": controls.SINGLE_SELECT_OPTION_ID, "filter": "specific-models", "value": ALL}, "className"),
+        Input(controls.MODELS_ID, "value"),
+        State({"type": controls.SINGLE_SELECT_OPTION_ID, "filter": "specific-models", "value": ALL}, "id"),
     )
     def sync_models_shell(value, option_ids):
         label = model_labels.get(value, value or "Select")
@@ -288,13 +288,13 @@ def register_callbacks(app) -> None:
     # -----------------------------------------------------------------
     @app.callback(
         Output(layout.RANGE_STORE_ID, "data"),
-        Input({"type": filters.RANGE_WINDOW_ID, "key": ALL}, "value"),
-        Input({"type": filters.RANGE_FROM_ID, "key": ALL}, "value"),
-        Input({"type": filters.RANGE_TO_ID, "key": ALL}, "value"),
-        State({"type": filters.RANGE_WINDOW_ID, "key": ALL}, "id"),
-        State({"type": filters.RANGE_FROM_ID, "key": ALL}, "id"),
-        State({"type": filters.RANGE_TO_ID, "key": ALL}, "id"),
-        State({"type": filters.RANGE_FROM_ID, "key": ALL}, "options"),
+        Input({"type": controls.RANGE_WINDOW_ID, "key": ALL}, "value"),
+        Input({"type": controls.RANGE_FROM_ID, "key": ALL}, "value"),
+        Input({"type": controls.RANGE_TO_ID, "key": ALL}, "value"),
+        State({"type": controls.RANGE_WINDOW_ID, "key": ALL}, "id"),
+        State({"type": controls.RANGE_FROM_ID, "key": ALL}, "id"),
+        State({"type": controls.RANGE_TO_ID, "key": ALL}, "id"),
+        State({"type": controls.RANGE_FROM_ID, "key": ALL}, "options"),
         State(layout.RANGE_STORE_ID, "data"),
         prevent_initial_call=True,
         allow_duplicate=True,
@@ -309,9 +309,9 @@ def register_callbacks(app) -> None:
         range_key = triggered["key"]
         range_store = dict(range_store or {})
 
-        if triggered["type"] == filters.RANGE_WINDOW_ID:
+        if triggered["type"] == controls.RANGE_WINDOW_ID:
             preset = window_values[window_ids.index(triggered)]
-            from_idx = from_ids.index({"type": filters.RANGE_FROM_ID, "key": range_key})
+            from_idx = from_ids.index({"type": controls.RANGE_FROM_ID, "key": range_key})
             periods = [option["value"] for option in from_options_list[from_idx] if option["value"]]
             if preset == "all":
                 range_store[range_key] = {"from": "", "to": ""}
@@ -320,8 +320,8 @@ def register_callbacks(app) -> None:
                 if not count or not periods:
                     return no_update
                 range_store[range_key] = {"from": periods[max(0, len(periods) - count)], "to": periods[-1]}
-        elif triggered["type"] in (filters.RANGE_FROM_ID, filters.RANGE_TO_ID):
-            boundary = "from" if triggered["type"] == filters.RANGE_FROM_ID else "to"
+        elif triggered["type"] in (controls.RANGE_FROM_ID, controls.RANGE_TO_ID):
+            boundary = "from" if triggered["type"] == controls.RANGE_FROM_ID else "to"
             ids = from_ids if boundary == "from" else to_ids
             values = from_values if boundary == "from" else to_values
             value = values[ids.index(triggered)]
@@ -344,8 +344,8 @@ def register_callbacks(app) -> None:
     # -----------------------------------------------------------------
     @app.callback(
         Output(layout.TREND_HORIZON_STORE_ID, "data"),
-        Input({"type": filters.TREND_HORIZON_ID, "key": ALL}, "value"),
-        State({"type": filters.TREND_HORIZON_ID, "key": ALL}, "id"),
+        Input({"type": controls.TREND_HORIZON_ID, "key": ALL}, "value"),
+        State({"type": controls.TREND_HORIZON_ID, "key": ALL}, "id"),
         State(layout.TREND_HORIZON_STORE_ID, "data"),
         prevent_initial_call=True,
     )
@@ -380,11 +380,11 @@ def register_callbacks(app) -> None:
     @app.callback(
         Output(layout.APPLIED_FILTERS_STORE_ID, "data"),
         Input(layout.APPLY_FILTERS_ID, "n_clicks"),
-        State(filters.MONITORING_POINT_ID, "value"),
-        State(filters.PORTFOLIO_SEGMENT_ID, "value"),
-        State(filters.MODELS_ID, "value"),
-        State(filters.REPORTING_CYCLE_ID, "value"),
-        State(filters.SCENARIO_ID, "value"),
+        State(controls.MONITORING_POINT_ID, "value"),
+        State(controls.PORTFOLIO_SEGMENT_ID, "value"),
+        State(controls.MODELS_ID, "value"),
+        State(controls.REPORTING_CYCLE_ID, "value"),
+        State(controls.SCENARIO_ID, "value"),
         prevent_initial_call=True,
     )
     def apply_pd_filters(_n_clicks, monitoring_point, segment, models, reporting_cycle, scenario):
@@ -424,7 +424,7 @@ def register_callbacks(app) -> None:
         if not applied:
             return layout.build_pd_apply_prompt()
 
-        from ....data.filters.filters_config import load_filter_config
+        from ....shared.repositories.filters_config import load_filter_config
         cfg = load_filter_config()
         default_cycle = cfg["reporting_cycles"][0]["value"] if cfg["reporting_cycles"] else "CCAR 2026"
         default_scenario = cfg["scenarios"][0]["value"] if cfg["scenarios"] else "intsevere"

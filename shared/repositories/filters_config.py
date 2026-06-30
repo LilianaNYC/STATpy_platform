@@ -17,10 +17,10 @@ table that drives every dropdown in the monitoring tabs. Each row is one option:
 To add or remove a filter element, add or delete a row in that sheet — no code
 changes are required.
 
-This module lives in its own top-level ``data/filters/`` package rather than
+This module lives in its own top-level ``shared/repositories/`` package rather than
 ``features/monitoring/repositories/`` (where the rest of monitoring's
 feature-private data loading lives) because it's read by the shared
-``components.filters`` module, which both the monitoring and SAAS dashboards
+``shared.ui.controls`` module, which both the monitoring and SAAS dashboards
 depend on. Moving it into a feature-private package would make a shared
 component reach into another feature's internals.
 """
@@ -31,7 +31,8 @@ from functools import lru_cache
 
 import pandas as pd
 
-from ..analytics import constants as config
+from ...shared.domain import constants as config
+from ...config.settings import settings
 
 FILTERS_SHEET_NAME = "Filters"
 
@@ -66,7 +67,7 @@ _DEFAULTS: dict = {
 def load_filter_config() -> dict:
     """Return the monitoring filter options, read from the ``Filters`` sheet."""
     try:
-        df = pd.read_excel(config.PORTFOLIO_FILE, sheet_name=FILTERS_SHEET_NAME)
+        df = pd.read_excel(settings.portfolio_file, sheet_name=FILTERS_SHEET_NAME)
     except (FileNotFoundError, ValueError, KeyError):
         return dict(_DEFAULTS)
 

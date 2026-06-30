@@ -6,10 +6,10 @@ from typing import Any
 
 from dash import dcc, html
 
-from .....components.charts import build_loss_metric_trend_figure, build_loss_rag_trend_figure
-from .....components import filters as shared_filters
-from .....components.filters import build_chart_header
-from .....data.analytics.calculations import (
+from .....shared.ui.charts import build_loss_metric_trend_figure, build_loss_rag_trend_figure
+from .....shared.ui import controls as shared_filters
+from .....shared.ui.controls import build_chart_header
+from .....shared.domain.calculations import (
     format_pd_compact_amount,
     format_pd_metric,
     fmt_n,
@@ -222,7 +222,7 @@ def _build_loss_subnav() -> html.Div:
 
 
 def _build_loss_overview_flow(summary: dict) -> html.Div:
-    from .....components.kpis import (
+    from .cards import (
         build_pd_overview_flow_input,
         build_pd_overview_flow_metric,
         build_pd_overview_flow_stage,
@@ -447,7 +447,7 @@ def build_layout() -> list:
 
 def page_layout(data: dict) -> list:
     """Build the Loss page with top controls and live content."""
-    from .....data.filters.filters_config import load_filter_config, model_names, segment_values
+    from .....shared.repositories.filters_config import load_filter_config, model_names, segment_values
     from ...domain.loss import set_loss_metrics
     cfg = load_filter_config()
     model_options = model_names("loss")

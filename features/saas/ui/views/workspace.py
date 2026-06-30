@@ -6,9 +6,9 @@ from datetime import date
 
 from dash import dcc, html
 
-from .....components import filters as shared_filters
-from .....components.charts import SAAS_SCENARIO_LABEL_MAP
-from .....data.analytics.calculations import get_pd_range_preset, get_pd_range_selection
+from .....shared.ui import controls as shared_filters
+from .....shared.ui.charts import SAAS_SCENARIO_LABEL_MAP
+from .....shared.domain.calculations import get_pd_range_preset, get_pd_range_selection
 from ...data_access import SAAS_PAGE_DATA
 
 RUN_FOR_ID = "saas-run-for"
