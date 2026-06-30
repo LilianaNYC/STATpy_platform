@@ -64,11 +64,12 @@ beneath it:
 | `repositories/`* | Persistence / external-system access (read snapshots, write outputs). | scoring logic, UI mapping |
 | `tests/`         | Per-layer confidence (domain / service / callback / structure). | — |
 
-\* In `monitoring` and `saas` the repositories live in the **shared `data/`
-layer** rather than inside the feature, because both dashboards (and the shared
-`components/` layer) read the same loaders/analytics. The `dq_module` owns its
-repositories because its data is not shared. Shared code is kept shared by the
-"rule of two".
+\* Every feature owns its repositories (`features/<name>/repositories/loader.py`).
+The one **shared** repository is the `Filters` config-sheet reader in
+`shared/repositories/`, because it's read by both `monitoring` and `saas` *and*
+the shared `shared/ui` layer. Likewise the shared calculation engine lives in
+`shared/domain/`. Shared code is kept shared by the "rule of two"; monitoring-only
+logic stays in `features/monitoring/domain/`.
 
 ### How the registry wiring works
 
@@ -97,31 +98,25 @@ STATpy_platform/
   shell.py                # sidebar nav, footer, URL router (all registry-driven)
   features_registry.py    # app-level registry: the list of dashboards
 
-  shared/                 # cross-dashboard shared layer
+  shared/                 # cross-dashboard shared layers (named for the layer they hold)
+    ui/                   #   shared presentational layer (reused by >=2 dashboards)
+      charts.py           #     Plotly figure builders (PD + SAAS)
+      controls.py         #     global filter bar / sub-nav / range+horizon controls
+    domain/               #   shared pure business logic
+      calculations.py     #     PD calculation engine (RAG, calibration, discrimination)
+      mev_range.py        #     MEV Range helpers (catalog, thresholds, RAG)
+      quarter_labels.py   #     YYYY-Qn quarter parse / format / sort utils
+      constants.py        #     data-domain constants (columns, sheets, RAG bands)
+    repositories/         #   shared persistence
+      filters_config.py   #     the Filters config sheet (cycles/scenarios/segments)
+    text.py               #   generic text helpers shared by loaders
     types.py              #   DashboardDefinition / PageDefinition registry types
     theme.py              #   app-shell theme constants + element ids
     registration.py       #   per-app idempotent register_callbacks guard
 
-  components/             # shared UI library (reused by >=2 dashboards)
-    charts.py             #   Plotly figure builders (PD + SAAS)
-    filters.py            #   global filter bar / sub-nav / range+horizon controls
-    kpis.py               #   shared KPI/RAG card builders
-
   config/                 # centralised configuration
     settings.py           #   typed Settings (data paths, env, flags), built once
     environments.py       #   dev / uat / prod overrides
-
-  data/                   # SHARED domain + repositories (used by monitoring & saas)
-    common/text.py        #   generic helpers shared by loaders
-    analytics/            #   shared calculation engine + domain constants
-      calculations.py     #     PD calculation engine (RAG, calibration, discrimination)
-      mev_range.py        #     MEV Range helpers (catalog, thresholds, RAG)
-      rank_ordering.py    #     Scenario rank-ordering + YYYY-Qn quarter utils
-      constants.py        #     data-domain constants (columns, sheets, RAG bands)
-    monitoring/           #   monitoring repositories
-      loader.py           #     reads the metric tabs into precomputed stores
-      filters_config.py   #     the Filters config sheet (cycles/scenarios/segments)
-    saas/loader.py        #   reads dummy_mev_data.xlsx for the SAAS workspace
 
   features/
     monitoring/           # README + dashboard.py + page_registry.py + stores.py + data_access.py
@@ -129,16 +124,18 @@ STATpy_platform/
       callbacks/          #   one module per page
       services/           #   data_service.py (load/enrich orchestration)
       domain/             #   lgd / ead / loss / overview (monitoring-only logic)
+      repositories/       #   loader.py (reads metric tabs into precomputed stores)
       tests/
     saas/                 # same layout; single Workspace page
       ui/{pages,views}/   #   views/{workspace, components, figures}.py
       callbacks/workspace.py
       services/           #   exports.py (Excel), reports.py (chart export)
       domain/             #   selectors / records / metrics
+      repositories/       #   loader.py (reads dummy_mev_data.xlsx)
       tests/
     dq_module/            # reference layered feature (ui/callbacks/services/domain/repositories/tests)
 
-  tests/                  # repo-level app/registry/shell + shared-analytics tests
+  tests/                  # repo-level app/registry/shell + shared-domain tests
   assets/                 # styles.css, js/ subnav scripts, fonts/ (auto-loaded by Dash)
   source_data/            # bundled Excel inputs
 ```
@@ -147,7 +144,7 @@ STATpy_platform/
 
 Source data lives in `source_data/`, bundled with the app. File *locations* are
 resolved in `config/settings.py`; data-domain constants (column/sheet names, RAG
-bands) live in `data/analytics/constants.py`.
+bands) live in `shared/domain/constants.py`.
 
 - `portfolio.xlsx` – the monitoring metric tabs
   (`PD/LGD/EAD/Loss_Performance_Metrics`), the `Filters` config sheet, and
@@ -162,8 +159,8 @@ its `services` layer) and exposes the in-memory payload.
 
 ## Design notes
 
-- **Shared analytics live in `data/analytics/`.** The PD calculation engine is
-  consumed by the shared `components/` layer *and* by the SAAS dashboard, so by
+- **Shared business logic lives in `shared/domain/`.** The PD calculation engine
+  is consumed by the shared `shared/ui` layer *and* by the SAAS dashboard, so by
   the "rule of two" it belongs in a shared location rather than inside one
   feature. Monitoring-only logic lives in `features/monitoring/domain/`.
 - **URL paths are declarative** – defined on the page registry, so changing the

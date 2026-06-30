@@ -75,16 +75,18 @@ features/monitoring/
 - **`tests/`** — feature-local pytest suite (collected with the rest via `pytest`).
 
 ## Shared layer (not owned by this feature)
-The **repository** and shared UI/domain code lives outside the feature because
-the SAAS dashboard and the `components/` layer reuse parts of it:
+This feature owns its repository (`repositories/loader.py`, which reads the
+workbook tabs into the precomputed metric stores), but the rest of its
+UI/domain/persistence is shared because the SAAS dashboard and the `shared/ui`
+layer reuse parts of it:
 
-- `data/monitoring/loader.py` — reads the workbook tabs into the precomputed
-  metric stores (the repository). `data/monitoring/filters_config.py` — the
-  `Filters` config sheet (cycles, scenarios, segments, models).
-- `data/analytics/` — shared calculation engine: `calculations`, `mev_range`,
-  `rank_ordering`, and domain `constants` (RAG colours, threshold helpers).
-- `components/charts.py`, `components/filters.py`, `components/kpis.py` — shared
-  chart / filter / KPI builders.
+- `shared/repositories/filters_config.py` — the `Filters` config sheet (cycles,
+  scenarios, segments, models), read by both dashboards and `shared/ui`.
+- `shared/domain/` — shared calculation engine: `calculations`, `mev_range`,
+  `quarter_labels`, and domain `constants` (RAG colours, threshold helpers).
+- `shared/ui/charts.py`, `shared/ui/controls.py` — shared chart / filter-bar /
+  control builders. (KPI/RAG card builders live in this feature's
+  `ui/views/cards.py`.)
 - `config/settings.py` — source-data file locations.
 - `shared/` — registry types, theme constants, idempotent-registration helper.
 
@@ -96,7 +98,7 @@ the SAAS dashboard and the `components/` layer reuse parts of it:
   RAG-assignment / LGD / Loss / scenario-test threshold tables.
 - `source_data/dummy_mev_data.xlsx` — the MEV time-series catalog (MEV Range).
 
-Loading happens in `data/monitoring/loader.py`; the enriched payload is exposed
+Loading happens in `repositories/loader.py`; the enriched payload is exposed
 once via `services.data_service` → `data_access.PD_PERFORMANCE_DATA`.
 
 ## How to add a page
@@ -115,5 +117,6 @@ once via `services.data_service` → `data_access.PD_PERFORMANCE_DATA`.
 - Dashboard-level stores are surfaced from `stores.py` (currently all owned by
   the PD page) and rendered once in the shell so filter/range state survives
   navigation.
-- Shared code lives in `data/` and `components/`; promote feature-local code
-  there only once a second page/dashboard needs it ("rule of two").
+- Shared code lives under `shared/` (`shared/ui`, `shared/domain`,
+  `shared/repositories`); promote feature-local code there only once a second
+  page/dashboard needs it ("rule of two").

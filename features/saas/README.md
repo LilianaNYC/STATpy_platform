@@ -63,12 +63,15 @@ features/saas/
 - **`tests/`** — feature-local pytest suite.
 
 ## Shared layer (not owned by this feature)
-- `data/saas/loader.py` — reads the MEV workbook into `SAAS_PAGE_DATA` (the
+This feature owns its repository (`repositories/loader.py`), but reuses shared
+UI/domain code:
+
+- `repositories/loader.py` — reads the MEV workbook into `SAAS_PAGE_DATA` (the
   repository); falls back to the monitoring PD MEV catalog keys when the
   workbook can't be read (best effort).
-- `components/charts.py` — shared SAAS chart builders
+- `shared/ui/charts.py` — shared SAAS chart builders
   (`build_saas_mev_time_series_figure`, scenario maps, monitoring-band spec).
-- `data/analytics/` — numeric/range helpers reused here (e.g. `_finite`,
+- `shared/domain/` — numeric/range helpers reused here (e.g. `is_finite_number`,
   `format_pd_mev_value`).
 - `shared/theme.py` — theme id/options (the workspace syncs its charts to the
   active theme).
@@ -77,7 +80,7 @@ features/saas/
 - `source_data/dummy_mev_data.xlsx` — transformed/raw MEV descriptions, MEV time
   series, and model characteristics.
 
-Loading happens in `data/saas/loader.py`; the payload is exposed once via
+Loading happens in `repositories/loader.py`; the payload is exposed once via
 `data_access.SAAS_PAGE_DATA`.
 
 ## How to add a page
