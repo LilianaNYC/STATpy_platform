@@ -10,7 +10,7 @@ from dash import ALL, Input, Output, State, ctx, no_update
 
 from ..ui import common as filter_shell
 from ..ui.views import overview as layout
-from ....components import filters
+from ....shared.ui import controls
 from ..domain.overview import build_overview_rows, overview_filter_options
 from ....shared.registration import already_registered
 from ..data_access import PD_PERFORMANCE_DATA
@@ -63,13 +63,13 @@ def register_callbacks(app) -> None:
 
     @app.callback(
         Output(layout.RANGE_STORE_ID, "data"),
-        Input({"type": filters.RANGE_WINDOW_ID, "key": ALL}, "value"),
-        Input({"type": filters.RANGE_FROM_ID, "key": ALL}, "value"),
-        Input({"type": filters.RANGE_TO_ID, "key": ALL}, "value"),
-        State({"type": filters.RANGE_WINDOW_ID, "key": ALL}, "id"),
-        State({"type": filters.RANGE_FROM_ID, "key": ALL}, "id"),
-        State({"type": filters.RANGE_TO_ID, "key": ALL}, "id"),
-        State({"type": filters.RANGE_FROM_ID, "key": ALL}, "options"),
+        Input({"type": controls.RANGE_WINDOW_ID, "key": ALL}, "value"),
+        Input({"type": controls.RANGE_FROM_ID, "key": ALL}, "value"),
+        Input({"type": controls.RANGE_TO_ID, "key": ALL}, "value"),
+        State({"type": controls.RANGE_WINDOW_ID, "key": ALL}, "id"),
+        State({"type": controls.RANGE_FROM_ID, "key": ALL}, "id"),
+        State({"type": controls.RANGE_TO_ID, "key": ALL}, "id"),
+        State({"type": controls.RANGE_FROM_ID, "key": ALL}, "options"),
         State(layout.RANGE_STORE_ID, "data"),
         prevent_initial_call=True,
     )
@@ -83,9 +83,9 @@ def register_callbacks(app) -> None:
         range_key = triggered["key"]
         range_store = dict(range_store or {})
 
-        if triggered["type"] == filters.RANGE_WINDOW_ID:
+        if triggered["type"] == controls.RANGE_WINDOW_ID:
             preset = window_values[window_ids.index(triggered)]
-            from_idx = from_ids.index({"type": filters.RANGE_FROM_ID, "key": range_key})
+            from_idx = from_ids.index({"type": controls.RANGE_FROM_ID, "key": range_key})
             periods = [option["value"] for option in from_options_list[from_idx] if option["value"]]
             if preset == "all":
                 range_store[range_key] = {"from": "", "to": ""}
@@ -94,8 +94,8 @@ def register_callbacks(app) -> None:
                 if not count or not periods:
                     return no_update
                 range_store[range_key] = {"from": periods[max(0, len(periods) - count)], "to": periods[-1]}
-        elif triggered["type"] in (filters.RANGE_FROM_ID, filters.RANGE_TO_ID):
-            boundary = "from" if triggered["type"] == filters.RANGE_FROM_ID else "to"
+        elif triggered["type"] in (controls.RANGE_FROM_ID, controls.RANGE_TO_ID):
+            boundary = "from" if triggered["type"] == controls.RANGE_FROM_ID else "to"
             ids = from_ids if boundary == "from" else to_ids
             values = from_values if boundary == "from" else to_values
             value = values[ids.index(triggered)]

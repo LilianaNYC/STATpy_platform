@@ -31,20 +31,19 @@ import statistics
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from ..data.analytics.constants import pd_rag_color
-from ..data.analytics.mev_range import (
+from ..domain.constants import pd_rag_color
+from ..domain.mev_range import (
     calculate_pd_mev_thresholds,
     get_pd_mev_scenario_quarter,
     get_pd_mev_scenario_series,
 )
-from ..data.analytics.quarter_labels import (
-    compare_pd_quarter_labels,
+from ..domain.quarter_labels import (
     format_pd_compact_quarter_label,
     iso_date_to_pd_quarter,
     _pd_quarter_sort_key,
 )
-from ..data.analytics.calculations import (
-    _finite,
+from ..domain.calculations import (
+    is_finite_number,
     build_pd_ae_ratio_bands,
     build_pd_threshold_bands,
     calculate_pd_metric_rag,
@@ -362,7 +361,7 @@ def _compact_run_for_label(run_for: str) -> str:
 
 
 def _format_projection_quarter_label(quarter_value) -> str:
-    if quarter_value is None or not _finite(quarter_value):
+    if quarter_value is None or not is_finite_number(quarter_value):
         return ""
     numeric_value = float(quarter_value)
     if numeric_value.is_integer():
@@ -377,7 +376,7 @@ def _saas_quarter_for_date(records, target_date):
     for row in records or []:
         row_date = _coerce_saas_date(row.get("Date"))
         quarter_value = row.get("Quarter")
-        if row_date == target and _finite(quarter_value):
+        if row_date == target and is_finite_number(quarter_value):
             return float(quarter_value)
     return None
 
@@ -597,7 +596,7 @@ def _rag_score_yaxis(title: str) -> dict:
 
 
 def _format_metric_value(value, decimals=2):
-    return "—" if value is None or not _finite(value) else f"{value:.{decimals}f}"
+    return "—" if value is None or not is_finite_number(value) else f"{value:.{decimals}f}"
 
 
 def _rag_dot_figure(quarters, rag_scores, rag_labels, customdata, hovertemplate, monitoring_quarter, yaxis_title) -> go.Figure:
@@ -633,7 +632,7 @@ def build_pd_calibration_rag_trend_figure(rag_trend, monitoring_quarter, range_v
 
     quarters = [row["quarter"] for row in trend]
     customdata = [
-        [row["rag"], _format_metric_value(row["weighted_average"], 2), "—" if row["rounded_score"] is None or not _finite(row["rounded_score"]) else f"{row['rounded_score']}"]
+        [row["rag"], _format_metric_value(row["weighted_average"], 2), "—" if row["rounded_score"] is None or not is_finite_number(row["rounded_score"]) else f"{row['rounded_score']}"]
         for row in trend
     ]
     return _rag_dot_figure(
@@ -661,7 +660,7 @@ def build_pd_discrimination_rag_trend_figure(rag_trend, monitoring_quarter, rang
             row.get("accuracy_rag") or "N/A",
             _format_metric_value(row["delta_accuracy_ratio"], 3),
             row.get("delta_accuracy_rag") or "N/A",
-            f"{row['default_count_1y']}" if _finite(row.get("default_count_1y")) else "—",
+            f"{row['default_count_1y']}" if is_finite_number(row.get("default_count_1y")) else "—",
             "Yes" if row.get("low_default_override") else "No",
         ]
         for row in trend
@@ -690,9 +689,9 @@ def build_pd_balance_sheet_calibration_rag_trend_figure(rag_trend, monitoring_qu
         [
             row["rag"],
             row.get("assignment_rag") or "N/A",
-            "—" if row["confidence_interval"] is None or not _finite(row["confidence_interval"]) else f"{row['confidence_interval'] * 100:.2f}%",
+            "—" if row["confidence_interval"] is None or not is_finite_number(row["confidence_interval"]) else f"{row['confidence_interval'] * 100:.2f}%",
             row.get("confidence_rag") or "N/A",
-            "—" if row["notching_difference"] is None or not _finite(row["notching_difference"]) else f"{round(row['notching_difference'])}",
+            "—" if row["notching_difference"] is None or not is_finite_number(row["notching_difference"]) else f"{round(row['notching_difference'])}",
             row.get("notching_rag") or "N/A",
         ]
         for row in trend
@@ -730,7 +729,7 @@ def build_lgd_calibration_rag_trend_figure(rag_trend, monitoring_quarter, range_
         return _empty_figure("No calibration-conservatism RAG periods are available for the selected monitoring point.")
 
     def pct(value):
-        return "—" if value is None or not _finite(value) else f"{value * 100:.2f}%"
+        return "—" if value is None or not is_finite_number(value) else f"{value * 100:.2f}%"
 
     quarters = [row["quarter"] for row in trend]
     customdata = [
@@ -740,8 +739,8 @@ def build_lgd_calibration_rag_trend_figure(rag_trend, monitoring_quarter, range_
             row.get("me_rag") or "N/A",
             pct(row.get("rmse")),
             row.get("rmse_rag") or "N/A",
-            "—" if row.get("weighted_average") is None or not _finite(row.get("weighted_average")) else f"{row['weighted_average']:.2f}",
-            "—" if row.get("rounded_score") is None or not _finite(row.get("rounded_score")) else f"{row['rounded_score']}",
+            "—" if row.get("weighted_average") is None or not is_finite_number(row.get("weighted_average")) else f"{row['weighted_average']:.2f}",
+            "—" if row.get("rounded_score") is None or not is_finite_number(row.get("rounded_score")) else f"{row['rounded_score']}",
         ]
         for row in trend
     ]
@@ -773,8 +772,8 @@ def build_lgd_discrimination_rag_trend_figure(rag_trend, monitoring_quarter, ran
             row["rag"],
             _format_metric_value(row.get("kendall_tau"), 3),
             row.get("kendall_tau_rag") or "N/A",
-            "—" if row.get("weighted_average") is None or not _finite(row.get("weighted_average")) else f"{row['weighted_average']:.2f}",
-            "—" if row.get("rounded_score") is None or not _finite(row.get("rounded_score")) else f"{row['rounded_score']}",
+            "—" if row.get("weighted_average") is None or not is_finite_number(row.get("weighted_average")) else f"{row['weighted_average']:.2f}",
+            "—" if row.get("rounded_score") is None or not is_finite_number(row.get("rounded_score")) else f"{row['rounded_score']}",
         ]
         for row in trend
     ]
@@ -912,7 +911,7 @@ def build_loss_rag_trend_figure(rag_trend, monitoring_quarter, range_value=None)
         return _empty_figure("No Loss RAG periods are available for the selected monitoring point.")
 
     def pct(value):
-        return "—" if value is None or not _finite(value) else f"{value * 100:.2f}%"
+        return "—" if value is None or not is_finite_number(value) else f"{value * 100:.2f}%"
 
     quarters = [row["quarter"] for row in trend]
     customdata = [
@@ -921,7 +920,7 @@ def build_loss_rag_trend_figure(rag_trend, monitoring_quarter, range_value=None)
             pct(row.get("me_pct")),
             row.get("me_pct_rag") or "N/A",
             _format_metric_value(row.get("weighted_average"), 2),
-            "—" if row.get("rounded_score") is None or not _finite(row.get("rounded_score")) else f"{row['rounded_score']}",
+            "—" if row.get("rounded_score") is None or not is_finite_number(row.get("rounded_score")) else f"{row['rounded_score']}",
         ]
         for row in trend
     ]
@@ -1031,11 +1030,11 @@ def build_pd_notching_trend_figure(performance_trend, monitoring_thresholds, ran
     amber_max = threshold.get("amber_max")
     if (
         threshold.get("red_condition") == "above amber_max"
-        and _finite(green_min)
-        and _finite(green_max)
+        and is_finite_number(green_min)
+        and is_finite_number(green_max)
         and green_min == 0
         and green_max == 0
-        and _finite(amber_max)
+        and is_finite_number(amber_max)
     ):
         green_display_max = green_max + 0.05
         amber_display_max = amber_max + 0.05
@@ -1170,7 +1169,7 @@ def build_pd_transition_combined_figure(rows, range_value=None, monitoring_thres
     ``Transition Matrix`` threshold). Both panels share the same x-axis labels so
     they read as a single visual unit.
     """
-    all_rows = [row for row in (rows or []) if _finite(row.get("delta"))]
+    all_rows = [row for row in (rows or []) if is_finite_number(row.get("delta"))]
     if not all_rows:
         return _empty_figure("No transition-matrix margin data is available for the selected filters.", height=340, theme=theme)
 
@@ -1259,7 +1258,7 @@ def build_pd_sensitivity_combined_figure(rows, threshold: float | None, range_va
     }
     scoped_rows = [
         row for row in (rows or [])
-        if row.get("scenario_variant") in scenario_order and _finite(row.get("projected_pd"))
+        if row.get("scenario_variant") in scenario_order and is_finite_number(row.get("projected_pd"))
     ]
     if not scoped_rows:
         return _empty_figure("No sensitivity projection data is available for the selected filters.", height=360, theme=theme)
@@ -1300,15 +1299,15 @@ def build_pd_sensitivity_combined_figure(rows, threshold: float | None, range_va
     # --- Right: relative shock impact bars (RAG-coloured, no threshold line) ---
     baseline_by_offset = {
         r.get("quarter"): r for r in scoped_rows
-        if r.get("scenario_variant") == "baseline" and _finite(r.get("projected_pd"))
+        if r.get("scenario_variant") == "baseline" and is_finite_number(r.get("projected_pd"))
     }
     points = []
     for r in scoped_rows:
-        if r.get("scenario_variant") != "baseline_2std_shock" or not _finite(r.get("projected_pd")):
+        if r.get("scenario_variant") != "baseline_2std_shock" or not is_finite_number(r.get("projected_pd")):
             continue
         base = baseline_by_offset.get(r.get("quarter"))
         base_val = base.get("projected_pd") if base else None
-        if not _finite(base_val) or float(base_val) <= 0:
+        if not is_finite_number(base_val) or float(base_val) <= 0:
             continue
         impact = abs(float(r["projected_pd"]) - float(base_val)) / float(base_val)
         rag = "Green" if threshold is not None and impact <= threshold else ("Red" if threshold is not None else "N/A")
@@ -1357,7 +1356,7 @@ def build_pd_scenario_projection_figure(rows, *, theme: str = "light") -> go.Fig
     palette = _saas_theme_palette(normalized_theme)
     scenario_color_map = SAAS_DARK_SCENARIO_COLOR_MAP if normalized_theme == "dark" else SAAS_SCENARIO_COLOR_MAP
     fallback_colors = SAAS_DARK_SCENARIO_FALLBACK_COLORS if normalized_theme == "dark" else SAAS_SCENARIO_FALLBACK_COLORS
-    scoped_rows = [row for row in (rows or []) if _finite(row.get("projected_pd")) and row.get("scenario_variant")]
+    scoped_rows = [row for row in (rows or []) if is_finite_number(row.get("projected_pd")) and row.get("scenario_variant")]
     if not scoped_rows:
         return _empty_figure("No scenario projection data is available for the selected filters.", height=360, theme=theme)
 
@@ -1440,7 +1439,7 @@ def build_pd_scenario_projection_figure(rows, *, theme: str = "light") -> go.Fig
 def build_pd_scenario_rank_figure(rows, *, theme: str = "light") -> go.Figure:
     """Scenario rank matrix where rank 1 is the highest projected PD."""
     palette = _saas_theme_palette(_normalize_saas_theme(theme))
-    scoped_rows = [row for row in (rows or []) if _finite(row.get("projected_pd")) and row.get("scenario_variant")]
+    scoped_rows = [row for row in (rows or []) if is_finite_number(row.get("projected_pd")) and row.get("scenario_variant")]
     if not scoped_rows:
         return _empty_figure("No scenario ranking data is available for the selected filters.", height=330, theme=theme)
 
@@ -1684,7 +1683,7 @@ def build_pd_mev_range_figure(model_data, mev_name: str, mev_data, color: str, r
     scenario_data = get_pd_mev_scenario_series(mev_data, reporting_cycle, selected_scenario)
     ts = scenario_data if scenario_data else (mev_data.get("time_series") or {})
     all_points = sorted(
-        ((quarter, value) for quarter, value in ts.items() if _finite(value)),
+        ((quarter, value) for quarter, value in ts.items() if is_finite_number(value)),
         key=lambda item: _pd_quarter_sort_key(item[0]),
     )
     visible_quarters = set(filter_pd_periods_by_range(range_value, [point[0] for point in all_points]))
@@ -1831,7 +1830,7 @@ def _saas_quarter_zero_date(records) -> object | None:
     quarter_zero_dates = [
         row.get("Date")
         for row in records or []
-        if _finite(row.get("Quarter")) and float(row.get("Quarter")) == 0 and row.get("Date") is not None
+        if is_finite_number(row.get("Quarter")) and float(row.get("Quarter")) == 0 and row.get("Date") is not None
     ]
     return min(quarter_zero_dates) if quarter_zero_dates else None
 
@@ -1857,7 +1856,7 @@ def _saas_historical_values(records) -> list[float]:
     return [
         float(row.get("MEV Value"))
         for row in records or []
-        if _finite(row.get("MEV Value")) and _finite(row.get("Quarter")) and float(row.get("Quarter")) <= 0
+        if is_finite_number(row.get("MEV Value")) and is_finite_number(row.get("Quarter")) and float(row.get("Quarter")) <= 0
     ]
 
 
@@ -1876,8 +1875,8 @@ def compute_saas_monitoring_band_spec(records, *, primary_run_for: str | None = 
     development_reference_values = [
         float(row.get("MEV Value"))
         for row in monitoring_records
-        if _finite(row.get("MEV Value"))
-        and _finite(row.get("Quarter"))
+        if is_finite_number(row.get("MEV Value"))
+        and is_finite_number(row.get("Quarter"))
         and float(row.get("Quarter")) <= 0
         and development_date is not None
         and row.get("Date") is not None
@@ -1943,13 +1942,13 @@ def build_saas_mev_time_series_figure(
         run_for = str(row.get("Run For") or "").strip()
         date_value = row.get("Date")
         numeric_value = row.get("MEV Value")
-        if not model_name or not mev_name or not run_for or date_value is None or not _finite(numeric_value):
+        if not model_name or not mev_name or not run_for or date_value is None or not is_finite_number(numeric_value):
             continue
         selected_models.add(model_name)
         selected_run_fors.add(run_for)
         float_value = float(numeric_value)
         visible_values.append(float_value)
-        quarter_value = float(row.get("Quarter")) if _finite(row.get("Quarter")) else None
+        quarter_value = float(row.get("Quarter")) if is_finite_number(row.get("Quarter")) else None
         grouped.setdefault((model_name, mev_name, scenario, run_for), []).append((date_value, quarter_value, float_value))
 
     if not grouped:

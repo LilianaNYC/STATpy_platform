@@ -6,7 +6,7 @@ from datetime import date
 
 import pytest
 
-from STATpy_platform.components.charts import (
+from STATpy_platform.shared.ui.charts import (
     build_pd_confidence_interval_trend_figure,
     build_pd_default_rate_trend_figure,
     build_pd_discrimination_trend_figures,

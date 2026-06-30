@@ -16,7 +16,7 @@ from typing import Any
 
 from . import constants as config
 from .quarter_labels import compare_pd_quarter_labels, _pd_quarter_sort_key
-from .calculations import PdFilterContext, _finite, _to_number
+from .calculations import PdFilterContext, is_finite_number, _to_number
 
 _SLUG_NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
 _SLUG_TRIM_RE = re.compile(r"^-+|-+$")
@@ -31,7 +31,7 @@ def slugify_pd_token(value: str | None) -> str:
 def format_pd_mev_value(value: Any) -> str:
     """Port of ``formatPdMevValue``."""
     number = _to_number(value)
-    if number is None or not _finite(number):
+    if number is None or not is_finite_number(number):
         return "—"
     return f"{number:,.2f}".rstrip("0").rstrip(".")
 
@@ -185,7 +185,7 @@ def calculate_pd_mev_thresholds(dev_range: dict[str, Any] | None) -> dict[str, A
 def calculate_pd_mev_rag(value: Any, thresholds: dict[str, Any] | None) -> str:
     """Port of ``calculatePdMevRag``."""
     number = _to_number(value)
-    if number is None or not _finite(number) or not thresholds:
+    if number is None or not is_finite_number(number) or not thresholds:
         return "N/A"
     if number < thresholds["amber_lower"] or number > thresholds["amber_upper"]:
         return "Red"
@@ -211,7 +211,7 @@ def calculate_pd_mev_worst_rag_after_quarter(
         if start_quarter and compare_pd_quarter_labels(quarter, start_quarter) < 0:
             continue
         value = _to_number(raw_value)
-        if value is not None and _finite(value):
+        if value is not None and is_finite_number(value):
             post_scenario_values.append(value)
 
     if not post_scenario_values:

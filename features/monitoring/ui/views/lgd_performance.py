@@ -6,19 +6,19 @@ from typing import Any
 
 from dash import dcc, html
 
-from .....components.charts import (
+from .....shared.ui.charts import (
     build_lgd_calibration_rag_trend_figure,
     build_lgd_discrimination_rag_trend_figure,
     build_lgd_metric_trend_figure,
 )
-from .....components import filters as shared_filters
-from .....components.filters import build_chart_header
-from .....data.analytics.calculations import (
+from .....shared.ui import controls as shared_filters
+from .....shared.ui.controls import build_chart_header
+from .....shared.domain.calculations import (
     fmt_n,
     format_pd_metric,
     pd_tone_class,
 )
-from .....data.analytics.mev_range import (
+from .....shared.domain.mev_range import (
     calculate_pd_mev_thresholds,
     calculate_pd_mev_worst_rag_after_quarter,
     format_pd_mev_value,
@@ -29,8 +29,8 @@ from .....data.analytics.mev_range import (
     get_pd_mev_scenario_quarter,
     get_pd_mev_visible_periods,
 )
-from .....data.analytics.quarter_labels import iso_date_to_pd_quarter
-from .....components.charts import build_pd_mev_range_figure
+from .....shared.domain.quarter_labels import iso_date_to_pd_quarter
+from .....shared.ui.charts import build_pd_mev_range_figure
 from .....shared.theme import normalize_theme_value
 from ...domain.lgd import (
     LGD_CALIBRATION_METRICS,
@@ -304,7 +304,7 @@ def _flow_stage(text: str) -> html.Div:
 
 
 def _build_lgd_overview_flow(summary: dict) -> html.Div:
-    from .....components.kpis import (
+    from .cards import (
         build_pd_overview_flow_input,
         build_pd_overview_flow_metric,
         build_pd_overview_flow_stage,
@@ -1323,7 +1323,7 @@ def build_layout() -> list:
 
 def page_layout(data: dict) -> list:
     """Build the LGD page with top controls and live content."""
-    from .....data.filters.filters_config import load_filter_config, model_names, segment_values
+    from .....shared.repositories.filters_config import load_filter_config, model_names, segment_values
     from ...domain.lgd import set_lgd_metrics
     cfg = load_filter_config()
     model_options = model_names("lgd")

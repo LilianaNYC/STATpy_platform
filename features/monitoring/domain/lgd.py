@@ -11,8 +11,8 @@ from typing import Any
 
 import polars as pl
 
-from ....data.analytics import constants as config
-from ....data.analytics.calculations import calculate_pd_metric_rag, get_worst_pd_rag, pd_rag_score
+from ....shared.domain import constants as config
+from ....shared.domain.calculations import calculate_pd_metric_rag, get_worst_pd_rag, pd_rag_score
 
 LGD_METRICS = ["ME", "RMSE", "Kendall's Tau"]
 LGD_CALIBRATION_METRICS = ["ME", "RMSE"]
@@ -126,7 +126,7 @@ def get_lgd_thresholds(data: dict) -> list[dict[str, Any]]:
 
 
 def get_lgd_model_options(data: dict) -> list[str]:
-    from ....data.filters.filters_config import model_names
+    from ....shared.repositories.filters_config import model_names
     options = model_names("lgd")
     if options:
         return options
@@ -155,7 +155,7 @@ def resolve_lgd_models(data: dict, selected_model: str | list[str] | tuple[str, 
 
 
 def get_lgd_segments_for_model(data: dict, selected_model: str | list[str] | tuple[str, ...] | set[str] | None) -> list[str]:
-    from ....data.filters.filters_config import segment_values
+    from ....shared.repositories.filters_config import segment_values
     segments = segment_values()
     if segments:
         return ["All", *segments]

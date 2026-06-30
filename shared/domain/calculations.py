@@ -43,7 +43,7 @@ def _to_number(value):
     return number if math.isfinite(number) else None
 
 
-def _finite(value):
+def is_finite_number(value):
     """Port of ``Number.isFinite(value)``."""
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
@@ -388,8 +388,8 @@ def calculate_pd_quantile(sorted_values, probability):
 
 
 def calculate_pd_psi(current_rows, previous_rows, buckets=10):
-    current = [row["predicted"] for row in current_rows if _finite(row["predicted"])]
-    previous = [row["predicted"] for row in previous_rows if _finite(row["predicted"])]
+    current = [row["predicted"] for row in current_rows if is_finite_number(row["predicted"])]
+    previous = [row["predicted"] for row in previous_rows if is_finite_number(row["predicted"])]
     if not current or not previous:
         return None
     if len(set(previous)) < 3:
@@ -512,8 +512,8 @@ def calculate_pd_notching_components(rows, crr_scale):
     if not rows:
         return dict(empty)
 
-    predicted = [row["predicted"] for row in rows if _finite(row["predicted"])]
-    observed = [row["observed"] for row in rows if _finite(row["observed"])]
+    predicted = [row["predicted"] for row in rows if is_finite_number(row["predicted"])]
+    observed = [row["observed"] for row in rows if is_finite_number(row["observed"])]
     if not predicted or not observed:
         return dict(empty)
 
@@ -521,7 +521,7 @@ def calculate_pd_notching_components(rows, crr_scale):
     average_observed = sum(observed) / len(observed)
     predicted_notch = map_pd_probability_to_crr(average_predicted, crr_scale)
     actual_notch = map_pd_probability_to_crr(average_observed, crr_scale)
-    if not _finite(predicted_notch) or not _finite(actual_notch):
+    if not is_finite_number(predicted_notch) or not is_finite_number(actual_notch):
         return dict(empty)
 
     return {
@@ -636,8 +636,8 @@ def calculate_pd_confidence_interval_components(rows):
     if not rows:
         return dict(empty)
 
-    predicted = [row["predicted"] for row in rows if _finite(row["predicted"])]
-    observed = [row["observed"] for row in rows if _finite(row["observed"])]
+    predicted = [row["predicted"] for row in rows if is_finite_number(row["predicted"])]
+    observed = [row["observed"] for row in rows if is_finite_number(row["observed"])]
     if not predicted or not observed:
         return dict(empty)
 
@@ -849,7 +849,7 @@ def get_pd_go_live_quarter(performance_observations, horizon_key, ctx: PdFilterC
     for quarter in go_live_quarters:
         rows = filter_pd_performance_observations_for_horizon(performance_observations, quarter, horizon_key, ctx)
         accuracy_ratio = calculate_pd_performance_metrics(rows)["accuracy_ratio"]
-        if _finite(accuracy_ratio):
+        if is_finite_number(accuracy_ratio):
             return quarter
     return ""
 
@@ -875,7 +875,7 @@ def calculate_pd_rag_metrics_for_horizon(performance_observations, rating_observ
 
     delta_accuracy_ratio = None
     if (
-        _finite(go_live_accuracy_ratio) and _finite(accuracy_ratio)
+        is_finite_number(go_live_accuracy_ratio) and is_finite_number(accuracy_ratio)
         and go_live_accuracy_ratio != 0
     ):
         delta_accuracy_ratio = (go_live_accuracy_ratio - accuracy_ratio) / go_live_accuracy_ratio
@@ -967,10 +967,10 @@ def build_pd_overview_performance_rag_tooltip(calibration_rag, discrimination_ra
     ])
     weighted_score = details.get("weighted_score")
     rounded_score = details.get("rounded_score")
-    weighted_label = "—" if not _finite(weighted_score) else f"{weighted_score:.2f}"
-    rounded_label = "—" if not _finite(rounded_score) else f"{rounded_score}"
+    weighted_label = "—" if not is_finite_number(weighted_score) else f"{weighted_score:.2f}"
+    rounded_label = "—" if not is_finite_number(rounded_score) else f"{rounded_score}"
 
-    if not _finite(weighted_score) or not _finite(rounded_score):
+    if not is_finite_number(weighted_score) or not is_finite_number(rounded_score):
         return (
             "Performance PD RAG combines three inputs with weights of 25%, 25%, and 50%. Higher scores are better: "
             f"Green = 3, Amber = 2, Red = 1. Current inputs: {component_summary}. One or more inputs are unavailable, "
@@ -1018,7 +1018,7 @@ def calculate_pd_ead_summaries(observations, quarter, ctx: PdFilterContext):
         total = 0.0
         for row in selected_rows:
             value = (row.get("horizons") or {}).get(key, {}).get("ead")
-            if _finite(value):
+            if is_finite_number(value):
                 total += value
         return total
 
@@ -1074,7 +1074,7 @@ def calculate_pd_calibration_conservatism_details(observations, rating_observati
             confidence_interval, signed_notch, monitoring_thresholds,
         )
         score = pd_rag_score(rag)
-        if score is not None and _finite(weight):
+        if score is not None and is_finite_number(weight):
             weighted_scores.append({"key": horizon_key, "score": score, "weight": weight, "rag": rag})
 
     if not weighted_scores:
@@ -1117,10 +1117,10 @@ def build_pd_calibration_tooltip(details):
     )
     weighted_average = details.get("weighted_average")
     rounded_score = details.get("rounded_score")
-    weighted_label = "—" if not _finite(weighted_average) else f"{weighted_average:.2f}"
-    rounded_label = "—" if not _finite(rounded_score) else f"{rounded_score}"
+    weighted_label = "—" if not is_finite_number(weighted_average) else f"{weighted_average:.2f}"
+    rounded_label = "—" if not is_finite_number(rounded_score) else f"{rounded_score}"
 
-    if not _finite(weighted_average) or not _finite(rounded_score):
+    if not is_finite_number(weighted_average) or not is_finite_number(rounded_score):
         return (
             "Calibration Conservatism RAG (ECL PIT) combines the 1-year and 2-year RAG Assignment results "
             f"using EAD share weights. Higher scores are better: Green = 3, Amber = 2, Red = 1. Current inputs: {pieces}. "
@@ -1422,7 +1422,7 @@ def format_pd_test_change(current, previous, fmt, threshold=None):
         improved = difference > 0
     elif threshold.get("lower_is_better") is True:
         improved = difference < 0
-    elif _finite(threshold.get("target_value")):
+    elif is_finite_number(threshold.get("target_value")):
         target_value = threshold["target_value"]
         improved = abs(current - target_value) < abs(previous - target_value)
 
@@ -1451,12 +1451,12 @@ def format_pd_rag_change(current, previous):
 
 def build_pd_ae_ratio_bands(threshold, ratios):
     threshold = threshold or {}
-    green_min = threshold.get("green_min") if _finite(threshold.get("green_min")) else 0.75
-    green_max = threshold.get("green_max") if _finite(threshold.get("green_max")) else 1.25
-    amber_min = threshold.get("amber_min") if _finite(threshold.get("amber_min")) else green_min
-    amber_max = threshold.get("amber_max") if _finite(threshold.get("amber_max")) else green_max
+    green_min = threshold.get("green_min") if is_finite_number(threshold.get("green_min")) else 0.75
+    green_max = threshold.get("green_max") if is_finite_number(threshold.get("green_max")) else 1.25
+    amber_min = threshold.get("amber_min") if is_finite_number(threshold.get("amber_min")) else green_min
+    amber_max = threshold.get("amber_max") if is_finite_number(threshold.get("amber_max")) else green_max
 
-    finite_ratios = [ratio for ratio in ratios if _finite(ratio)]
+    finite_ratios = [ratio for ratio in ratios if is_finite_number(ratio)]
     max_ratio = max(finite_ratios) if finite_ratios else amber_max
     axis_max = max(amber_max * 1.12, max_ratio * 1.12, 1.6)
 
@@ -1480,10 +1480,10 @@ def build_pd_ae_ratio_bands(threshold, ratios):
 
 def build_pd_threshold_bands(threshold, values, options=None):
     options = options or {}
-    finite_values = [value for value in values if _finite(value)]
+    finite_values = [value for value in values if is_finite_number(value)]
     min_value = min(finite_values) if finite_values else 0
     max_value = max(finite_values) if finite_values else 1
-    min_axis_max = options.get("min_axis_max") if _finite(options.get("min_axis_max")) else 1
+    min_axis_max = options.get("min_axis_max") if is_finite_number(options.get("min_axis_max")) else 1
 
     red = "rgba(220,38,38,.08)"
     amber = "rgba(217,119,6,.18)"
@@ -1512,8 +1512,8 @@ def build_pd_threshold_bands(threshold, values, options=None):
         return {"axis_range": positive_axis(max_value), "shapes": []}
 
     if red_condition == "below amber_min":
-        green_min = threshold.get("green_min") if _finite(threshold.get("green_min")) else max_value
-        amber_min = threshold.get("amber_min") if _finite(threshold.get("amber_min")) else green_min
+        green_min = threshold.get("green_min") if is_finite_number(threshold.get("green_min")) else max_value
+        amber_min = threshold.get("amber_min") if is_finite_number(threshold.get("amber_min")) else green_min
         axis_range = positive_axis(green_min * 1.2)
         return {
             "axis_range": axis_range,
@@ -1525,8 +1525,8 @@ def build_pd_threshold_bands(threshold, values, options=None):
         }
 
     if red_condition == "above amber_max":
-        green_max = threshold.get("green_max") if _finite(threshold.get("green_max")) else max_value
-        amber_max = threshold.get("amber_max") if _finite(threshold.get("amber_max")) else green_max
+        green_max = threshold.get("green_max") if is_finite_number(threshold.get("green_max")) else max_value
+        amber_max = threshold.get("amber_max") if is_finite_number(threshold.get("amber_max")) else green_max
         axis_range = positive_axis(amber_max * 1.12)
         return {
             "axis_range": axis_range,
@@ -1538,10 +1538,10 @@ def build_pd_threshold_bands(threshold, values, options=None):
         }
 
     if red_condition == "outside amber range":
-        green_min = threshold.get("green_min") if _finite(threshold.get("green_min")) else min_value
-        green_max = threshold.get("green_max") if _finite(threshold.get("green_max")) else max_value
-        amber_min = threshold.get("amber_min") if _finite(threshold.get("amber_min")) else green_min
-        amber_max = threshold.get("amber_max") if _finite(threshold.get("amber_max")) else green_max
+        green_min = threshold.get("green_min") if is_finite_number(threshold.get("green_min")) else min_value
+        green_max = threshold.get("green_max") if is_finite_number(threshold.get("green_max")) else max_value
+        amber_min = threshold.get("amber_min") if is_finite_number(threshold.get("amber_min")) else green_min
+        amber_max = threshold.get("amber_max") if is_finite_number(threshold.get("amber_max")) else green_max
         axis_range = positive_axis(amber_max * 1.12)
         return {
             "axis_range": axis_range,
@@ -1555,8 +1555,8 @@ def build_pd_threshold_bands(threshold, values, options=None):
         }
 
     if red_condition == "abs above amber_max":
-        green_max = abs(threshold.get("green_max") if _finite(threshold.get("green_max")) else max_value)
-        amber_max = abs(threshold.get("amber_max") if _finite(threshold.get("amber_max")) else green_max)
+        green_max = abs(threshold.get("green_max") if is_finite_number(threshold.get("green_max")) else max_value)
+        amber_max = abs(threshold.get("amber_max") if is_finite_number(threshold.get("amber_max")) else green_max)
         axis_max = max(amber_max * 1.12, abs(min_value) * 1.12, abs(max_value) * 1.12, min_axis_max)
         axis_range = [-axis_max, axis_max]
         return {
@@ -1570,7 +1570,7 @@ def build_pd_threshold_bands(threshold, values, options=None):
             ],
         }
 
-    if threshold.get("lower_is_better") is True and _finite(inferred_green_max) and _finite(inferred_amber_max):
+    if threshold.get("lower_is_better") is True and is_finite_number(inferred_green_max) and is_finite_number(inferred_amber_max):
         axis_range = positive_axis(inferred_amber_max * 1.12)
         return {
             "axis_range": axis_range,
@@ -1581,7 +1581,7 @@ def build_pd_threshold_bands(threshold, values, options=None):
             ],
         }
 
-    if threshold.get("higher_is_better") is True and _finite(inferred_green_min) and _finite(inferred_amber_min):
+    if threshold.get("higher_is_better") is True and is_finite_number(inferred_green_min) and is_finite_number(inferred_amber_min):
         axis_range = positive_axis(max(max_value, inferred_green_min * 1.2))
         return {
             "axis_range": axis_range,

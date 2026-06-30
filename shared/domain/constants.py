@@ -2,24 +2,12 @@
 
 Column names, sheet names, RAG groups/colours, horizon definitions and the
 default lookup tables that the PD performance calculations depend on. These
-are domain constants (not environment configuration): source-data *file
-locations* live in :mod:`config.settings` and are re-exported here so existing
-``config.<NAME>`` call sites keep working unchanged.
+are pure domain constants only: source-data *file locations* are environment
+configuration and live in :mod:`config.settings` — the repository layer reads
+them straight from ``settings``, so they are deliberately not re-exported here.
 """
 
 from __future__ import annotations
-
-from ...config.settings import settings
-
-# ---------------------------------------------------------------------------
-# Paths (sourced from the typed settings object)
-# ---------------------------------------------------------------------------
-SOURCE_DATA_DIR = settings.source_data_dir
-
-PORTFOLIO_FILE = settings.portfolio_file
-MONITORING_THRESHOLDS_FILE = settings.monitoring_thresholds_file
-DUMMY_MEV_DATA_FILE = settings.dummy_mev_data_file
-FACILITIES_DUMMY_DATA_FILE = settings.facilities_dummy_data_file
 
 # ---------------------------------------------------------------------------
 # Sheet names

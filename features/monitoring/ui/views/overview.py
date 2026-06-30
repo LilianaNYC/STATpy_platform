@@ -11,17 +11,17 @@ from collections import Counter
 import plotly.graph_objects as go
 from dash import dcc, html
 
-from .....components.charts import (
+from .....shared.ui.charts import (
     build_pd_time_series_xaxis,
     _rag_score_band_shapes,
     _rag_score_yaxis,
     _vertical_marker,
     _apply_transparent_background,
 )
-from .....data.analytics.constants import pd_rag_color
-from .....components import filters as shared_filters
-from .....components.filters import build_range_controls
-from .....data.analytics.calculations import filter_pd_periods_by_range, pd_tone_class
+from .....shared.domain.constants import pd_rag_color
+from .....shared.ui import controls as shared_filters
+from .....shared.ui.controls import build_range_controls
+from .....shared.domain.calculations import filter_pd_periods_by_range, pd_tone_class
 from ...domain.overview import (
     RAG_COLUMNS,
     RAG_SCORE,

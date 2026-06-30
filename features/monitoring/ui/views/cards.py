@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dash import html
 
-from .....data.analytics.calculations import (
+from .....shared.domain.calculations import (
     calculate_pd_metric_rag,
     fmt_n,
     format_pd_compact_amount,

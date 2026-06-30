@@ -7,8 +7,8 @@ from typing import Any
 
 import polars as pl
 
-from ....data.analytics import constants as config
-from ....data.analytics.calculations import calculate_pd_metric_rag, pd_rag_score
+from ....shared.domain import constants as config
+from ....shared.domain.calculations import calculate_pd_metric_rag, pd_rag_score
 
 LOSS_METRICS = ["ME %"]
 LOSS_MODEL_LABEL = "Loss model"
@@ -86,7 +86,7 @@ def resolve_loss_model(data: dict, selected_model: str | None) -> str:
 
 
 def get_loss_segments_for_model(data: dict, selected_model: str | None) -> list[str]:
-    from ....data.filters.filters_config import segment_values
+    from ....shared.repositories.filters_config import segment_values
     segments = segment_values()
     if segments:
         return ["All", *segments]

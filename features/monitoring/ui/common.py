@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dash import ALL, Input, Output, State, ctx, html, no_update
 
-from ....components import filters
+from ....shared.ui import controls
 
 _MENU_CLASS = "checkbox-dropdown-menu single-select-menu"
 _CHECKBOX_MENU_CLASS = "checkbox-dropdown-menu"
@@ -25,7 +25,7 @@ def build_single_select_options(*, options: list[dict] | None, value: str | None
                 html.Span(option.get("label") or option.get("value"), className="single-select-option-label"),
                 html.Span("✓", className="single-select-option-check", **{"aria-hidden": "true"}),
             ],
-            id={"type": filters.SINGLE_SELECT_OPTION_ID, "filter": filter_key, "value": option.get("value")},
+            id={"type": controls.SINGLE_SELECT_OPTION_ID, "filter": filter_key, "value": option.get("value")},
             type="button",
             n_clicks=0,
             className="single-select-option is-selected" if option.get("value") == value else "single-select-option",
@@ -58,7 +58,7 @@ def register_single_select_callbacks(
     @app.callback(
         Output(value_id, "value"),
         Output(menu_id, "className", allow_duplicate=True),
-        Input({"type": filters.SINGLE_SELECT_OPTION_ID, "filter": filter_key, "value": ALL}, "n_clicks"),
+        Input({"type": controls.SINGLE_SELECT_OPTION_ID, "filter": filter_key, "value": ALL}, "n_clicks"),
         prevent_initial_call=True,
     )
     def select_single_select_option(_clicks):

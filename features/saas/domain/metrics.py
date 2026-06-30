@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 import statistics
 
-from ....data.analytics.calculations import _finite
+from ....shared.domain.calculations import is_finite_number
 from ..data_access import SAAS_PAGE_DATA
 from . import records as record_filters
 from . import selectors
@@ -23,7 +23,7 @@ def compute_historical_dispersion_stats(records: list[dict], selected_scenarios)
         scenario_value = str(row.get("Scenario") or "").strip().lower()
         run_for_value = str(row.get("Run For") or "").strip()
         numeric_value = row.get("MEV Value")
-        if date_value is None or not run_for_value or not _finite(numeric_value):
+        if date_value is None or not run_for_value or not is_finite_number(numeric_value):
             continue
         line_key = (run_for_value, scenario_value)
         visible_lines.add(line_key)
@@ -102,12 +102,12 @@ def compute_saas_metric_record(
     history = [
         (row.get("Date"), float(row.get("MEV Value")))
         for row in subset_rows
-        if _finite(row.get("MEV Value")) and _finite(row.get("Quarter")) and float(row.get("Quarter")) <= 0
+        if is_finite_number(row.get("MEV Value")) and is_finite_number(row.get("Quarter")) and float(row.get("Quarter")) <= 0
     ]
     projection = [
         float(row.get("MEV Value"))
         for row in subset_rows
-        if _finite(row.get("MEV Value")) and _finite(row.get("Quarter")) and float(row.get("Quarter")) > 0
+        if is_finite_number(row.get("MEV Value")) and is_finite_number(row.get("Quarter")) and float(row.get("Quarter")) > 0
     ]
     if not history:
         return None
@@ -182,7 +182,7 @@ def build_saas_chart_spec(model_name: str, mev_name: str, mev_label: str, subset
         (
             (float(row.get("Quarter")), row.get("Date"), float(row.get("MEV Value")))
             for row in subset_rows
-            if _finite(row.get("MEV Value")) and _finite(row.get("Quarter"))
+            if is_finite_number(row.get("MEV Value")) and is_finite_number(row.get("Quarter"))
         ),
         key=lambda item: item[0],
     )
@@ -214,7 +214,7 @@ def saas_baseline_projection_bounds(time_series_df, primary_run_for, effective_m
     ]
     bounds: dict[tuple[str, str], list[float]] = {}
     for row in baseline_df.to_dict(orient="records"):
-        if not (_finite(row.get("MEV Value")) and _finite(row.get("Quarter")) and float(row.get("Quarter")) > 0):
+        if not (is_finite_number(row.get("MEV Value")) and is_finite_number(row.get("Quarter")) and float(row.get("Quarter")) > 0):
             continue
         key = (row.get("Model Name"), str(row.get("MEV Name") or "").strip())
         value = float(row.get("MEV Value"))
@@ -328,7 +328,7 @@ def compute_saas_reconciliation(run_for, compare_against, segment, selected_mode
     index: dict = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
     present_by_model: dict = defaultdict(set)
     for row in scoped.to_dict(orient="records"):
-        if not (_finite(row.get("MEV Value")) and _finite(row.get("Quarter"))):
+        if not (is_finite_number(row.get("MEV Value")) and is_finite_number(row.get("Quarter"))):
             continue
         model = row.get("Model Name")
         mev = str(row.get("MEV Name") or "").strip()
@@ -411,7 +411,7 @@ def compute_saas_projection_comparison(run_for, compare_against, segment, select
     index: dict = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
     present_by_model: dict = defaultdict(set)
     for row in scoped.to_dict(orient="records"):
-        if not (_finite(row.get("MEV Value")) and _finite(row.get("Quarter"))):
+        if not (is_finite_number(row.get("MEV Value")) and is_finite_number(row.get("Quarter"))):
             continue
         model = row.get("Model Name")
         mev = str(row.get("MEV Name") or "").strip()
