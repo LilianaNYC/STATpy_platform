@@ -1053,6 +1053,17 @@ def _register_render_callbacks(app) -> None:
         if time_series_df is None or time_series_df.empty:
             return no_update, no_update
 
+        # Family mode draws the raw lines by expanding the selected transformed
+        # parent (records.family_display_mevs), so they only resolve once the
+        # single-value picker is settled. On first paint this MATCH callback can
+        # fire against the just-created picker before sync_model_mev_selection has
+        # set its value; rendering then would blank build_model_panel's correct
+        # initial charts (transformed + raw). Leave the initial render in place
+        # until the family selection is settled. (Single-select can't be cleared
+        # to empty from the UI, so this only guards the transient creation race.)
+        if _normalize_selected_mev_mode(selected_mev_mode) == "family" and not _normalize_selected_mevs(selected_mev_single):
+            return no_update, no_update
+
         applied = applied or {}
         run_for = applied.get("run_for")
         compare_against = applied.get("compare_against")
