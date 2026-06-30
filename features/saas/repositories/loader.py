@@ -60,6 +60,33 @@ def load_saas_model_names() -> list[str]:
     return list(load_pd_mev_catalog().keys())
 
 
+def _attribute_mev_rows_to_models(
+    time_series_df: pd.DataFrame,
+    model_mev_map: dict[str, dict[str, set[str]]],
+) -> pd.DataFrame:
+    """Derive each row's owning model(s) and explode rows shared across models.
+
+    ``mev_data``'s own ``Model Name`` column is unreliable and intentionally
+    *not* read here -- the column may still exist in the workbook (kept for
+    other purposes outside the app), but per-row model attribution is always
+    derived from ``model_mev_map`` (built from the reliable
+    ``transformed_mevs_description`` sheet) instead. A MEV can belong to more
+    than one model, so a row whose MEV is shared is duplicated once per
+    owning model; a row whose MEV isn't claimed by any model is dropped.
+    """
+    mev_name_to_models: dict[str, set[str]] = {}
+    for model_name, mev_sets in model_mev_map.items():
+        for mev_name in mev_sets["transformed"] | mev_sets["raw"]:
+            mev_name_to_models.setdefault(mev_name, set()).add(model_name)
+
+    time_series_df = time_series_df.copy()
+    time_series_df["Model Name"] = time_series_df["MEV Name"].map(
+        lambda name: sorted(mev_name_to_models.get(name, ()))
+    )
+    time_series_df = time_series_df[time_series_df["Model Name"].map(bool)]
+    return time_series_df.explode("Model Name", ignore_index=True)
+
+
 def load_saas_mev_workbook_data() -> dict[str, Any]:
     """Load the SAAS workbook data used by the top filters and MEV chart."""
     empty_time_series = pd.DataFrame(
@@ -173,12 +200,12 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
     time_series_df["Run For"] = time_series_df.get("Run For").map(lambda value: str(value).strip() if value is not None else "")
     time_series_df["Scenario"] = time_series_df.get("Scenario").map(lambda value: str(value).strip() if value is not None else "")
     time_series_df["MEV Name"] = time_series_df.get("MEV Name").map(lambda value: str(value).strip() if value is not None else "")
-    time_series_df["Model Name"] = time_series_df.get("Model Name").map(_normalize_model_name)
     time_series_df["MEV Value"] = pd.to_numeric(time_series_df.get("MEV Value"), errors="coerce")
     time_series_df = time_series_df.dropna(subset=["Date", "MEV Value"])
-    time_series_df = time_series_df[
-        time_series_df["MEV Name"].astype(bool) & time_series_df["Model Name"].astype(bool)
-    ][["Date", "Quarter", "Run For", "Scenario", "MEV Name", "MEV Value", "Model Name"]].copy()
+    time_series_df = time_series_df[time_series_df["MEV Name"].astype(bool)][
+        ["Date", "Quarter", "Run For", "Scenario", "MEV Name", "MEV Value"]
+    ].copy()
+    time_series_df = _attribute_mev_rows_to_models(time_series_df, model_mev_map)
 
     run_for_quarter_zero_dates: dict[str, Any] = {}
     quarter_zero_df = time_series_df[time_series_df["Quarter"] == 0]
