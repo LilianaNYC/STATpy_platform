@@ -16,6 +16,13 @@ table that drives every dropdown in the monitoring tabs. Each row is one option:
 
 To add or remove a filter element, add or delete a row in that sheet — no code
 changes are required.
+
+This module lives in its own top-level ``data/filters/`` package rather than
+``features/monitoring/repositories/`` (where the rest of monitoring's
+feature-private data loading lives) because it's read by the shared
+``components.filters`` module, which both the monitoring and SAAS dashboards
+depend on. Moving it into a feature-private package would make a shared
+component reach into another feature's internals.
 """
 
 from __future__ import annotations

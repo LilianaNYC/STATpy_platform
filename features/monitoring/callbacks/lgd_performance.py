@@ -170,7 +170,7 @@ def register_callbacks(app) -> None:
         if not applied:
             return layout.build_lgd_apply_prompt()
 
-        from ....data.monitoring.filters_config import load_filter_config
+        from ....data.filters.filters_config import load_filter_config
         cfg = load_filter_config()
         default_cycle = cfg["reporting_cycles"][0]["value"] if cfg["reporting_cycles"] else "CCAR 2026"
         default_scenario = cfg["scenarios"][0]["value"] if cfg["scenarios"] else "intsevere"

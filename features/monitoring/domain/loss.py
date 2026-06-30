@@ -86,7 +86,7 @@ def resolve_loss_model(data: dict, selected_model: str | None) -> str:
 
 
 def get_loss_segments_for_model(data: dict, selected_model: str | None) -> list[str]:
-    from ....data.monitoring.filters_config import segment_values
+    from ....data.filters.filters_config import segment_values
     segments = segment_values()
     if segments:
         return ["All", *segments]

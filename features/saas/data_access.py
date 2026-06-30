@@ -7,7 +7,7 @@ across page navigation.
 
 from __future__ import annotations
 
-from ...data.saas.loader import load_saas_mev_workbook_data
+from .repositories.loader import load_saas_mev_workbook_data
 
 # SAAS page data. Loaded once at import time.
 SAAS_PAGE_DATA = load_saas_mev_workbook_data()
