@@ -345,17 +345,6 @@ def resolve_mev_description(mev_name: str) -> str | None:
     return description or None
 
 
-def mev_description_label(mev_name: str) -> str:
-    mev_types = mev_types_for_name(mev_name)
-    if mev_types == {"raw"}:
-        return "Raw MEV description"
-    if mev_types == {"transformed"}:
-        return "Transformed MEV description"
-    if mev_types:
-        return "Raw / Transformed MEV description"
-    return "MEV description"
-
-
 def excel_mev_type_label(mev_name: str) -> str:
     mev_types = mev_types_for_name(mev_name)
     if mev_types == {"raw"}:

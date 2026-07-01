@@ -1096,12 +1096,6 @@ def calculate_pd_calibration_conservatism_details(observations, rating_observati
     }
 
 
-def calculate_pd_calibration_conservatism_rag(observations, rating_observations, monitoring_quarter, ctx: PdFilterContext, crr_scale, monitoring_thresholds):
-    return calculate_pd_calibration_conservatism_details(
-        observations, rating_observations, monitoring_quarter, ctx, crr_scale, monitoring_thresholds,
-    )["rag"]
-
-
 def build_pd_calibration_tooltip(details):
     if not details or not details.get("horizons"):
         return (
@@ -1329,28 +1323,6 @@ def build_pd_performance_trend_for_horizon(observations, rating_observations, sn
         })
         trend.append(row)
     return trend
-
-
-def build_pd_performance_trend(observations, rating_observations, snapshot_quarter, ctx: PdFilterContext, crr_scale):
-    horizon_key = get_pd_performance_horizon_key(ctx)
-    return build_pd_performance_trend_for_horizon(observations, rating_observations, snapshot_quarter, horizon_key, ctx, crr_scale)
-
-
-def build_pd_rag_movement_rows(observations, rating_observations, metrics, periods, ctx: PdFilterContext, crr_scale, monitoring_thresholds):
-    """Data form of ``buildPdRagMovement``: one row per metric plus a "Section RAG" summary row."""
-    thresholds = get_pd_thresholds(monitoring_thresholds)
-    status_by_period = []
-    for period in periods:
-        values = calculate_pd_rag_metrics(observations, rating_observations, period, ctx, crr_scale)
-        rags = [calculate_pd_metric_rag(thresholds, metric, values.get(metric)) for metric in metrics]
-        status_by_period.append({"period": period, "rags": rags, "group_rag": get_worst_pd_rag(rags)})
-
-    rows = [{"metric": "Section RAG", "rags": [entry["group_rag"] for entry in status_by_period]}]
-    for index, metric in enumerate(metrics):
-        rows.append({"metric": metric, "rags": [entry["rags"][index] for entry in status_by_period]})
-    return rows
-
-
 # ---------------------------------------------------------------------------
 # Formatting helpers (formatPdMetric / pdRagScore / formatPdTestChange / ...)
 # ---------------------------------------------------------------------------
@@ -1364,12 +1336,6 @@ def format_pd_metric(value, fmt):
     if fmt == "count":
         return f"{round(value)}"
     return f"{value:.3f}"
-
-
-def format_pd_share(value, total):
-    if total:
-        return f"{fmt_n(value)} ({value / total * 100:.1f}%)"
-    return f"{fmt_n(value)} (—)"
 
 
 def format_pd_compact_amount(value):

@@ -157,17 +157,6 @@ def build_single_select_dropdown(
     )
 
 
-def checkbox_dropdown_toggle_label(selected: list[str], available: list[str], noun: str) -> str:
-    """Compute a human-readable toggle label for a checkbox-dropdown."""
-    if not selected:
-        return f"Select {noun}"
-    if set(selected) == set(available):
-        return f"All {noun}"
-    if len(selected) == 1:
-        return selected[0]
-    return f"{len(selected)} {noun} selected"
-
-
 def build_checkbox_dropdown(
     *,
     checklist_id: str,

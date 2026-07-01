@@ -7,8 +7,6 @@ on ``main``.
 
 from __future__ import annotations
 
-from typing import Any
-
 from dash import dcc, html
 
 from .....shared.ui.charts import (
@@ -18,11 +16,7 @@ from .....shared.ui.charts import (
 )
 from .....shared.ui import controls as shared_filters
 from .....shared.ui.controls import build_chart_header
-from .....shared.domain.calculations import (
-    fmt_n,
-    format_pd_metric,
-    pd_tone_class,
-)
+from .....shared.domain.calculations import pd_tone_class
 from .....shared.domain.mev_range import (
     calculate_pd_mev_thresholds,
     calculate_pd_mev_worst_rag_after_quarter,
@@ -116,40 +110,6 @@ def _dropdown_options(values: list[str]) -> list[dict[str, str]]:
     return [{"label": value, "value": value} for value in values]
 
 
-def _rag_dot(rag: str) -> html.Span:
-    tone = (rag or "N/A").lower().replace("/", "").replace(" ", "-")
-    if tone in {"na", "n-a"}:
-        tone = "neutral"
-    return html.Span(
-        "",
-        className=f"overview-rag-badge overview-rag-{tone}",
-        title=rag or "N/A",
-        **{"aria-label": rag or "N/A"},
-    )
-
-
-def _format_value(metric: str, value: Any) -> str:
-    if metric in {"ME", "RMSE", "Predicted LGD", "Actual LGD", "Recovery Rate"}:
-        return format_pd_metric(value, "percent")
-    if metric in {"Observations", "Defaults"}:
-        return fmt_n(value)
-    return format_pd_metric(value, "ratio")
-
-
-def _format_delta(metric: str, current_value: Any, previous_value: Any) -> tuple[str, str]:
-    if current_value is None or previous_value is None:
-        return "N/A", "neutral"
-    try:
-        delta = float(current_value) - float(previous_value)
-    except (TypeError, ValueError):
-        return "N/A", "neutral"
-    tone = "positive" if delta > 0 else ("negative" if delta < 0 else "neutral")
-    formatted = _format_value(metric, delta)
-    if delta > 0 and not formatted.startswith("+"):
-        formatted = f"+{formatted}"
-    return formatted, tone
-
-
 def _build_filter(label: str, component) -> html.Div:
     return html.Div(className="monitoring-filter", children=[html.Label(label), component])
 
@@ -160,108 +120,6 @@ def _subnav_link(section_id: str, label: str, active: bool = False) -> html.Butt
         type="button",
         className="active" if active else "",
         **{"data-pd-subnav-target": section_id, "aria-current": "location" if active else "false"},
-    )
-
-
-def _flow_connector_spans(*, incoming: bool = False, outgoing: bool = False) -> list[html.Span]:
-    spans: list[html.Span] = []
-    if incoming:
-        spans.append(html.Span(className="pd-overview-flow-connector pd-overview-flow-connector-in", **{"aria-hidden": "true"}))
-    if outgoing:
-        spans.append(html.Span(className="pd-overview-flow-connector pd-overview-flow-connector-out", **{"aria-hidden": "true"}))
-    return spans
-
-
-def _flow_metric(
-    label: str,
-    value: Any,
-    metric: str,
-    rag: str,
-    href: str,
-    *,
-    previous_value: Any = None,
-    previous_period: str = "",
-    incoming: bool = False,
-    outgoing: bool = False,
-) -> html.Article:
-    change_value, change_tone = _format_delta(metric, value, previous_value)
-    return html.Article(
-        className=f"pd-overview-flow-node pd-overview-flow-node-{pd_tone_class(rag)}",
-        children=html.A(
-            className="pd-overview-flow-link",
-            href=href,
-            children=[
-                *_flow_connector_spans(incoming=incoming, outgoing=outgoing),
-                html.Span(label, className="pd-overview-flow-node-label"),
-                html.Span(_format_value(metric, value), className="pd-overview-flow-node-value"),
-                html.Span([_rag_dot(rag), html.Span(f" {rag}")], className="pd-overview-flow-node-note"),
-                html.Span(
-                    [
-                        html.Span(
-                            [
-                                html.Span(f"Previous ({previous_period or 'No prior quarter'})"),
-                                html.Strong(_format_value(metric, previous_value)),
-                            ]
-                        ),
-                        html.Span(
-                            [
-                                html.Span("Change"),
-                                html.Strong(change_value, className=f"lgd-flow-change lgd-flow-change-{change_tone}"),
-                            ]
-                        ),
-                    ],
-                    className="lgd-flow-node-comparison",
-                ),
-            ],
-        ),
-    )
-
-
-def _flow_rag(
-    label: str,
-    rag: str,
-    href: str,
-    note: str | None = None,
-    *,
-    incoming: bool = False,
-    outgoing: bool = False,
-) -> html.Article:
-    children = [
-        *_flow_connector_spans(incoming=incoming, outgoing=outgoing),
-        html.Span(label, className="pd-overview-flow-node-label"),
-        html.Span([pd_rag_dot(rag), f" {rag}"], className="pd-overview-flow-node-value pd-overview-flow-node-value-rag"),
-    ]
-    if note:
-        children.append(html.Span(note, className="pd-overview-flow-node-note lgd-cascade-note"))
-    return html.Article(
-        className=f"pd-overview-flow-node pd-overview-flow-node-{pd_tone_class(rag)}",
-        children=html.A(
-            className="pd-overview-flow-link",
-            href=href,
-            children=children,
-        ),
-    )
-
-
-def _flow_stage(text: str) -> html.Div:
-    return html.Div(html.Span(text), className="pd-overview-flow-stage")
-
-
-def _build_chart_panel(title: str, description: str, figure) -> html.Div:
-    return html.Div(
-        className="section-card pd-default-rate-trend-section",
-        children=[
-            html.Div(
-                className="pd-chart-heading",
-                children=[
-                    html.Div(
-                        className="pd-chart-heading-copy",
-                        children=[html.Div(title, className="section-title"), html.Div(description, className="pd-section-subtitle")],
-                    ),
-                ],
-            ),
-            dcc.Graph(figure=figure, config=_GRAPH_CONFIG, className="pd-default-rate-trend-chart pd-default-rate-trend-chart-medium"),
-        ],
     )
 
 

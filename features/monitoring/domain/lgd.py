@@ -137,10 +137,6 @@ def get_lgd_model_options(data: dict) -> list[str]:
     return sorted({text for value in values if (text := _clean_text(value))}, key=str.lower)
 
 
-def get_lgd_default_model(data: dict) -> str:
-    return LGD_ALL_MODELS_LABEL
-
-
 def resolve_lgd_models(data: dict, selected_model: str | list[str] | tuple[str, ...] | set[str] | None) -> list[str]:
     models = get_lgd_model_options(data)
     if isinstance(selected_model, (list, tuple, set)):
@@ -345,21 +341,6 @@ def build_lgd_period_summary(
         "performance_rag": performance_rag,
         "previous_performance_rag": previous_performance_rag,
     }
-
-
-def build_lgd_heatmap_rows(data: dict, metric_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
-        {
-            "Metric": metric,
-            **{
-                row["Monitoring Period"]: lgd_metric_rag(data, metric, row.get(metric))
-                for row in metric_rows
-            },
-        }
-        for metric in LGD_METRICS
-    ]
-
-
 def build_lgd_calibration_rag_trend(data: dict, metric_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for row in metric_rows:

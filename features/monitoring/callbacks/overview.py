@@ -24,10 +24,6 @@ def _dropdown_options(values: list[str]) -> list[dict]:
     return [{"label": value, "value": value} for value in values]
 
 
-def _keep_valid(value: str | None, values: list[str]) -> str:
-    return value if value in values else "All"
-
-
 def register_callbacks(app) -> None:
     """Register all Overview callbacks against *app* (idempotent)."""
     if already_registered(app, "page:monitoring.overview"):

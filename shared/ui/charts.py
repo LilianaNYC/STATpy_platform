@@ -1235,12 +1235,17 @@ def build_pd_transition_combined_figure(rows, range_value=None, monitoring_thres
         line=dict(color="#94a3b8", width=1, dash="dot"),
     )
 
-    grid = "#94a3b8"
-    xaxis_opts = build_pd_time_series_xaxis(labels, {"title": "Quarter", "gridcolor": grid}, density="compact")
+    grid = "rgba(148,163,184,0.18)"
+    grid_width = 0.8
+    xaxis_opts = build_pd_time_series_xaxis(
+        labels,
+        {"title": "Quarter", "gridcolor": grid, "gridwidth": grid_width},
+        density="compact",
+    )
     fig.update_xaxes(**xaxis_opts, row=1, col=1)
     fig.update_xaxes(**xaxis_opts, row=1, col=2)
-    fig.update_yaxes(title_text="PD", tickformat=".2%", gridcolor=grid, zeroline=False, row=1, col=1)
-    fig.update_yaxes(title_text="Delta", tickformat=".2%", gridcolor=grid, zeroline=False, row=1, col=2)
+    fig.update_yaxes(title_text="PD", tickformat=".2%", gridcolor=grid, gridwidth=grid_width, zeroline=False, row=1, col=1)
+    fig.update_yaxes(title_text="Delta", tickformat=".2%", gridcolor=grid, gridwidth=grid_width, zeroline=False, row=1, col=2)
 
     fig.update_layout(
         height=360,

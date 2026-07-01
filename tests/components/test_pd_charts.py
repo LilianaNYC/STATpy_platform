@@ -15,6 +15,7 @@ from STATpy_platform.shared.ui.charts import (
     build_pd_mev_range_figure,
     build_pd_scenario_projection_figure,
     build_pd_scenario_rank_figure,
+    build_pd_transition_combined_figure,
     build_pd_time_series_xaxis,
 )
 
@@ -367,6 +368,39 @@ def test_delta_accuracy_figure_uses_soft_ratio_grid_style():
     assert figure.layout.yaxis.zeroline is False
     assert figure.layout.yaxis2.zeroline is False
     assert figure.data[2].line.color == "rgba(71,85,105,0.75)"
+
+
+def test_transition_margin_delta_figure_uses_soft_ratio_grid_style():
+    figure = build_pd_transition_combined_figure(
+        [
+            {"label": "2023-Q1", "period": "2023-Q1", "mm_p0": 0.018, "mm_pm": 0.021, "delta": 0.003},
+            {"label": "2023-Q2", "period": "2023-Q2", "mm_p0": 0.019, "mm_pm": 0.023, "delta": 0.004},
+        ],
+        monitoring_thresholds={
+            "pd_thresholds": [
+                {
+                    "metric": "Transition Matrix",
+                    "green_min": -0.01,
+                    "green_max": 0.01,
+                    "amber_min": -0.02,
+                    "amber_max": 0.02,
+                    "red_condition": "outside amber range",
+                },
+            ]
+        },
+        theme="light",
+    )
+
+    assert figure.layout.xaxis.gridcolor == "rgba(148,163,184,0.18)"
+    assert figure.layout.xaxis2.gridcolor == "rgba(148,163,184,0.18)"
+    assert figure.layout.yaxis.gridcolor == "rgba(148,163,184,0.18)"
+    assert figure.layout.yaxis2.gridcolor == "rgba(148,163,184,0.18)"
+    assert figure.layout.xaxis.gridwidth == 0.8
+    assert figure.layout.xaxis2.gridwidth == 0.8
+    assert figure.layout.yaxis.gridwidth == 0.8
+    assert figure.layout.yaxis2.gridwidth == 0.8
+    assert figure.layout.yaxis.zeroline is False
+    assert figure.layout.yaxis2.zeroline is False
 
 
 def test_notching_trend_uses_theme_monochrome_line():

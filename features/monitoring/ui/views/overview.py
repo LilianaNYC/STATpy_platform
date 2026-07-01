@@ -79,12 +79,6 @@ RAG_DESCRIPTIONS = {
     "Pre-Mitigation RAG": "Obtained from a trend of Model RAG (post subjective review) from the current and past monitoring outcomes. For ST models, only the current one will be considered.",
     "Post-Mitigation RAG": "Based on the residual risk of the model. The residual risk is judgement based and includes manual overlays, compensating controls, etc.",
 }
-RAG_MARKER_COLORS = {
-    "Green": "#16a34a",
-    "Amber": "#d97706",
-    "Red": "#dc2626",
-    "N/A": "#94a3b8",
-}
 MONITORING_WORKSTREAMS = (
     {
         "path": "/overview",
@@ -171,10 +165,6 @@ def _rag_visual_tone(rag: str | None) -> str:
     if rag == "Neutral":
         return "neutral"
     return "fallback" if rag == "N/A" else pd_tone_class(effective_rag(rag))
-
-
-def _rag_marker_color(rag: str | None) -> str:
-    return RAG_MARKER_COLORS["N/A"] if rag == "N/A" else RAG_MARKER_COLORS.get(effective_rag(rag), "#94a3b8")
 
 
 def _rag_badge(rag: str) -> html.Span:

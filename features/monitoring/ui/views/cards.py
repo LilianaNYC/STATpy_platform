@@ -205,34 +205,6 @@ def build_pd_ead_card(current_summary, previous_summary, context, options=None):
 
 
 # ---------------------------------------------------------------------------
-# Static info card (buildPdStaticInfoCard)
-# ---------------------------------------------------------------------------
-
-
-def build_pd_static_info_card(title, value, meta_rows=None, options=None):
-    options = options or {}
-    title_row = [html.H4(title)]
-    chip = _info_chip(options.get("tooltip"))
-    if chip is not None:
-        title_row.append(chip)
-
-    heading_left = []
-    if options.get("test_label"):
-        heading_left.append(html.Span(options["test_label"]))
-    heading_left.append(html.Div(title_row, className="pd-card-title-row"))
-
-    children = [
-        html.Div(className="pd-test-card-heading", children=[html.Div(heading_left)]),
-        html.Div(value, className="pd-test-value"),
-        *_meta_rows(meta_rows),
-    ]
-    if options.get("footnote"):
-        children.append(html.Div(options["footnote"], className="pd-test-footnote"))
-
-    return html.Article(className=f"pd-test-card {options.get('extra_class', '')}".strip(), children=children)
-
-
-# ---------------------------------------------------------------------------
 # Section / chapter headings (buildPdSectionHeading / buildPdChapterHeading)
 # ---------------------------------------------------------------------------
 
