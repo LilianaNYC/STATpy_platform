@@ -73,14 +73,6 @@ def get_loss_thresholds(data: dict) -> list[dict[str, Any]]:
     return list((data.get("monitoring_thresholds") or {}).get("loss_thresholds") or [])
 
 
-def get_loss_model_options(data: dict) -> list[str]:
-    return [LOSS_MODEL_LABEL]
-
-
-def get_loss_default_model(data: dict) -> str:
-    return LOSS_MODEL_LABEL
-
-
 def resolve_loss_model(data: dict, selected_model: str | None) -> str:
     return LOSS_MODEL_LABEL
 

@@ -113,14 +113,6 @@ def load_filter_config() -> dict:
     }
 
 
-def reporting_cycle_options() -> list[dict]:
-    return [dict(c) for c in load_filter_config()["reporting_cycles"]]
-
-
-def scenario_options() -> list[dict]:
-    return [dict(s) for s in load_filter_config()["scenarios"]]
-
-
 def monitoring_points_by_cycle() -> dict[str, list[str]]:
     return {k: list(v) for k, v in load_filter_config()["monitoring_points"].items()}
 

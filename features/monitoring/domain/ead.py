@@ -133,10 +133,6 @@ def get_ead_model_options(data: dict) -> list[str]:
     return sorted({text for value in values if (text := _clean_text(value))}, key=str.lower)
 
 
-def get_ead_default_model(data: dict) -> str:
-    return EAD_ALL_MODELS_LABEL
-
-
 def resolve_ead_models(data: dict, selected_model: str | list[str] | tuple[str, ...] | set[str] | None) -> list[str]:
     models = get_ead_model_options(data)
     if isinstance(selected_model, (list, tuple, set)):

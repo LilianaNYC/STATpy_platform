@@ -55,14 +55,6 @@ class Settings:
     def dummy_mev_data_file(self) -> Path:
         return self.source_data_dir / "dummy_mev_data.xlsx"
 
-    @property
-    def facilities_dummy_data_file(self) -> Path:
-        return self.source_data_dir / "facilities_dummy_data.json"
-
-    def feature_enabled(self, name: str, default: bool = False) -> bool:
-        """Return whether feature flag ``name`` is enabled."""
-        return bool(self.feature_flags.get(name, default))
-
 
 def build_settings(environment: str | None = None) -> Settings:
     """Build a :class:`Settings` object for ``environment`` (or the active one)."""

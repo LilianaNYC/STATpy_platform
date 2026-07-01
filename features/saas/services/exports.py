@@ -24,6 +24,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from ..data_access import SAAS_PAGE_DATA
+from ..domain.metrics import BASELINE_SCENARIO_VALUE
 
 
 def build_saas_report_html(sections: list[tuple[str, object]], meta_lines: list[str]) -> str:
@@ -142,7 +143,7 @@ def active_metric_columns(baseline_available: bool, scenario_label: str, scenari
     in the dataset, or when Baseline itself is the chosen scenario (in which case
     the chosen-scenario columns already represent the Baseline projection).
     """
-    include_baseline = baseline_available and scenario_value != _BASELINE_SCENARIO_VALUE
+    include_baseline = baseline_available and scenario_value != BASELINE_SCENARIO_VALUE
     label = scenario_label or "Scenario"
     resolved: list[tuple[str, str, str]] = []
     for key, header, description in SAAS_METRIC_COLUMNS:

@@ -297,36 +297,3 @@ def top_findings(rows: list[dict[str, Any]], limit: int | None = None) -> list[d
     return findings[:limit] if limit is not None else findings
 
 
-def ecl_scenario_rows(data: dict) -> list[dict[str, Any]]:
-    portfolio = data["portfolio"]
-    if not {"_quarter", "ecl_amount_base", "ecl_amount_severe"}.issubset(set(portfolio.columns)):
-        return []
-    grouped = (
-        portfolio.group_by("_quarter")
-        .agg(
-            pl.col("ecl_amount_base").sum().alias("baseline"),
-            pl.col("ecl_amount_severe").sum().alias("severe"),
-        )
-        .with_columns(
-            (pl.col("baseline") * 1.12).alias("adverse"),
-            (pl.col("baseline") * 0.93).alias("upside"),
-        )
-        .sort("_quarter")
-    )
-    return grouped.to_dicts()
-
-
-def ecl_coverage_rows(data: dict) -> list[dict[str, Any]]:
-    portfolio = data["portfolio"]
-    if not {"_quarter", "ecl_amount_base", "Balance"}.issubset(set(portfolio.columns)):
-        return []
-    grouped = (
-        portfolio.group_by("_quarter")
-        .agg(
-            pl.col("ecl_amount_base").sum().alias("ecl"),
-            pl.col("Balance").sum().alias("balance"),
-        )
-        .with_columns((pl.col("ecl") / pl.col("balance")).alias("coverage"))
-        .sort("_quarter")
-    )
-    return grouped.to_dicts()

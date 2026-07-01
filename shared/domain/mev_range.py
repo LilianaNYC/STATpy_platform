@@ -275,9 +275,3 @@ def get_lgd_mev_chart_id(model_name: str, mev_name: str) -> str:
 
 def get_ead_mev_chart_id(model_name: str, mev_name: str) -> str:
     return f"ead-mev-chart-{slugify_pd_token(model_name)}-{slugify_pd_token(mev_name)}"
-
-
-def get_pd_mev_chart_color(index: int) -> str:
-    """Port of ``getPdMevChartColor``."""
-    palette = config.PD_MEV_PALETTE
-    return palette[index % len(palette)]

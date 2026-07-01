@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from dash import dcc, html
 
 from .....shared.ui.charts import (
@@ -13,11 +11,7 @@ from .....shared.ui.charts import (
 )
 from .....shared.ui import controls as shared_filters
 from .....shared.ui.controls import build_chart_header
-from .....shared.domain.calculations import (
-    fmt_n,
-    format_pd_metric,
-    pd_tone_class,
-)
+from .....shared.domain.calculations import pd_tone_class
 from .....shared.domain.mev_range import (
     calculate_pd_mev_thresholds,
     calculate_pd_mev_worst_rag_after_quarter,
@@ -32,12 +26,8 @@ from .....shared.domain.quarter_labels import iso_date_to_pd_quarter
 from .....shared.ui.charts import build_pd_mev_range_figure
 from .....shared.theme import normalize_theme_value
 from ...domain.lgd import (
-    LGD_CALIBRATION_METRICS,
-    LGD_DISCRIMINATION_METRICS,
-    LGD_METRICS,
     build_lgd_calibration_rag_trend,
     build_lgd_discrimination_rag_trend,
-    build_lgd_heatmap_rows,
     build_lgd_period_summary,
     get_lgd_monitoring_point_options,
     get_lgd_thresholds,
@@ -109,40 +99,6 @@ def _dropdown_options(values: list[str]) -> list[dict[str, str]]:
     return [{"label": value, "value": value} for value in values]
 
 
-def _rag_dot(rag: str) -> html.Span:
-    tone = (rag or "N/A").lower().replace("/", "").replace(" ", "-")
-    if tone in {"na", "n-a"}:
-        tone = "neutral"
-    return html.Span(
-        "",
-        className=f"overview-rag-badge overview-rag-{tone}",
-        title=rag or "N/A",
-        **{"aria-label": rag or "N/A"},
-    )
-
-
-def _format_value(metric: str, value: Any) -> str:
-    if metric in {"ME", "RMSE", "Predicted LGD", "Actual LGD", "Recovery Rate"}:
-        return format_pd_metric(value, "percent")
-    if metric in {"Observations", "Defaults"}:
-        return fmt_n(value)
-    return format_pd_metric(value, "ratio")
-
-
-def _format_delta(metric: str, current_value: Any, previous_value: Any) -> tuple[str, str]:
-    if current_value is None or previous_value is None:
-        return "N/A", "neutral"
-    try:
-        delta = float(current_value) - float(previous_value)
-    except (TypeError, ValueError):
-        return "N/A", "neutral"
-    tone = "positive" if delta > 0 else ("negative" if delta < 0 else "neutral")
-    formatted = _format_value(metric, delta)
-    if delta > 0 and not formatted.startswith("+"):
-        formatted = f"+{formatted}"
-    return formatted, tone
-
-
 def _build_filter(label: str, component) -> html.Div:
     return html.Div(className="monitoring-filter", children=[html.Label(label), component])
 
@@ -193,132 +149,6 @@ def _build_lgd_subnav() -> html.Div:
             ),
         ],
     )
-
-
-def _build_rag_table(summary: dict) -> html.Div:
-    rows = []
-    for metric in LGD_CALIBRATION_METRICS:
-        rows.append({
-            "Area": "Calibration Conservatism",
-            "Horizon": "1 year",
-            "Metric": metric,
-            "Value": _format_value(metric, summary["current"].get(metric)),
-            "RAG": summary["metric_rags"].get(metric, "N/A"),
-        })
-    for metric in LGD_DISCRIMINATION_METRICS:
-        rows.append({
-            "Area": "Discriminatory Power",
-            "Horizon": "1 year",
-            "Metric": metric,
-            "Value": _format_value(metric, summary["current"].get(metric)),
-            "RAG": summary["metric_rags"].get(metric, "N/A"),
-        })
-    rows.extend([
-        {"Area": "Dimension", "Horizon": "1 year", "Metric": "Calibration Conservatism RAG", "Value": "-", "RAG": summary["calibration_rag"]},
-        {"Area": "Dimension", "Horizon": "1 year", "Metric": "Discriminatory Power RAG", "Value": "-", "RAG": summary["discrimination_rag"]},
-        {"Area": "Performance", "Horizon": "1 year", "Metric": "Performance RAG", "Value": "-", "RAG": summary["performance_rag"]},
-    ])
-
-    return html.Div(
-        className="overview-table-wrap",
-        children=html.Table([
-            html.Thead(html.Tr([html.Th("Area"), html.Th("Horizon"), html.Th("Metric"), html.Th("Value"), html.Th("RAG")])),
-            html.Tbody([
-                html.Tr([
-                    html.Td(row["Area"]),
-                    html.Td(row["Horizon"]),
-                    html.Td(row["Metric"]),
-                    html.Td(row["Value"]),
-                    html.Td([_rag_dot(row["RAG"]), html.Span(f" {row['RAG']}")]),
-                ])
-                for row in rows
-            ]),
-        ]),
-    )
-
-
-def _flow_connector_spans(*, incoming: bool = False, outgoing: bool = False) -> list[html.Span]:
-    spans = []
-    if incoming:
-        spans.append(html.Span(className="pd-overview-flow-connector pd-overview-flow-connector-in", **{"aria-hidden": "true"}))
-    if outgoing:
-        spans.append(html.Span(className="pd-overview-flow-connector pd-overview-flow-connector-out", **{"aria-hidden": "true"}))
-    return spans
-
-
-def _flow_metric(
-    label: str,
-    value: Any,
-    metric: str,
-    rag: str,
-    href: str,
-    *,
-    previous_value: Any = None,
-    previous_period: str = "",
-    incoming: bool = False,
-    outgoing: bool = False,
-) -> html.Article:
-    change_value, change_tone = _format_delta(metric, value, previous_value)
-    return html.Article(
-        className=f"pd-overview-flow-node pd-overview-flow-node-{pd_tone_class(rag)}",
-        children=html.A(
-            className="pd-overview-flow-link",
-            href=href,
-            children=[
-                *_flow_connector_spans(incoming=incoming, outgoing=outgoing),
-                html.Span(label, className="pd-overview-flow-node-label"),
-                html.Span(_format_value(metric, value), className="pd-overview-flow-node-value"),
-                html.Span([_rag_dot(rag), html.Span(f" {rag}")], className="pd-overview-flow-node-note"),
-                html.Span(
-                    [
-                        html.Span(
-                            [
-                                html.Span(f"Previous ({previous_period or 'No prior quarter'})"),
-                                html.Strong(_format_value(metric, previous_value)),
-                            ]
-                        ),
-                        html.Span(
-                            [
-                                html.Span("Change"),
-                                html.Strong(change_value, className=f"lgd-flow-change lgd-flow-change-{change_tone}"),
-                            ]
-                        ),
-                    ],
-                    className="lgd-flow-node-comparison",
-                ),
-            ],
-        ),
-    )
-
-
-def _flow_rag(
-    label: str,
-    rag: str,
-    href: str,
-    note: str | None = None,
-    *,
-    incoming: bool = False,
-    outgoing: bool = False,
-) -> html.Article:
-    children = [
-        *_flow_connector_spans(incoming=incoming, outgoing=outgoing),
-        html.Span(label, className="pd-overview-flow-node-label"),
-        html.Span([pd_rag_dot(rag), f" {rag}"], className="pd-overview-flow-node-value pd-overview-flow-node-value-rag"),
-    ]
-    if note:
-        children.append(html.Span(note, className="pd-overview-flow-node-note lgd-cascade-note"))
-    return html.Article(
-        className=f"pd-overview-flow-node pd-overview-flow-node-{pd_tone_class(rag)}",
-        children=html.A(
-            className="pd-overview-flow-link",
-            href=href,
-            children=children,
-        ),
-    )
-
-
-def _flow_stage(text: str) -> html.Div:
-    return html.Div(html.Span(text), className="pd-overview-flow-stage")
 
 
 def _build_lgd_overview_flow(summary: dict) -> html.Div:
@@ -412,109 +242,6 @@ def _build_lgd_overview_flow(summary: dict) -> html.Div:
             className="lgd-overview-flow",
             **{"aria-label": "LGD monitoring overview process flow"},
         ),
-    )
-
-
-def _build_post_review_table(summary: dict) -> html.Div:
-    rows = [
-        ("Performance RAG", summary["performance_rag"]),
-        ("MEV comments", "No LGD MEV range override is configured in dashboard1 source data."),
-        ("Scenario comments", "No LGD scenario override is configured in dashboard1 source data."),
-        ("Model RAG (Post Subjective Review)", summary["performance_rag"]),
-        ("Pre-Mitigation RAG", summary["performance_rag"]),
-        ("Post-Mitigation RAG", summary["performance_rag"]),
-    ]
-    return html.Div(
-        className="overview-table-wrap",
-        children=html.Table([
-            html.Thead(html.Tr([html.Th("Review Field"), html.Th("Value")])),
-            html.Tbody([
-                html.Tr([
-                    html.Td(label),
-                    html.Td([_rag_dot(value), html.Span(f" {value}")]) if value in {"Green", "Amber", "Red", "N/A"} else html.Td(value),
-                ])
-                for label, value in rows
-            ]),
-        ]),
-    )
-
-
-def _build_heatmap(data: dict, summary: dict, metrics: list[str] | None = None) -> html.Div:
-    metric_rows = summary["metric_rows"]
-    periods = [row["Monitoring Period"] for row in metric_rows]
-    heatmap_rows = build_lgd_heatmap_rows(data, metric_rows)
-    if metrics is not None:
-        metric_set = set(metrics)
-        heatmap_rows = [row for row in heatmap_rows if row["Metric"] in metric_set]
-    return html.Div(
-        className="overview-table-wrap",
-        children=html.Table([
-            html.Thead(html.Tr([html.Th("Metric"), *[html.Th(period) for period in periods]])),
-            html.Tbody([
-                html.Tr([
-                    html.Td(row["Metric"]),
-                    *[html.Td(_rag_dot(row.get(period, "N/A"))) for period in periods],
-                ])
-                for row in heatmap_rows
-            ]),
-        ]),
-    )
-
-
-def _build_metric_history_table(summary: dict, metrics: list[str] | None = None) -> html.Div:
-    rows = summary["metric_rows"]
-    metrics = metrics or LGD_METRICS
-    return html.Div(
-        className="overview-table-wrap lgd-history-table-wrap",
-        children=html.Table([
-            html.Thead(html.Tr([
-                html.Th("Monitoring Point"),
-                *[html.Th(metric) for metric in metrics],
-                html.Th("Predicted LGD"),
-                html.Th("Actual LGD"),
-                html.Th("Observations"),
-            ])),
-            html.Tbody([
-                html.Tr([
-                    html.Td(row["Monitoring Period"]),
-                    *[html.Td(_format_value(metric, row.get(metric))) for metric in metrics],
-                    html.Td(_format_value("Predicted LGD", row.get("Predicted LGD"))),
-                    html.Td(_format_value("Actual LGD", row.get("Actual LGD"))),
-                    html.Td(fmt_n(row.get("Observations"))),
-                ])
-                for row in rows
-            ]),
-        ]),
-    )
-
-
-def _build_monitoring_rag_table_section(data: dict, summary: dict, metrics: list[str]) -> html.Div:
-    return html.Div(
-        className="section-card",
-        children=[
-            html.Div("Monitoring RAG Table", className="section-title"),
-            _build_heatmap(data, summary, metrics),
-            html.Div("Metric History", className="section-title lgd-metric-history-title"),
-            _build_metric_history_table(summary, metrics),
-        ],
-    )
-
-
-def _build_chart_panel(title: str, description: str, figure) -> html.Div:
-    return html.Div(
-        className="section-card pd-default-rate-trend-section",
-        children=[
-            html.Div(
-                className="pd-chart-heading",
-                children=[
-                    html.Div(
-                        className="pd-chart-heading-copy",
-                        children=[html.Div(title, className="section-title"), html.Div(description, className="pd-section-subtitle")],
-                    ),
-                ],
-            ),
-            dcc.Graph(figure=figure, config=_GRAPH_CONFIG, className="pd-default-rate-trend-chart pd-default-rate-trend-chart-medium"),
-        ],
     )
 
 
