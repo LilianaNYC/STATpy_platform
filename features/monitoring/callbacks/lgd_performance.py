@@ -13,6 +13,7 @@ from ..domain.lgd import (
     resolve_lgd_segment,
 )
 from ....shared.registration import already_registered
+from ....shared.theme import APP_THEME_ID
 from ..data_access import PD_PERFORMANCE_DATA
 
 _RANGE_PRESET_COUNTS = {"last-4": 4, "last-8": 8, "last-12": 12}
@@ -134,6 +135,17 @@ def register_callbacks(app) -> None:
         return _dropdown_options(options), value
 
     # -----------------------------------------------------------------
+    # Scenario Ranking selector -> lgd-scenario-ranking-store
+    # -----------------------------------------------------------------
+    @app.callback(
+        Output(layout.SCENARIO_RANKING_STORE_ID, "data"),
+        Input(layout.SCENARIO_RANKING_FILTER_ID, "value"),
+        prevent_initial_call=True,
+    )
+    def update_lgd_scenario_ranking_store(selected_scenarios):
+        return {"scenarios": selected_scenarios or []}
+
+    # -----------------------------------------------------------------
     # Apply filters: snapshot current filter values into the applied store
     # -----------------------------------------------------------------
     @app.callback(
@@ -164,9 +176,11 @@ def register_callbacks(app) -> None:
         Output(layout.CONTENT_ID, "children"),
         Input(layout.APPLIED_FILTERS_STORE_ID, "data"),
         Input(layout.RANGE_STORE_ID, "data"),
+        Input(layout.SCENARIO_RANKING_STORE_ID, "data"),
+        Input(APP_THEME_ID, "value"),
         prevent_initial_call=True,
     )
-    def render_lgd_content(applied, range_store):
+    def render_lgd_content(applied, range_store, scenario_ranking_store, theme_value):
         if not applied:
             return layout.build_lgd_apply_prompt()
 
@@ -188,4 +202,6 @@ def register_callbacks(app) -> None:
             range_store or {},
             reporting_cycle=reporting_cycle,
             scenario=scenario,
+            scenario_ranking_store=scenario_ranking_store or {},
+            theme_value=theme_value,
         )

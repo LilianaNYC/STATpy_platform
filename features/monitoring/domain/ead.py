@@ -118,7 +118,7 @@ def _kendall_tau(x_values: list[float], y_values: list[float]) -> float | None:
 
 
 def get_ead_thresholds(data: dict) -> list[dict[str, Any]]:
-    return list((data.get("monitoring_thresholds") or {}).get("lgd_thresholds") or [])
+    return list((data.get("monitoring_thresholds") or {}).get("ead_thresholds") or [])
 
 
 def get_ead_model_options(data: dict) -> list[str]:

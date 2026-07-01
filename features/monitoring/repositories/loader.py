@@ -129,6 +129,7 @@ def load_monitoring_thresholds() -> dict[str, list[dict[str, Any]]]:
         ("crr_master_scale", config.CRR_MASTER_SCALE_SHEET_NAME),
         ("rag_assignment_pd", config.RAG_ASSIGNMENT_PD_SHEET_NAME),
         ("lgd_thresholds", config.LGD_THRESHOLDS_SHEET_NAME),
+        ("ead_thresholds", config.EAD_THRESHOLDS_SHEET_NAME),
         ("loss_thresholds", config.LOSS_THRESHOLDS_SHEET_NAME),
         ("scenario_test_thresholds", "Scenario_Test_Thresholds"),
     ):
@@ -506,6 +507,8 @@ LGD_AGGREGATED_SHEET_NAME = "LGD_Performance_Metrics"
 EAD_AGGREGATED_SHEET_NAME = "EAD_Performance_Metrics"
 LOSS_AGGREGATED_SHEET_NAME = "Loss_Performance_Metrics"
 PD_SENSITIVITY_SHEET_NAME = "PD_Sensitivity_Projections"
+LGD_SENSITIVITY_SHEET_NAME = "LGD_Sensitivity_Projections"
+EAD_SENSITIVITY_SHEET_NAME = "EAD_Sensitivity_Projections"
 
 # Sheet column -> metric-row key consumed by each performance page/data module.
 _LGD_METRIC_COLUMN_MAP = {
@@ -515,6 +518,7 @@ _LGD_METRIC_COLUMN_MAP = {
     "predicted_lgd": "Predicted LGD",
     "actual_lgd": "Actual LGD",
     "recovery_rate": "Recovery Rate",
+    "population_stability_index": "Population Stability Index",
     "observations": "Observations",
     "defaults": "Defaults",
 }
@@ -524,6 +528,7 @@ _EAD_METRIC_COLUMN_MAP = {
     "kendall_tau": "Kendall's Tau",
     "predicted_ead": "Predicted EAD",
     "actual_ead": "Actual EAD",
+    "population_stability_index": "Population Stability Index",
     "observations": "Observations",
     "defaults": "Defaults",
 }
@@ -595,10 +600,16 @@ def load_loss_performance_metrics() -> dict[str, Any]:
     return _build_metric_rows_store(LOSS_AGGREGATED_SHEET_NAME, _LOSS_METRIC_COLUMN_MAP)
 
 
-def load_pd_sensitivity_projections() -> list[dict[str, Any]]:
-    """Load projected PD sensitivity rows from ``PD_Sensitivity_Projections``."""
+def load_sensitivity_projections(sheet_name: str, value_col: str) -> list[dict[str, Any]]:
+    """Load projected sensitivity rows from a ``*_Sensitivity_Projections`` sheet.
+
+    ``value_col`` is the tab's projected-value column (``projected_pd`` /
+    ``projected_lgd`` / ``projected_ead``). It is exposed verbatim under that key
+    and also under the generic ``projected_value`` key, so the shared chart
+    builders and Post-Subjective section helpers stay tab-agnostic.
+    """
     try:
-        df = pd.read_excel(settings.portfolio_file, sheet_name=PD_SENSITIVITY_SHEET_NAME)
+        df = pd.read_excel(settings.portfolio_file, sheet_name=sheet_name)
     except (FileNotFoundError, ValueError, KeyError):
         return []
 
@@ -609,7 +620,7 @@ def load_pd_sensitivity_projections() -> list[dict[str, Any]]:
         "model_or_segment",
         "projection_quarter",
         "scenario_variant",
-        "projected_pd",
+        value_col,
     }
     if "quarter" not in df.columns and "projection_offset" in df.columns:
         df = df.rename(columns={"projection_offset": "quarter"})
@@ -620,8 +631,8 @@ def load_pd_sensitivity_projections() -> list[dict[str, Any]]:
     df = df.copy()
     df["quarter"] = pd.to_numeric(df["quarter"], errors="coerce")
     df["projection_quarter"] = pd.to_datetime(df["projection_quarter"], errors="coerce")
-    df["projected_pd"] = pd.to_numeric(df["projected_pd"], errors="coerce")
-    df = df.dropna(subset=["quarter", "projection_quarter", "projected_pd"])
+    df[value_col] = pd.to_numeric(df[value_col], errors="coerce")
+    df = df.dropna(subset=["quarter", "projection_quarter", value_col])
 
     # MM_P0 / MM_Pm are scenario-independent margins read verbatim from the
     # sheet: MM_P0 is a single value per entity, MM_Pm varies by projection
@@ -633,6 +644,7 @@ def load_pd_sensitivity_projections() -> list[dict[str, Any]]:
 
     records = []
     for _, row in df.iterrows():
+        value = round(float(row[value_col]), 8)
         records.append({
             "reporting_cycle": str(row["reporting_cycle"]).strip(),
             "level": str(row["level"]).strip().lower(),
@@ -643,12 +655,18 @@ def load_pd_sensitivity_projections() -> list[dict[str, Any]]:
             "base_scenario": str(row.get("base_scenario") or "").strip(),
             "shock_std": float(row["shock_std"]) if "shock_std" in df.columns and pd.notna(row.get("shock_std")) else None,
             "shock_direction": str(row.get("shock_direction") or "").strip(),
-            "projected_pd": round(float(row["projected_pd"]), 8),
+            value_col: value,
+            "projected_value": value,
             "mm_p0": _opt_num(row, "MM_P0"),
             "mm_pm": _opt_num(row, "MM_Pm"),
         })
 
     return records
+
+
+def load_pd_sensitivity_projections() -> list[dict[str, Any]]:
+    """Load projected PD sensitivity rows from ``PD_Sensitivity_Projections``."""
+    return load_sensitivity_projections(PD_SENSITIVITY_SHEET_NAME, "projected_pd")
 
 
 def _build_observations_from_aggregated(agg_df: pd.DataFrame) -> tuple[dict, list[dict], list[str], list[dict]]:
@@ -813,6 +831,8 @@ def load_pd_performance_data_from_aggregated() -> dict[str, Any]:
         "mev_mnemonic_map": mev_mnemonic_map,
         "mev_description_map": mev_description_map,
         "sensitivity_projections": load_pd_sensitivity_projections(),
+        "lgd_sensitivity_projections": load_sensitivity_projections(LGD_SENSITIVITY_SHEET_NAME, "projected_lgd"),
+        "ead_sensitivity_projections": load_sensitivity_projections(EAD_SENSITIVITY_SHEET_NAME, "projected_ead"),
         "rank_ordering_facilities": {},
         "lgd_observations_by_cycle": load_lgd_performance_metrics(),
         "ead_observations_by_cycle": load_ead_performance_metrics(),
@@ -853,6 +873,8 @@ def load_pd_performance_data() -> dict[str, Any]:
         "mev_mnemonic_map": mev_mnemonic_map,
         "mev_description_map": mev_description_map,
         "sensitivity_projections": load_pd_sensitivity_projections(),
+        "lgd_sensitivity_projections": load_sensitivity_projections(LGD_SENSITIVITY_SHEET_NAME, "projected_lgd"),
+        "ead_sensitivity_projections": load_sensitivity_projections(EAD_SENSITIVITY_SHEET_NAME, "projected_ead"),
         "rank_ordering_facilities": {},
         "lgd_observations_by_cycle": load_lgd_performance_metrics(),
         "ead_observations_by_cycle": load_ead_performance_metrics(),

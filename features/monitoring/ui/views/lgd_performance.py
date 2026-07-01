@@ -53,6 +53,16 @@ from .cards import (
     build_pd_test_card,
     pd_rag_dot,
 )
+from .post_subjective import (
+    PostSubjectiveConfig,
+    build_executive_summary,
+    build_getting_started_prompt,
+    build_overview_section,
+    build_psi_section,
+    build_scenario_ranking_section,
+    build_sensitivity_section,
+    resolve_entity,
+)
 
 CONTENT_ID = "lgd-dashboard-content"
 APPLY_FILTERS_ID = "lgd-apply-filters"
@@ -80,6 +90,17 @@ SEGMENT_FILTER_KEY = "lgd-segment"
 MONITORING_POINT_FILTER_KEY = "lgd-monitoring-point"
 LGD_SUBNAV_ID = "lgd-subnav"
 RANGE_STORE_ID = "lgd-range-store"
+SCENARIO_RANKING_STORE_ID = "lgd-scenario-ranking-store"
+SCENARIO_RANKING_FILTER_ID = "lgd-scenario-ranking-filter"
+
+_POST_SUBJECTIVE = PostSubjectiveConfig(
+    prefix="lgd",
+    label="LGD",
+    model_type="LGD",
+    sensitivity_key="lgd_sensitivity_projections",
+    scenario_filter_id=SCENARIO_RANKING_FILTER_ID,
+    value_label="LGD",
+)
 CALIBRATION_RAG_RANGE_KEY = "lgd_calibration_rag"
 DISCRIMINATION_RAG_RANGE_KEY = "lgd_discrimination_rag"
 ME_RANGE_KEY = "lgd_me"
@@ -166,9 +187,11 @@ def _build_lgd_subnav() -> html.Div:
                     html.Div(
                         className="monitoring-section-subnav-links",
                         children=[
+                            _subnav_link("lgd-post-subjective-overview", "Overview"),
+                            _subnav_link("lgd-psi", "PSI"),
+                            _subnav_link("lgd-scenario-ranking", "Scenario Ranking"),
+                            _subnav_link("lgd-sensitivity-analysis", "Sensitivity Analysis"),
                             _subnav_link("lgd-mev-range", "MEV Range"),
-                            _subnav_link("lgd-mev-scenario", "Scenario Tests"),
-                            _subnav_link("lgd-post-subjective-review", "Post Subjective Review"),
                         ],
                     ),
                 ],
@@ -861,7 +884,7 @@ def _build_lgd_mev_range_section(
         className="pd-content-section pd-live-section",
         children=[
             build_pd_section_heading(
-                "2.1 MEV Range",
+                "2.5 MEV Range",
                 "MEV Range",
                 "Checks whether the macro-economic variables (MEVs) driving LGD models under stress remain within their trained operating range.",
                 "N/A",
@@ -912,7 +935,10 @@ def render_lgd_performance_content(
     range_store: dict | None = None,
     reporting_cycle: str = "CCAR 2026",
     scenario: str = "intsevere",
+    scenario_ranking_store: dict | None = None,
+    theme_value: str | None = None,
 ) -> list:
+    theme = normalize_theme_value(theme_value)
     range_store = range_store or {}
     summary = build_lgd_period_summary(data, selected_model, selected_segment, selected_monitoring_point)
     thresholds = get_lgd_thresholds(data)
@@ -1070,7 +1096,7 @@ def render_lgd_performance_content(
                             ),
                             dcc.Graph(
                                 id="lgd-me-trend-chart",
-                                figure=build_lgd_metric_trend_figure(metric_rows, data["monitoring_thresholds"], "ME", monitoring_point),
+                                figure=build_lgd_metric_trend_figure(metric_rows, data["monitoring_thresholds"], "ME", monitoring_point, theme),
                                 config=_GRAPH_CONFIG,
                                 className="pd-default-rate-trend-chart pd-default-rate-trend-chart-compact pd-default-rate-trend-chart-axis-room-compact",
                             ),
@@ -1089,7 +1115,7 @@ def render_lgd_performance_content(
                             ),
                             dcc.Graph(
                                 id="lgd-rmse-trend-chart",
-                                figure=build_lgd_metric_trend_figure(metric_rows, data["monitoring_thresholds"], "RMSE", monitoring_point),
+                                figure=build_lgd_metric_trend_figure(metric_rows, data["monitoring_thresholds"], "RMSE", monitoring_point, theme),
                                 config=_GRAPH_CONFIG,
                                 className="pd-default-rate-trend-chart pd-default-rate-trend-chart-compact pd-default-rate-trend-chart-axis-room-compact",
                             ),
@@ -1151,7 +1177,7 @@ def render_lgd_performance_content(
                             ),
                             dcc.Graph(
                                 id="lgd-kendall-trend-chart",
-                                figure=build_lgd_metric_trend_figure(metric_rows, data["monitoring_thresholds"], "Kendall's Tau", monitoring_point),
+                                figure=build_lgd_metric_trend_figure(metric_rows, data["monitoring_thresholds"], "Kendall's Tau", monitoring_point, theme),
                                 config=_GRAPH_CONFIG,
                                 className="pd-default-rate-trend-chart pd-default-rate-trend-chart-compact pd-default-rate-trend-chart-axis-room-compact",
                             ),
@@ -1181,65 +1207,37 @@ def render_lgd_performance_content(
 
     mev_range_section = _build_lgd_mev_range_section(
         data, selected_model, selected_segment, monitoring_point,
-        range_store, reporting_cycle=reporting_cycle, scenario=scenario,
+        range_store, theme_value=theme_value, reporting_cycle=reporting_cycle, scenario=scenario,
     )
 
-    scenario_section = html.Section(
-        id="lgd-mev-scenario",
-        className="pd-content-section pd-live-section",
-        children=[
-            build_pd_section_heading(
-                "2.2 Scenario Tests",
-                "Scenario Tests",
-                "Dashboard2 LGD review sections are represented here using dashboard1's current source data availability.",
-                summary["performance_rag"],
-                {"show_rag": False},
-            ),
-            html.Div(
-                className="pd-test-grid pd-discrimination-test-grid",
-                children=[
-                    html.Article(
-                        className=f"pd-test-card pd-test-{pd_tone_class(summary['performance_rag'])}",
-                        children=[
-                            html.Div(className="pd-test-card-heading", children=[html.Div([html.Div([html.H4("Scenario Tests")], className="pd-card-title-row")])]),
-                            html.Div("Reference", className="pd-test-value"),
-                            html.Div("No LGD scenario test feed is configured in dashboard1 source data.", className="pd-test-meta"),
-                        ],
-                    ),
-                ],
-            ),
-        ],
+    level, entity = resolve_entity(selected_model, selected_segment)
+    post_subjective_overview = build_overview_section(
+        _POST_SUBJECTIVE, data, level, entity, reporting_cycle, scenario, monitoring_point,
+        summary, thresholds, selected_model, selected_segment, scenario_ranking_store,
     )
-
-    post_review_section = html.Section(
-        id="lgd-post-subjective-review",
-        className="pd-content-section pd-placeholder-section",
-        children=[
-            build_pd_section_heading(
-                "2.3 Post Subjective Review",
-                "Post Subjective Review",
-                "Future landing area for the post subjective review analysis package.",
-                "N/A",
-                {"show_rag": False},
-            ),
-            html.Div(
-                className="section-card pd-placeholder-card",
-                children=[
-                    html.P(
-                        "This placeholder section is ready for the future summary narrative, key flags, and "
-                        "cross-check metrics that will frame the post subjective review analysis."
-                    ),
-                ],
-            ),
-        ],
+    psi_section = build_psi_section(_POST_SUBJECTIVE, summary, thresholds, monitoring_point, theme)
+    scenario_ranking_section = build_scenario_ranking_section(
+        _POST_SUBJECTIVE, data, level, entity, reporting_cycle, monitoring_point, scenario_ranking_store, theme=theme,
+    )
+    sensitivity_section = build_sensitivity_section(
+        _POST_SUBJECTIVE, data, level, entity, reporting_cycle, monitoring_point, theme=theme,
     )
 
     chapter_2_body = html.Div(
         className="pd-chapter-body pd-chapter-body-secondary",
-        children=[mev_range_section, scenario_section, post_review_section],
+        children=[post_subjective_overview, psi_section, scenario_ranking_section, sensitivity_section, mev_range_section],
     )
 
-    return [chapter_1, chapter_1_body, chapter_2, chapter_2_body]
+    executive_summary = build_executive_summary(
+        "The LGD Performance dashboard is the monitoring view for Loss Given Default (LGD) models across the "
+        "wholesale portfolio. It tracks each model's calibration and discriminatory power against agreed RAG "
+        "thresholds, and adds a post subjective review layer (PSI, scenario rank ordering, sensitivity, and MEV "
+        "range) so reviewers can judge whether model behaviour remains defensible across reporting cycles and "
+        "stress scenarios.",
+        theme,
+    )
+
+    return [executive_summary, chapter_1, chapter_1_body, chapter_2, chapter_2_body]
 
 
 def _build_lgd_apply_button() -> html.Div:
@@ -1264,55 +1262,7 @@ def _build_lgd_apply_button() -> html.Div:
 
 
 def build_lgd_apply_prompt() -> html.Section:
-    return html.Section(
-        className="pd-content-section pd-live-section",
-        children=[
-            html.Div(
-                className="pd-performance-note",
-                children=[
-                    html.Strong("Executive summary: "),
-                    "The LGD Performance dashboard is the monitoring view for Loss Given Default (LGD) models "
-                    "across the wholesale portfolio. It tracks each model's calibration conservatism and "
-                    "discriminatory power against agreed RAG thresholds, and adds a post subjective review layer "
-                    "(MEV range and scenario tests) so reviewers can judge whether model behaviour remains "
-                    "defensible across reporting cycles and stress scenarios.",
-                ],
-            ),
-            html.Div(
-                className="saas-model-panel-stack",
-                children=[
-                    html.Div(
-                        className="section-card pd-mev-empty-state saas-getting-started",
-                        children=[
-                            html.Div("Getting started with the LGD Performance dashboard", className="pd-mev-chart-title"),
-                            html.P(
-                                "Set your filters in the top bar, then click “Apply filters” to render the dashboard.",
-                                className="pd-section-subtitle",
-                            ),
-                            html.Div(
-                                className="saas-getting-started-summary",
-                                children=[
-                                    html.Div("Quick start", className="saas-getting-started-summary-title"),
-                                    html.Div(
-                                        className="saas-getting-started-highlights",
-                                        children=[
-                                            html.Span("1. Choose Reporting Cycle, Scenario, and Monitoring Point.", className="saas-getting-started-highlight"),
-                                            html.Span("2. Pick a Segment or a Specific Model.", className="saas-getting-started-highlight"),
-                                            html.Span("3. Click Apply filters to load the dashboard.", className="saas-getting-started-highlight"),
-                                        ],
-                                    ),
-                                    html.Div(
-                                        "The dashboard always reflects the most recent applied filter snapshot, not any unapplied edits still sitting in the top bar.",
-                                        className="saas-getting-started-summary-note",
-                                    ),
-                                ],
-                            ),
-                        ],
-                    ),
-                ],
-            ),
-        ],
-    )
+    return build_getting_started_prompt("LGD", "Loss Given Default")
 
 
 def build_layout() -> list:
@@ -1346,6 +1296,7 @@ def page_layout(data: dict) -> list:
 
     return [
         dcc.Store(id=RANGE_STORE_ID, data={}),
+        dcc.Store(id=SCENARIO_RANKING_STORE_ID, data={}),
         dcc.Store(id=APPLIED_FILTERS_STORE_ID),
         html.Div(
             className="top-bar",
