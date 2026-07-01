@@ -32,20 +32,15 @@ from .....shared.domain.mev_range import (
     get_ead_mev_chart_id,
     get_pd_mev_model_development_dates,
     get_pd_mev_scenario_quarter,
-    get_pd_mev_visible_periods,
 )
 from .....shared.domain.quarter_labels import iso_date_to_pd_quarter
 from .....shared.ui.charts import build_pd_mev_range_figure
 from .....shared.theme import normalize_theme_value
 from ...domain.ead import (
-    EAD_CALIBRATION_METRICS,
     build_ead_calibration_rag_trend,
     build_ead_discrimination_rag_trend,
     build_ead_period_summary,
-    get_ead_default_model,
-    get_ead_model_options,
     get_ead_monitoring_point_options,
-    get_ead_segments_for_model,
     get_ead_thresholds,
 )
 from ...data_access import PD_PERFORMANCE_DATA
@@ -55,6 +50,16 @@ from .cards import (
     build_pd_section_rag_card,
     build_pd_test_card,
     pd_rag_dot,
+)
+from .post_subjective import (
+    PostSubjectiveConfig,
+    build_executive_summary,
+    build_getting_started_prompt,
+    build_overview_section,
+    build_psi_section,
+    build_scenario_ranking_section,
+    build_sensitivity_section,
+    resolve_entity,
 )
 
 CONTENT_ID = "ead-dashboard-content"
@@ -83,6 +88,16 @@ SEGMENT_FILTER_KEY = "ead-segment"
 MONITORING_POINT_FILTER_KEY = "ead-monitoring-point"
 EAD_SUBNAV_ID = "ead-subnav"
 RANGE_STORE_ID = "ead-range-store"
+SCENARIO_RANKING_STORE_ID = "ead-scenario-ranking-store"
+SCENARIO_RANKING_FILTER_ID = "ead-scenario-ranking-filter"
+
+_POST_SUBJECTIVE = PostSubjectiveConfig(
+    prefix="ead",
+    label="EAD",
+    model_type="EAD",
+    sensitivity_key="ead_sensitivity_projections",
+    scenario_filter_id=SCENARIO_RANKING_FILTER_ID,
+)
 CALIBRATION_RAG_RANGE_KEY = "ead_calibration_rag"
 DISCRIMINATION_RAG_RANGE_KEY = "ead_discrimination_rag"
 ME_RANGE_KEY = "ead_me"
@@ -412,8 +427,6 @@ def _build_ead_mev_rag_summary_panel(
 
     model_rows = []
     for summary in summaries:
-        worst = summary["worst_rag"]
-        worst_tone = worst.lower() if worst in ("Green", "Amber", "Red") else "na"
         dev_label = " / ".join(_format_ead_mev_quarter(d) for d in summary["development_dates"]) if summary["development_dates"] else "—"
         severe_label = _format_ead_mev_quarter(summary["severe_quarter"]) if summary["severe_quarter"] else (monitoring_point or "—")
 
@@ -610,7 +623,7 @@ def _build_ead_mev_range_section(
         className="pd-content-section pd-live-section",
         children=[
             build_pd_section_heading(
-                "2.1 MEV Range",
+                "2.5 MEV Range",
                 "MEV Range",
                 "Checks whether the macro-economic variables (MEVs) driving EAD models under stress remain within their trained operating range.",
                 "N/A",
@@ -684,9 +697,11 @@ def _build_ead_subnav() -> html.Div:
                     html.Div(
                         className="monitoring-section-subnav-links",
                         children=[
+                            _subnav_link("ead-post-subjective-overview", "Overview"),
+                            _subnav_link("ead-psi", "PSI"),
+                            _subnav_link("ead-scenario-ranking", "Scenario Ranking"),
+                            _subnav_link("ead-sensitivity-analysis", "Sensitivity Analysis"),
                             _subnav_link("ead-mev-range", "MEV Range"),
-                            _subnav_link("ead-mev-scenario", "Scenario Tests"),
-                            _subnav_link("ead-post-subjective-review", "Post Subjective Review"),
                         ],
                     ),
                 ],
@@ -807,7 +822,10 @@ def render_ead_performance_content(
     range_store: dict | None = None,
     reporting_cycle: str = "CCAR 2026",
     scenario: str = "intsevere",
+    scenario_ranking_store: dict | None = None,
+    theme_value: str | None = None,
 ) -> list:
+    theme = normalize_theme_value(theme_value)
     range_store = range_store or {}
     summary = build_ead_period_summary(data, selected_model, selected_segment, selected_monitoring_point)
     thresholds = get_ead_thresholds(data)
@@ -958,7 +976,7 @@ def render_ead_performance_content(
                             ),
                             dcc.Graph(
                                 id="ead-me-trend-chart",
-                                figure=build_ead_metric_trend_figure(metric_rows, data["monitoring_thresholds"], "ME", monitoring_point),
+                                figure=build_ead_metric_trend_figure(metric_rows, data["monitoring_thresholds"], "ME", monitoring_point, theme),
                                 config=_GRAPH_CONFIG,
                                 className="pd-default-rate-trend-chart pd-default-rate-trend-chart-compact pd-default-rate-trend-chart-axis-room-compact",
                             ),
@@ -977,7 +995,7 @@ def render_ead_performance_content(
                             ),
                             dcc.Graph(
                                 id="ead-rmse-trend-chart",
-                                figure=build_ead_metric_trend_figure(metric_rows, data["monitoring_thresholds"], "RMSE", monitoring_point),
+                                figure=build_ead_metric_trend_figure(metric_rows, data["monitoring_thresholds"], "RMSE", monitoring_point, theme),
                                 config=_GRAPH_CONFIG,
                                 className="pd-default-rate-trend-chart pd-default-rate-trend-chart-compact pd-default-rate-trend-chart-axis-room-compact",
                             ),
@@ -1039,7 +1057,7 @@ def render_ead_performance_content(
                             ),
                             dcc.Graph(
                                 id="ead-kendall-trend-chart",
-                                figure=build_ead_metric_trend_figure(metric_rows, data["monitoring_thresholds"], "Kendall's Tau", monitoring_point),
+                                figure=build_ead_metric_trend_figure(metric_rows, data["monitoring_thresholds"], "Kendall's Tau", monitoring_point, theme),
                                 config=_GRAPH_CONFIG,
                                 className="pd-default-rate-trend-chart pd-default-rate-trend-chart-compact pd-default-rate-trend-chart-axis-room-compact",
                             ),
@@ -1064,64 +1082,40 @@ def render_ead_performance_content(
 
     mev_range_section = _build_ead_mev_range_section(
         data, selected_model, selected_segment, monitoring_point,
-        range_store, reporting_cycle=reporting_cycle, scenario=scenario,
+        range_store, theme_value=theme_value, reporting_cycle=reporting_cycle, scenario=scenario,
     )
 
-    scenario_section = html.Section(
-        id="ead-mev-scenario",
-        className="pd-content-section pd-live-section",
-        children=[
-            build_pd_section_heading(
-                "2.2 Scenario Tests",
-                "Scenario Tests",
-                "Dashboard2 review sections are represented here using dashboard1's current source data availability.",
-                summary["performance_rag"],
-                {"show_rag": False},
-            ),
-            html.Div(
-                className="pd-test-grid pd-discrimination-test-grid",
-                children=[
-                    html.Article(
-                        className=f"pd-test-card pd-test-{pd_tone_class(summary['performance_rag'])}",
-                        children=[
-                            html.Div(className="pd-test-card-heading", children=[html.Div([html.Div([html.H4("Scenario Tests")], className="pd-card-title-row")])]),
-                            html.Div("Reference", className="pd-test-value"),
-                            html.Div("No EAD scenario test feed is configured in dashboard1 source data.", className="pd-test-meta"),
-                        ],
-                    ),
-                ],
-            ),
-        ],
+    level, entity = resolve_entity(selected_model, selected_segment)
+    post_subjective_overview = build_overview_section(
+        _POST_SUBJECTIVE, data, level, entity, reporting_cycle, scenario, monitoring_point,
+        summary, thresholds, selected_model, selected_segment, scenario_ranking_store,
+    )
+    psi_section = build_psi_section(_POST_SUBJECTIVE, summary, thresholds, monitoring_point, theme)
+    scenario_ranking_section = build_scenario_ranking_section(
+        _POST_SUBJECTIVE, data, level, entity, reporting_cycle, monitoring_point, scenario_ranking_store, theme=theme,
+    )
+    sensitivity_section = build_sensitivity_section(
+        _POST_SUBJECTIVE, data, level, entity, reporting_cycle, monitoring_point, theme=theme,
     )
 
-    post_review_section = html.Section(
-        id="ead-post-subjective-review",
-        className="pd-content-section pd-placeholder-section",
-        children=[
-            build_pd_section_heading(
-                "2.3 Post Subjective Review",
-                "Post Subjective Review",
-                "Future landing area for the post subjective review analysis package.",
-                "N/A",
-                {"show_rag": False},
-            ),
-            html.Div(
-                className="section-card pd-placeholder-card",
-                children=[
-                    html.P(
-                        "This placeholder section is ready for the future summary narrative, key flags, and "
-                        "cross-check metrics that will frame the post subjective review analysis."
-                    ),
-                ],
-            ),
-        ],
+    executive_summary = build_executive_summary(
+        "The EAD Performance dashboard is the monitoring view for Exposure at Default (EAD) models across the "
+        "wholesale portfolio. It tracks each model's calibration and discriminatory power against agreed RAG "
+        "thresholds, and adds a post subjective review layer (PSI, scenario rank ordering, sensitivity, and MEV "
+        "range) so reviewers can judge whether model behaviour remains defensible across reporting cycles and "
+        "stress scenarios.",
+        theme,
     )
 
     return [
+        executive_summary,
         chapter_1,
         html.Div(className="pd-chapter-body pd-chapter-body-primary", children=[overview_section, calibration_section, discrimination_section]),
         chapter_2,
-        html.Div(className="pd-chapter-body pd-chapter-body-secondary", children=[mev_range_section, scenario_section, post_review_section]),
+        html.Div(
+            className="pd-chapter-body pd-chapter-body-secondary",
+            children=[post_subjective_overview, psi_section, scenario_ranking_section, sensitivity_section, mev_range_section],
+        ),
     ]
 
 
@@ -1152,55 +1146,7 @@ def _build_ead_apply_button() -> html.Div:
 
 
 def build_ead_apply_prompt() -> html.Section:
-    return html.Section(
-        className="pd-content-section pd-live-section",
-        children=[
-            html.Div(
-                className="pd-performance-note",
-                children=[
-                    html.Strong("Executive summary: "),
-                    "The EAD Performance dashboard is the monitoring view for Exposure at Default (EAD) models "
-                    "across the wholesale portfolio. It tracks each model's calibration conservatism and "
-                    "discriminatory power against agreed RAG thresholds, and adds a post subjective review layer "
-                    "(MEV range and scenario tests) so reviewers can judge whether model behaviour remains "
-                    "defensible across reporting cycles and stress scenarios.",
-                ],
-            ),
-            html.Div(
-                className="saas-model-panel-stack",
-                children=[
-                    html.Div(
-                        className="section-card pd-mev-empty-state saas-getting-started",
-                        children=[
-                            html.Div("Getting started with the EAD Performance dashboard", className="pd-mev-chart-title"),
-                            html.P(
-                                "Set your filters in the top bar, then click “Apply filters” to render the dashboard.",
-                                className="pd-section-subtitle",
-                            ),
-                            html.Div(
-                                className="saas-getting-started-summary",
-                                children=[
-                                    html.Div("Quick start", className="saas-getting-started-summary-title"),
-                                    html.Div(
-                                        className="saas-getting-started-highlights",
-                                        children=[
-                                            html.Span("1. Choose Reporting Cycle, Scenario, and Monitoring Point.", className="saas-getting-started-highlight"),
-                                            html.Span("2. Pick a Segment or a Specific Model.", className="saas-getting-started-highlight"),
-                                            html.Span("3. Click Apply filters to load the dashboard.", className="saas-getting-started-highlight"),
-                                        ],
-                                    ),
-                                    html.Div(
-                                        "The dashboard always reflects the most recent applied filter snapshot, not any unapplied edits still sitting in the top bar.",
-                                        className="saas-getting-started-summary-note",
-                                    ),
-                                ],
-                            ),
-                        ],
-                    ),
-                ],
-            ),
-        ],
-    )
+    return build_getting_started_prompt("EAD", "Exposure at Default")
 
 
 # ---------------------------------------------------------------------------
@@ -1215,7 +1161,6 @@ def page_layout() -> list:
     data = PD_PERFORMANCE_DATA
     cfg = load_filter_config()
     model_options = model_names("ead")
-    default_model = "all"
     segment_options = ["All", *segment_values()]
     reporting_cycle_options = [{"label": c["label"], "value": c["value"]} for c in cfg["reporting_cycles"]]
     scenario_options = [{"label": s["label"], "value": s["value"]} for s in cfg["scenarios"]]
@@ -1234,6 +1179,7 @@ def page_layout() -> list:
 
     return [
         dcc.Store(id=RANGE_STORE_ID, data={}),
+        dcc.Store(id=SCENARIO_RANKING_STORE_ID, data={}),
         dcc.Store(id=APPLIED_FILTERS_STORE_ID),
         html.Div(
             className="top-bar",

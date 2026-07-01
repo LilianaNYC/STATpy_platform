@@ -133,6 +133,18 @@ SAAS_THEME_PALETTES = {
 # ---------------------------------------------------------------------------
 
 
+def _proj(row: dict):
+    """Projected sensitivity value, tab-agnostic.
+
+    The loader exposes every ``*_Sensitivity_Projections`` row under the generic
+    ``projected_value`` key; older callers/fixtures use the PD-specific
+    ``projected_pd``. Read either so the scenario/sensitivity figure builders
+    serve PD, LGD and EAD unchanged.
+    """
+    value = row.get("projected_value")
+    return value if value is not None else row.get("projected_pd")
+
+
 def _normalize_saas_theme(theme: str | None) -> str:
     return theme if theme in SAAS_THEME_PALETTES else "light"
 
@@ -811,7 +823,7 @@ def build_ead_discrimination_rag_trend_figure(rag_trend, monitoring_quarter, ran
     return fig
 
 
-def build_lgd_metric_trend_figure(metric_rows, monitoring_thresholds, metric: str, monitoring_point: str) -> go.Figure:
+def build_lgd_metric_trend_figure(metric_rows, monitoring_thresholds, metric: str, monitoring_point: str, theme=None) -> go.Figure:
     if not metric_rows:
         return _empty_figure("No LGD monitoring periods are available for the selected filters.", height=308)
 
@@ -835,7 +847,7 @@ def build_lgd_metric_trend_figure(metric_rows, monitoring_thresholds, metric: st
         mode="lines+markers",
         name=display_name,
         connectgaps=False,
-        line=dict(color="rgba(71,85,105,0.75)", width=2.5),
+        line=dict(color=_monitoring_trend_line_color(theme), width=2.5),
         marker=dict(size=8, color=[pd_rag_color(rag) for rag in rags], line=dict(color="#fff", width=1)),
         customdata=rags,
         hovertemplate=f"%{{x}}<br>{display_name}: {hover_value_format}<br>RAG: %{{customdata}}<extra></extra>",
@@ -853,7 +865,7 @@ def build_lgd_metric_trend_figure(metric_rows, monitoring_thresholds, metric: st
     return fig
 
 
-def build_ead_metric_trend_figure(metric_rows, monitoring_thresholds, metric: str, monitoring_point: str) -> go.Figure:
+def build_ead_metric_trend_figure(metric_rows, monitoring_thresholds, metric: str, monitoring_point: str, theme=None) -> go.Figure:
     if not metric_rows:
         return _empty_figure("No EAD monitoring periods are available for the selected filters.", height=308)
 
@@ -877,7 +889,7 @@ def build_ead_metric_trend_figure(metric_rows, monitoring_thresholds, metric: st
         mode="lines+markers",
         name=display_name,
         connectgaps=False,
-        line=dict(color="rgba(71,85,105,0.75)", width=2.5),
+        line=dict(color=_monitoring_trend_line_color(theme), width=2.5),
         marker=dict(size=8, color=[pd_rag_color(rag) for rag in rags], line=dict(color="#fff", width=1)),
         customdata=rags,
         hovertemplate=f"%{{x}}<br>{display_name}: {hover_value_format}<br>RAG: %{{customdata}}<extra></extra>",
@@ -939,7 +951,7 @@ def build_loss_rag_trend_figure(rag_trend, monitoring_quarter, range_value=None)
     return fig
 
 
-def build_loss_metric_trend_figure(metric_rows, monitoring_thresholds, monitoring_point: str) -> go.Figure:
+def build_loss_metric_trend_figure(metric_rows, monitoring_thresholds, monitoring_point: str, theme=None) -> go.Figure:
     if not metric_rows:
         return _empty_figure("No Loss monitoring periods are available for the selected filters.", height=308)
 
@@ -961,7 +973,7 @@ def build_loss_metric_trend_figure(metric_rows, monitoring_thresholds, monitorin
         mode="lines+markers",
         name=metric,
         connectgaps=False,
-        line=dict(color="rgba(71,85,105,0.75)", width=2.5),
+        line=dict(color=_monitoring_trend_line_color(theme), width=2.5),
         marker=dict(size=8, color=[pd_rag_color(rag) for rag in rags], line=dict(color="#fff", width=1)),
         customdata=rags,
         hovertemplate="%{x}<br>Mean Error %: %{y:.0%}<br>RAG: %{customdata}<extra></extra>",
@@ -1258,7 +1270,7 @@ def build_pd_sensitivity_combined_figure(rows, threshold: float | None, range_va
     }
     scoped_rows = [
         row for row in (rows or [])
-        if row.get("scenario_variant") in scenario_order and is_finite_number(row.get("projected_pd"))
+        if row.get("scenario_variant") in scenario_order and is_finite_number(_proj(row))
     ]
     if not scoped_rows:
         return _empty_figure("No sensitivity projection data is available for the selected filters.", height=360, theme=theme)
@@ -1288,7 +1300,7 @@ def build_pd_sensitivity_combined_figure(rows, threshold: float | None, range_va
         style = scenario_styles[scenario]
         fig.add_trace(go.Scatter(
             x=[r.get("quarter") for r in scenario_rows],
-            y=[r.get("projected_pd") for r in scenario_rows],
+            y=[_proj(r) for r in scenario_rows],
             mode="lines+markers", name=scenario,
             line=dict(color=style["color"], width=2.7, dash=style["dash"]),
             marker=dict(size=7, line=dict(color="#fff", width=1)),
@@ -1299,22 +1311,22 @@ def build_pd_sensitivity_combined_figure(rows, threshold: float | None, range_va
     # --- Right: relative shock impact bars (RAG-coloured, no threshold line) ---
     baseline_by_offset = {
         r.get("quarter"): r for r in scoped_rows
-        if r.get("scenario_variant") == "baseline" and is_finite_number(r.get("projected_pd"))
+        if r.get("scenario_variant") == "baseline" and is_finite_number(_proj(r))
     }
     points = []
     for r in scoped_rows:
-        if r.get("scenario_variant") != "baseline_2std_shock" or not is_finite_number(r.get("projected_pd")):
+        if r.get("scenario_variant") != "baseline_2std_shock" or not is_finite_number(_proj(r)):
             continue
         base = baseline_by_offset.get(r.get("quarter"))
-        base_val = base.get("projected_pd") if base else None
+        base_val = _proj(base) if base else None
         if not is_finite_number(base_val) or float(base_val) <= 0:
             continue
-        impact = abs(float(r["projected_pd"]) - float(base_val)) / float(base_val)
+        impact = abs(float(_proj(r)) - float(base_val)) / float(base_val)
         rag = "Green" if threshold is not None and impact <= threshold else ("Red" if threshold is not None else "N/A")
         points.append({
             "q": int(r["quarter"]),
             "period": _format_saas_quarter_label(_coerce_saas_date(r.get("projection_quarter"))),
-            "baseline": float(base_val), "shocked": float(r["projected_pd"]), "impact": impact, "rag": rag,
+            "baseline": float(base_val), "shocked": float(_proj(r)), "impact": impact, "rag": rag,
         })
     points.sort(key=lambda p: p["q"])
     if points:
@@ -1334,9 +1346,11 @@ def build_pd_sensitivity_combined_figure(rows, threshold: float | None, range_va
                    linecolor=palette["axis_line"], showline=True, ticks="outside", automargin=True,
                    title=dict(text="Quarter", font=dict(size=12, color=palette["axis_title"])))
     fig.update_xaxes(**axis_kw, row=1, col=1)
-    fig.update_xaxes(**axis_kw, row=1, col=2)
+    # Draw the impact panel's grid above the bars (so it isn't overdrawn) but keep
+    # the same palette grid colour as the projected-PD panel / the PD tab.
+    fig.update_xaxes(**axis_kw, layer="above traces", row=1, col=2)
     fig.update_yaxes(title_text="Projected PD", tickformat=".1%", gridcolor=palette["grid_color"], zeroline=False, rangemode="tozero", row=1, col=1)
-    fig.update_yaxes(title_text="Relative Shock Impact", tickformat=".0%", gridcolor=palette["grid_color"], zeroline=False, rangemode="tozero", row=1, col=2)
+    fig.update_yaxes(title_text="Relative Shock Impact", tickformat=".0%", gridcolor=palette["grid_color"], zeroline=False, rangemode="tozero", layer="above traces", row=1, col=2)
 
     fig.update_layout(
         height=360,
@@ -1356,7 +1370,7 @@ def build_pd_scenario_projection_figure(rows, *, theme: str = "light") -> go.Fig
     palette = _saas_theme_palette(normalized_theme)
     scenario_color_map = SAAS_DARK_SCENARIO_COLOR_MAP if normalized_theme == "dark" else SAAS_SCENARIO_COLOR_MAP
     fallback_colors = SAAS_DARK_SCENARIO_FALLBACK_COLORS if normalized_theme == "dark" else SAAS_SCENARIO_FALLBACK_COLORS
-    scoped_rows = [row for row in (rows or []) if is_finite_number(row.get("projected_pd")) and row.get("scenario_variant")]
+    scoped_rows = [row for row in (rows or []) if is_finite_number(_proj(row)) and row.get("scenario_variant")]
     if not scoped_rows:
         return _empty_figure("No scenario projection data is available for the selected filters.", height=360, theme=theme)
 
@@ -1369,7 +1383,7 @@ def build_pd_scenario_projection_figure(rows, *, theme: str = "light") -> go.Fig
         {str(row.get("scenario_variant")) for row in scoped_rows},
         key=lambda scenario: (SAAS_SCENARIO_ORDER.get(str(scenario).lower(), 99), str(scenario)),
     )
-    y_values = [float(row["projected_pd"]) for row in scoped_rows]
+    y_values = [float(_proj(row)) for row in scoped_rows]
     y_max = max(y_values) * 1.16 if y_values else 0.05
     assigned_colors: dict[str, str] = {}
 
@@ -1380,7 +1394,7 @@ def build_pd_scenario_projection_figure(rows, *, theme: str = "light") -> go.Fig
             key=lambda row: row.get("quarter", 0),
         )
         x_values = [row.get("quarter") for row in scenario_rows]
-        y_values = [row.get("projected_pd") for row in scenario_rows]
+        y_values = [_proj(row) for row in scenario_rows]
         customdata = [
             [f"Q{row.get('quarter')}", _format_saas_quarter_label(_coerce_saas_date(row.get("projection_quarter")))]
             for row in scenario_rows
@@ -1439,7 +1453,7 @@ def build_pd_scenario_projection_figure(rows, *, theme: str = "light") -> go.Fig
 def build_pd_scenario_rank_figure(rows, *, theme: str = "light") -> go.Figure:
     """Scenario rank matrix where rank 1 is the highest projected PD."""
     palette = _saas_theme_palette(_normalize_saas_theme(theme))
-    scoped_rows = [row for row in (rows or []) if is_finite_number(row.get("projected_pd")) and row.get("scenario_variant")]
+    scoped_rows = [row for row in (rows or []) if is_finite_number(_proj(row)) and row.get("scenario_variant")]
     if not scoped_rows:
         return _empty_figure("No scenario ranking data is available for the selected filters.", height=330, theme=theme)
 
@@ -1466,10 +1480,10 @@ def build_pd_scenario_rank_figure(rows, *, theme: str = "light") -> go.Figure:
         text_row = []
         for quarter in quarters:
             quarter_rows = rows_by_quarter.get(quarter, [])
-            ranked = sorted(quarter_rows, key=lambda item: float(item.get("projected_pd") or 0), reverse=True)
+            ranked = sorted(quarter_rows, key=lambda item: float(_proj(item) or 0), reverse=True)
             n = len(ranked)
             rank_by_scenario = {item.get("scenario_variant"): n - rank for rank, item in enumerate(ranked)}
-            value_by_scenario = {item.get("scenario_variant"): item.get("projected_pd") for item in ranked}
+            value_by_scenario = {item.get("scenario_variant"): _proj(item) for item in ranked}
             rank = rank_by_scenario.get(scenario)
             projected_pd = value_by_scenario.get(scenario)
             z_row.append(rank)

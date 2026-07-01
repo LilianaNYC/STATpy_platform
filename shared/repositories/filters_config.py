@@ -31,7 +31,6 @@ from functools import lru_cache
 
 import pandas as pd
 
-from ...shared.domain import constants as config
 from ...config.settings import settings
 
 FILTERS_SHEET_NAME = "Filters"
