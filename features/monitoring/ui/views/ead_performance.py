@@ -32,20 +32,15 @@ from .....shared.domain.mev_range import (
     get_ead_mev_chart_id,
     get_pd_mev_model_development_dates,
     get_pd_mev_scenario_quarter,
-    get_pd_mev_visible_periods,
 )
 from .....shared.domain.quarter_labels import iso_date_to_pd_quarter
 from .....shared.ui.charts import build_pd_mev_range_figure
 from .....shared.theme import normalize_theme_value
 from ...domain.ead import (
-    EAD_CALIBRATION_METRICS,
     build_ead_calibration_rag_trend,
     build_ead_discrimination_rag_trend,
     build_ead_period_summary,
-    get_ead_default_model,
-    get_ead_model_options,
     get_ead_monitoring_point_options,
-    get_ead_segments_for_model,
     get_ead_thresholds,
 )
 from ...data_access import PD_PERFORMANCE_DATA
@@ -102,7 +97,6 @@ _POST_SUBJECTIVE = PostSubjectiveConfig(
     model_type="EAD",
     sensitivity_key="ead_sensitivity_projections",
     scenario_filter_id=SCENARIO_RANKING_FILTER_ID,
-    value_label="EAD",
 )
 CALIBRATION_RAG_RANGE_KEY = "ead_calibration_rag"
 DISCRIMINATION_RAG_RANGE_KEY = "ead_discrimination_rag"
@@ -433,8 +427,6 @@ def _build_ead_mev_rag_summary_panel(
 
     model_rows = []
     for summary in summaries:
-        worst = summary["worst_rag"]
-        worst_tone = worst.lower() if worst in ("Green", "Amber", "Red") else "na"
         dev_label = " / ".join(_format_ead_mev_quarter(d) for d in summary["development_dates"]) if summary["development_dates"] else "—"
         severe_label = _format_ead_mev_quarter(summary["severe_quarter"]) if summary["severe_quarter"] else (monitoring_point or "—")
 
@@ -1169,7 +1161,6 @@ def page_layout() -> list:
     data = PD_PERFORMANCE_DATA
     cfg = load_filter_config()
     model_options = model_names("ead")
-    default_model = "all"
     segment_options = ["All", *segment_values()]
     reporting_cycle_options = [{"label": c["label"], "value": c["value"]} for c in cfg["reporting_cycles"]]
     scenario_options = [{"label": s["label"], "value": s["value"]} for s in cfg["scenarios"]]

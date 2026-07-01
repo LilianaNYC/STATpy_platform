@@ -8,7 +8,6 @@ from ..ui import common as filter_shell
 from ..ui.views import lgd_performance as layout
 from ....shared.ui import controls
 from ..domain.lgd import (
-    get_lgd_monitoring_point_options,
     get_lgd_segments_for_model,
     resolve_lgd_segment,
 )

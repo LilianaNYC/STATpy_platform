@@ -56,7 +56,6 @@ class PostSubjectiveConfig:
     model_type: str        # Scenario_Test_Thresholds model_type, e.g. "EAD" / "LGD"
     sensitivity_key: str   # data payload key, e.g. "ead_sensitivity_projections"
     scenario_filter_id: str
-    value_label: str       # what the projected value represents, e.g. "EAD"
 
 
 # ---------------------------------------------------------------------------

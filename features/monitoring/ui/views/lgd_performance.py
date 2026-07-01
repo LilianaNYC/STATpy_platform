@@ -27,7 +27,6 @@ from .....shared.domain.mev_range import (
     get_lgd_mev_chart_id,
     get_pd_mev_model_development_dates,
     get_pd_mev_scenario_quarter,
-    get_pd_mev_visible_periods,
 )
 from .....shared.domain.quarter_labels import iso_date_to_pd_quarter
 from .....shared.ui.charts import build_pd_mev_range_figure
@@ -40,10 +39,7 @@ from ...domain.lgd import (
     build_lgd_discrimination_rag_trend,
     build_lgd_heatmap_rows,
     build_lgd_period_summary,
-    get_lgd_default_model,
-    get_lgd_model_options,
     get_lgd_monitoring_point_options,
-    get_lgd_segments_for_model,
     get_lgd_thresholds,
 )
 from .cards import (
@@ -99,7 +95,6 @@ _POST_SUBJECTIVE = PostSubjectiveConfig(
     model_type="LGD",
     sensitivity_key="lgd_sensitivity_projections",
     scenario_filter_id=SCENARIO_RANKING_FILTER_ID,
-    value_label="LGD",
 )
 CALIBRATION_RAG_RANGE_KEY = "lgd_calibration_rag"
 DISCRIMINATION_RAG_RANGE_KEY = "lgd_discrimination_rag"
@@ -332,7 +327,6 @@ def _build_lgd_overview_flow(summary: dict) -> html.Div:
         build_pd_overview_flow_metric,
         build_pd_overview_flow_stage,
         build_pd_overview_flow_test_stack,
-        pd_rag_dot as _kpi_rag_dot,
     )
 
     me_rag = summary["metric_rags"].get("ME", "N/A")
@@ -686,8 +680,6 @@ def _build_lgd_mev_rag_summary_panel(
 
     model_rows = []
     for summary in summaries:
-        worst = summary["worst_rag"]
-        worst_tone = worst.lower() if worst in ("Green", "Amber", "Red") else "na"
         dev_label = " / ".join(_format_lgd_mev_quarter(d) for d in summary["development_dates"]) if summary["development_dates"] else "—"
         severe_label = _format_lgd_mev_quarter(summary["severe_quarter"]) if summary["severe_quarter"] else (monitoring_point or "—")
 
@@ -1277,7 +1269,6 @@ def page_layout(data: dict) -> list:
     from ...domain.lgd import set_lgd_metrics
     cfg = load_filter_config()
     model_options = model_names("lgd")
-    default_model = "all"
     segment_options = ["All", *segment_values()]
     reporting_cycle_options = [{"label": c["label"], "value": c["value"]} for c in cfg["reporting_cycles"]]
     scenario_options = [{"label": s["label"], "value": s["value"]} for s in cfg["scenarios"]]

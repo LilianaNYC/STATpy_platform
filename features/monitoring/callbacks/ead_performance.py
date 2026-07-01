@@ -8,7 +8,6 @@ from ..ui import common as filter_shell
 from ..ui.views import ead_performance as layout
 from ....shared.ui import controls
 from ..domain.ead import (
-    get_ead_monitoring_point_options,
     get_ead_segments_for_model,
     resolve_ead_segment,
 )
