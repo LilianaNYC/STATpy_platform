@@ -374,6 +374,14 @@ _LOSS_METRIC_COLUMN_MAP = {
     "defaults": "Defaults",
     "balance": "Balance",
     "observations": "Observations",
+    "nco_me": "NCO ME",
+    "nco_me_pct": "NCO ME %",
+    "nco_predicted": "Predicted NCO",
+    "nco_actual": "Actual NCO",
+    "acl_me": "ACL ME",
+    "acl_me_pct": "ACL ME %",
+    "acl_predicted": "Predicted ACL",
+    "acl_actual": "Actual ACL",
 }
 
 
@@ -434,13 +442,24 @@ def load_loss_performance_metrics() -> dict[str, Any]:
     return _build_metric_rows_store(LOSS_AGGREGATED_SHEET_NAME, _LOSS_METRIC_COLUMN_MAP)
 
 
-def load_sensitivity_projections(sheet_name: str, value_col: str) -> list[dict[str, Any]]:
+def load_sensitivity_projections(
+    sheet_name: str, value_col: str, model_relabel: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
     """Load projected sensitivity rows from a ``*_Sensitivity_Projections`` sheet.
 
     ``value_col`` is the tab's projected-value column (``projected_pd`` /
     ``projected_lgd`` / ``projected_ead``). It is exposed verbatim under that key
     and also under the generic ``projected_value`` key, so the shared chart
     builders and Post-Subjective section helpers stay tab-agnostic.
+
+    ``model_relabel`` re-tags ``level == "model"`` rows whose ``model_or_segment``
+    is a key in the mapping to that key's value, then drops duplicate
+    ``(reporting_cycle, quarter, scenario_variant)`` rows the relabel produces.
+    The LGD/EAD workbook sheets carry the PD model names ("PD Model A" /
+    "PD Model B") and "All Models" on their model-level rows -- copy-paste
+    leftovers from a template shared with PD_Sensitivity_Projections -- even
+    though LGD/EAD each have exactly one model; all three labels carry
+    identical values, confirming they're the same entity under the wrong name.
     """
     try:
         df = pd.read_excel(settings.portfolio_file, sheet_name=sheet_name)
@@ -494,6 +513,19 @@ def load_sensitivity_projections(sheet_name: str, value_col: str) -> list[dict[s
             "mm_p0": _opt_num(row, "MM_P0"),
             "mm_pm": _opt_num(row, "MM_Pm"),
         })
+
+    if model_relabel:
+        seen: set[tuple] = set()
+        relabeled: list[dict[str, Any]] = []
+        for record in records:
+            if record["level"] == "model" and record["model_or_segment"] in model_relabel:
+                record = {**record, "model_or_segment": model_relabel[record["model_or_segment"]]}
+            dedupe_key = (record["reporting_cycle"], record["level"], record["model_or_segment"], record["quarter"], record["scenario_variant"])
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            relabeled.append(record)
+        records = relabeled
 
     return records
 
@@ -665,8 +697,14 @@ def load_pd_performance_data_from_aggregated() -> dict[str, Any]:
         "mev_mnemonic_map": mev_mnemonic_map,
         "mev_description_map": mev_description_map,
         "sensitivity_projections": load_pd_sensitivity_projections(),
-        "lgd_sensitivity_projections": load_sensitivity_projections(LGD_SENSITIVITY_SHEET_NAME, "projected_lgd"),
-        "ead_sensitivity_projections": load_sensitivity_projections(EAD_SENSITIVITY_SHEET_NAME, "projected_ead"),
+        "lgd_sensitivity_projections": load_sensitivity_projections(
+            LGD_SENSITIVITY_SHEET_NAME, "projected_lgd",
+            model_relabel={"PD Model A": "LGD Model A", "PD Model B": "LGD Model A", "All Models": "LGD Model A"},
+        ),
+        "ead_sensitivity_projections": load_sensitivity_projections(
+            EAD_SENSITIVITY_SHEET_NAME, "projected_ead",
+            model_relabel={"PD Model A": "EAD Model A", "PD Model B": "EAD Model A", "All Models": "EAD Model A"},
+        ),
         "rank_ordering_facilities": {},
         "lgd_observations_by_cycle": load_lgd_performance_metrics(),
         "ead_observations_by_cycle": load_ead_performance_metrics(),

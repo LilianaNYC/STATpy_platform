@@ -8,7 +8,7 @@ from typing import Any
 import polars as pl
 
 from ....shared.domain import constants as config
-from ....shared.domain.calculations import calculate_pd_metric_rag, pd_rag_score
+from ....shared.domain.calculations import calculate_pd_metric_rag
 
 LOSS_METRICS = ["ME %"]
 LOSS_MODEL_LABEL = "Loss model"
@@ -253,23 +253,3 @@ def build_loss_period_summary(
         "performance_rag": performance_rag,
         "previous_performance_rag": previous_performance_rag,
     }
-
-
-def build_loss_rag_trend(data: dict, metric_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for row in metric_rows:
-        rag = loss_metric_rag(data, "ME %", row.get("ME %"))
-        score = pd_rag_score(rag)
-        rows.append(
-            {
-                "quarter": row["Monitoring Period"],
-                "rag": rag,
-                "rag_score": score,
-                "weighted_average": score,
-                "rounded_score": score,
-                "me": row.get("ME"),
-                "me_pct": row.get("ME %"),
-                "me_pct_rag": rag,
-            }
-        )
-    return rows

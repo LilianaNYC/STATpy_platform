@@ -974,12 +974,12 @@ def build_pd_overview_performance_rag_tooltip(calibration_rag, discrimination_ra
         return (
             "Performance PD RAG combines three inputs with weights of 25%, 25%, and 50%. Higher scores are better: "
             f"Green = 3, Amber = 2, Red = 1. Current inputs: {component_summary}. One or more inputs are unavailable, "
-            f"so the final Performance PD RAG is {details['rag']}."
+            f"so the displayed Performance PD RAG is {details['rag']}."
         )
     return (
         "Performance PD RAG combines three inputs with weights of 25%, 25%, and 50%. Higher scores are better: "
-        f"Green = 3, Amber = 2, Red = 1. Current inputs: {component_summary}. Weighted average score = {weighted_label}. "
-        f"Rounded score = {rounded_label}, so the final Performance PD RAG is {details['rag']}."
+        f"Green = 3, Amber = 2, Red = 1. Current inputs: {component_summary}. Weighted average score: {weighted_label}. "
+        f"Rounded score: {rounded_label}. Displayed Performance PD RAG: {details['rag']}."
     )
 
 
@@ -1118,13 +1118,13 @@ def build_pd_calibration_tooltip(details):
         return (
             "Calibration Conservatism RAG (ECL PIT) combines the 1-year and 2-year RAG Assignment results "
             f"using EAD share weights. Higher scores are better: Green = 3, Amber = 2, Red = 1. Current inputs: {pieces}. "
-            f"One or more inputs are unavailable, so the final Calibration Conservatism RAG is {details['rag']}."
+            f"One or more inputs are unavailable, so the displayed Calibration Conservatism RAG is {details['rag']}."
         )
     return (
         "Calibration Conservatism RAG (ECL PIT) combines the 1-year and 2-year RAG Assignment results "
         f"using EAD share weights. Higher scores are better: Green = 3, Amber = 2, Red = 1. Current inputs: {pieces}. "
-        f"Weighted average score = {weighted_label}. Rounded score = {rounded_label}, so the final Calibration "
-        f"Conservatism RAG is {details['rag']}."
+        f"Weighted average score: {weighted_label}. Rounded score: {rounded_label}. Displayed Calibration "
+        f"Conservatism RAG: {details['rag']}."
     )
 
 
@@ -1155,7 +1155,7 @@ def build_pd_calibration_assignment_tooltip(label, confidence_interval, signed_n
             f"({confidence_rag or 'N/A'}) and Notching Test ({notching_rag or 'N/A'}): {displayed_rag}."
         )
     else:
-        fallback_text = f" Final displayed RAG = {displayed_rag or 'N/A'}."
+        fallback_text = f" Displayed RAG: {displayed_rag or 'N/A'}."
 
     if not confidence_bucket or not notching_bucket:
         return (
@@ -1169,10 +1169,10 @@ def build_pd_calibration_assignment_tooltip(label, confidence_interval, signed_n
         f"RAG Assignment {label} is determined from a lookup table using the Confidence Interval Test bucket "
         "and the signed notch difference bucket (predicted notch minus actual notch). The signed notch "
         "difference is not the same as the absolute Notching Test shown in the KPI card. Current inputs: "
-        f"Confidence Interval = {format_pd_metric(confidence_interval, 'percent')} "
+        f"Confidence Interval: {format_pd_metric(confidence_interval, 'percent')} "
         f"({format_pd_confidence_bucket_label(confidence_bucket)}); signed notch difference = "
         f"{format_pd_signed_notching_label(signed_notching_difference)} ({notching_bucket}). "
-        f"Direct lookup result = {lookup_label}.{fallback_text}"
+        f"Direct lookup result: {lookup_label}.{fallback_text}"
     )
 
 

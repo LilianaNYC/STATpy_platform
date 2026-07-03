@@ -23,6 +23,7 @@ from __future__ import annotations
 from dash import dcc, html
 
 from ..domain.calculations import get_pd_range_preset, get_pd_range_selection
+from ..domain.quarter_labels import format_pd_compact_quarter_label
 from ..repositories.filters_config import monitoring_points_by_cycle
 
 # ---------------------------------------------------------------------------
@@ -78,13 +79,14 @@ SUBNAV_ID = "pd-subnav"
 # sub-nav link for whichever section is currently at the top of the viewport
 # (port of MONITORING_PD_SECTION_IDS / updateMonitoringPdSubnavActiveState).
 RAG_ASSIGNMENT_LINKS = [
-    ("pd-analysis-scope", "Overview"),
+    ("pd-dashboard-overview", "Main Overview"),
+    ("pd-analysis-scope", "RAG Overview"),
     ("pd-calibration-rag", "ECL PIT PD - Calibration Conservatism"),
     ("pd-discrimination-rag", "ECL PIT PD - Discriminatory Power"),
     ("pd-balance-sheet-calibration", "Balance Sheet PD - Calibration Conservatism"),
 ]
 POST_SUBJECTIVE_REVIEW_LINKS = [
-    ("pd-post-subjective-overview", "Overview"),
+    ("pd-post-subjective-overview", "Post Review Overview"),
     ("pd-transition-matrix-distance", "Transition Matrix"),
     ("pd-population-stability-index", "PSI"),
     ("pd-scenario-ranking", "Scenario Ranking"),
@@ -329,7 +331,7 @@ def _subnav_link(section_id: str, label: str, active: bool) -> html.Button:
 
 
 def build_section_subnav() -> html.Div:
-    """RAG Assignment / Post Subjective Review Analysis jump links.
+    """RAG Assignment / Post Subjective jump links.
 
     Port of the `#monitoring-pd-subnav` markup. Clicking a link scrolls to
     the corresponding section; the active link/group is kept in sync with
@@ -376,7 +378,10 @@ def build_section_subnav() -> html.Div:
 
 
 def build_pd_period_options(periods: list[str], all_label: str) -> list[dict]:
-    return [{"label": all_label, "value": ""}] + [{"label": period, "value": period} for period in periods]
+    return [{"label": all_label, "value": ""}] + [
+        {"label": format_pd_compact_quarter_label(period), "value": period}
+        for period in periods
+    ]
 
 
 def build_range_controls(range_key: str, periods: list[str], range_value: dict | None = None) -> html.Div:
@@ -473,6 +478,58 @@ def build_frozen_horizon_control(label: str = "PD Horizon") -> html.Div:
             ]),
         ],
     )
+
+
+# ---------------------------------------------------------------------------
+# Section-level range toolbar
+# ---------------------------------------------------------------------------
+
+
+def _as_children_list(component) -> list:
+    children = getattr(component, "children", None)
+    if children is None:
+        return []
+    if isinstance(children, (list, tuple)):
+        return list(children)
+    return [children]
+
+
+def build_section_filter_item(
+    label: str | None,
+    *,
+    range_key: str | None = None,
+    periods: list[str] | None = None,
+    range_value: dict | None = None,
+    extra_controls=None,
+) -> html.Div:
+    actions = []
+    if extra_controls is not None and range_key:
+        range_controls = build_range_controls(range_key, periods or [], range_value)
+        actions.append(
+            html.Div(
+                className="pd-range-controls",
+                children=[*_as_children_list(extra_controls), *_as_children_list(range_controls)],
+                **{"aria-label": "Section filters"},
+            )
+        )
+    else:
+        if extra_controls is not None:
+            actions.append(extra_controls)
+        if range_key:
+            actions.append(build_range_controls(range_key, periods or [], range_value))
+
+    children = []
+    if label:
+        children.append(html.Div(label, className="pd-section-filter-item-label"))
+    children.append(html.Div(className="pd-section-filter-item-actions", children=actions))
+    return html.Div(
+        className="pd-section-filter-item",
+        children=children,
+    )
+
+
+def build_section_filter_bar(items: list[html.Div]) -> html.Div:
+    return html.Div(className="pd-section-filter-bar", children=items)
 
 
 # ---------------------------------------------------------------------------

@@ -46,6 +46,19 @@ def _collect_prop_values(node, prop_name: str) -> list[str]:
     return values
 
 
+def _collect_nodes_with_class(node, class_token: str) -> list[Component]:
+    if not isinstance(node, Component):
+        return []
+
+    matches = []
+    class_name = getattr(node, "className", "") or ""
+    if class_token in class_name.split():
+        matches.append(node)
+    for child in _children_of(node):
+        matches.extend(_collect_nodes_with_class(child, class_token))
+    return matches
+
+
 def _render_pd_content():
     """Render the live dashboard content (post-Apply), not the getting-started prompt."""
     from STATpy_platform.features.monitoring.data_access import PD_PERFORMANCE_DATA as data
@@ -88,6 +101,34 @@ def test_pd_performance_build_stores():
         "pd-scenario-ranking-store",
         "pd-applied-filters-store",
     }
+
+
+def test_pd_main_overview_summarizes_both_chapters_before_the_deep_dive():
+    layout = _render_pd_content()
+    text = " ".join(_collect_text(node) for node in layout)
+    ids = []
+    for node in layout:
+        ids.extend(_collect_prop_values(node, "id"))
+
+    assert "Main Overview" in text
+    assert "Before the deep dive" in text
+    assert "How the dashboard story splits across the two chapters" in text
+    assert "Recommended deep dive" in text
+    assert "1. RAG Assignment" in text
+    assert "2. Post Subjective Review Analysis" in text
+    assert "Calibration Conservatism" in text
+    assert "Discriminatory Power" in text
+    assert "Transition Matrix" in text
+    assert "pd-dashboard-overview" in ids
+    assert text.index("Main Overview") < text.index("RAG Assignment")
+
+
+def test_pd_subnav_keeps_main_overview_without_adding_a_dashboard_summary_row():
+    layout = page.build_layout()
+    text = " ".join(_collect_text(node) for node in layout)
+
+    assert "Main Overview" in text
+    assert "Dashboard Summary" not in text
 
 
 def test_pd_psi_section_surfaces_stability_methodology_and_thresholds():
@@ -190,3 +231,17 @@ def test_pd_mev_range_heading_explains_reporting_cycle_basis():
         and "does not move the MEV scenario Q0 date" in label
         for label in aria_labels
     )
+
+
+def test_pd_range_filters_render_at_section_level():
+    layout = _render_pd_content()
+    filter_bars = []
+    text = " ".join(_collect_text(node) for node in layout)
+    for node in layout:
+        filter_bars.extend(_collect_nodes_with_class(node, "pd-section-filter-bar"))
+
+    assert len(filter_bars) >= 4
+    assert "Calibration Conservatism RAG (ECL PIT) Trend" in text
+    assert "Accuracy Ratio and Go-Live Delta Trend" in text
+    assert "Balance Sheet Calibration Trend" in text
+    assert "Population Stability Index Trend" in text

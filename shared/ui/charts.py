@@ -823,12 +823,17 @@ def build_ead_discrimination_rag_trend_figure(rag_trend, monitoring_quarter, ran
     return fig
 
 
-def build_lgd_metric_trend_figure(metric_rows, monitoring_thresholds, metric: str, monitoring_point: str, theme=None) -> go.Figure:
+def build_lgd_metric_trend_figure(metric_rows, monitoring_thresholds, metric: str, monitoring_point: str, theme=None, range_value=None) -> go.Figure:
     if not metric_rows:
         return _empty_figure("No LGD monitoring periods are available for the selected filters.", height=308)
 
-    quarters = [row["Monitoring Period"] for row in metric_rows]
-    values = [row.get(metric) for row in metric_rows]
+    filtered_periods = set(filter_pd_periods_by_range(range_value, [row["Monitoring Period"] for row in metric_rows]))
+    rows = [row for row in metric_rows if row["Monitoring Period"] in filtered_periods]
+    if not rows:
+        return _empty_figure("No LGD monitoring periods are available for the selected time range.", height=308)
+
+    quarters = [row["Monitoring Period"] for row in rows]
+    values = [row.get(metric) for row in rows]
     thresholds = _lgd_thresholds(monitoring_thresholds)
     threshold = next((row for row in thresholds if row.get("metric") == metric), {})
     rags = [calculate_pd_metric_rag(thresholds, metric, value) for value in values]
@@ -865,12 +870,17 @@ def build_lgd_metric_trend_figure(metric_rows, monitoring_thresholds, metric: st
     return fig
 
 
-def build_ead_metric_trend_figure(metric_rows, monitoring_thresholds, metric: str, monitoring_point: str, theme=None) -> go.Figure:
+def build_ead_metric_trend_figure(metric_rows, monitoring_thresholds, metric: str, monitoring_point: str, theme=None, range_value=None) -> go.Figure:
     if not metric_rows:
         return _empty_figure("No EAD monitoring periods are available for the selected filters.", height=308)
 
-    quarters = [row["Monitoring Period"] for row in metric_rows]
-    values = [row.get(metric) for row in metric_rows]
+    filtered_periods = set(filter_pd_periods_by_range(range_value, [row["Monitoring Period"] for row in metric_rows]))
+    rows = [row for row in metric_rows if row["Monitoring Period"] in filtered_periods]
+    if not rows:
+        return _empty_figure("No EAD monitoring periods are available for the selected time range.", height=308)
+
+    quarters = [row["Monitoring Period"] for row in rows]
+    values = [row.get(metric) for row in rows]
     thresholds = _lgd_thresholds(monitoring_thresholds)
     threshold = next((row for row in thresholds if row.get("metric") == metric), {})
     rags = [calculate_pd_metric_rag(thresholds, metric, value) for value in values]
@@ -916,48 +926,27 @@ def _loss_thresholds(monitoring_thresholds) -> list[dict]:
     return list((monitoring_thresholds or {}).get("loss_thresholds") or [])
 
 
-def build_loss_rag_trend_figure(rag_trend, monitoring_quarter, range_value=None) -> go.Figure:
-    periods = filter_pd_periods_by_range(range_value, [row["quarter"] for row in rag_trend])
-    trend = [row for row in rag_trend if row["quarter"] in periods]
-    if not trend:
-        return _empty_figure("No Loss RAG periods are available for the selected monitoring point.")
-
-    def pct(value):
-        return "—" if value is None or not is_finite_number(value) else f"{value * 100:.2f}%"
-
-    quarters = [row["quarter"] for row in trend]
-    customdata = [
-        [
-            row["rag"],
-            pct(row.get("me_pct")),
-            row.get("me_pct_rag") or "N/A",
-            _format_metric_value(row.get("weighted_average"), 2),
-            "—" if row.get("rounded_score") is None or not is_finite_number(row.get("rounded_score")) else f"{row['rounded_score']}",
-        ]
-        for row in trend
-    ]
-    fig = _rag_dot_figure(
-        quarters,
-        [row["rag_score"] for row in trend],
-        [row["rag"] for row in trend],
-        customdata,
-        "%{x}<br>Performance RAG: %{customdata[0]}<br>"
-        "Mean Error % 1 year: %{customdata[1]} (%{customdata[2]})<br>"
-        "Score: %{customdata[3]}<br>Rounded score: %{customdata[4]}<extra></extra>",
-        monitoring_quarter,
-        "Performance Score",
-    )
-    fig.update_layout(xaxis=build_pd_time_series_xaxis(quarters, {"title": "Quarter", "gridcolor": GRID_COLOR}, density="tight"))
-    return fig
-
-
-def build_loss_metric_trend_figure(metric_rows, monitoring_thresholds, monitoring_point: str, theme=None) -> go.Figure:
+def build_loss_metric_trend_figure(
+    metric_rows,
+    monitoring_thresholds,
+    monitoring_point: str,
+    range_value=None,
+    theme=None,
+    *,
+    metric: str = "ME %",
+    value_label: str = "Mean Error",
+    height: int = 308,
+) -> go.Figure:
     if not metric_rows:
-        return _empty_figure("No Loss monitoring periods are available for the selected filters.", height=308)
+        return _empty_figure("No Loss monitoring periods are available for the selected filters.", height=height)
 
-    metric = "ME %"
-    quarters = [row["Monitoring Period"] for row in metric_rows]
-    values = [row.get(metric) for row in metric_rows]
+    filtered_periods = set(filter_pd_periods_by_range(range_value, [row["Monitoring Period"] for row in metric_rows]))
+    scoped_rows = [row for row in metric_rows if row["Monitoring Period"] in filtered_periods]
+    if not scoped_rows:
+        return _empty_figure("No data in the selected range.", height=height)
+
+    quarters = [row["Monitoring Period"] for row in scoped_rows]
+    values = [row.get(metric) for row in scoped_rows]
     thresholds = _loss_thresholds(monitoring_thresholds)
     threshold = next((row for row in thresholds if row.get("metric") == metric), {})
     rags = [calculate_pd_metric_rag(thresholds, metric, value) for value in values]
@@ -976,16 +965,16 @@ def build_loss_metric_trend_figure(metric_rows, monitoring_thresholds, monitorin
         line=dict(color=_monitoring_trend_line_color(theme), width=2.5),
         marker=dict(size=8, color=[pd_rag_color(rag) for rag in rags], line=dict(color="#fff", width=1)),
         customdata=rags,
-        hovertemplate="%{x}<br>Mean Error %: %{y:.0%}<br>RAG: %{customdata}<extra></extra>",
+        hovertemplate=f"%{{x}}<br>{value_label} %: " + "%{y:.0%}<br>RAG: %{customdata}<extra></extra>",
     ))
     fig.update_layout(
-        height=308,
+        height=height,
         margin=dict(t=18, r=26, b=54, l=64),
         hovermode="x unified",
         showlegend=False,
         shapes=shapes,
         xaxis=build_pd_time_series_xaxis(quarters, {"title": "Quarter", "gridcolor": GRID_COLOR}, density="tight"),
-        yaxis=dict(title="Mean Error", tickformat=".0%", range=bands["axis_range"], gridcolor=GRID_COLOR, zeroline=False),
+        yaxis=dict(title=value_label, tickformat=".0%", range=bands["axis_range"], gridcolor=GRID_COLOR, zeroline=False),
     )
     _apply_transparent_background(fig)
     return fig
