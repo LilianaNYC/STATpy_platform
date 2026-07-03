@@ -9,6 +9,7 @@
    presentational and has no effect on chart data or callback state. */
 (function () {
   var SECTION_IDS = [
+    "pd-dashboard-overview",
     "pd-analysis-scope",
     "pd-calibration-rag",
     "pd-discrimination-rag",

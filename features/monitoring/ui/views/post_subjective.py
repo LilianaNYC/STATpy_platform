@@ -23,7 +23,7 @@ from dataclasses import dataclass
 
 from dash import dcc, html
 
-from .....shared.ui.controls import build_chart_header
+from .....shared.ui.controls import build_chart_header, build_section_filter_bar, build_section_filter_item
 from .....shared.ui.charts import (
     build_pd_psi_trend_figure,
     build_pd_scenario_projection_figure,
@@ -121,7 +121,7 @@ def _proj(row: dict):
     return value if value is not None else row.get("projected_pd")
 
 
-def _rag_status_card(kicker, title, rag, monitoring_point, methodology, chips, footnote=None, tone=None) -> html.Article:
+def _rag_status_card(kicker, title, rag, monitoring_point, methodology, chips, footnote=None, tone=None, card_class_name: str | None = None) -> html.Article:
     active_tone = tone or pd_tone_class(rag)
     chip_nodes = [
         html.Div(
@@ -139,7 +139,10 @@ def _rag_status_card(kicker, title, rag, monitoring_point, methodology, chips, f
     ]
     if footnote:
         children.append(html.Div(footnote, className="pd-test-footnote"))
-    return html.Article(className=f"pd-test-card pd-test-{active_tone}", children=children)
+    class_name = f"pd-test-card pd-test-{active_tone}"
+    if card_class_name:
+        class_name = f"{class_name} {card_class_name}"
+    return html.Article(className=class_name, children=children)
 
 
 def build_executive_summary(text: str, theme: str = "light") -> html.Div:
@@ -292,16 +295,15 @@ def _review_scorecard_card(summary: dict) -> html.Article:
                     html.H4(summary["name"]),
                     html.Span(
                         summary["rag"],
-                        style={"flex": "0 0 auto", "fontSize": "11px", "fontWeight": "800",
-                               "letterSpacing": "0.3px", "color": _RAG_HEX.get(tone, "#94a3b8")},
+                        className="pd-review-card-rag",
+                        style={"--review-rag-tone": _RAG_HEX.get(tone, "#94a3b8")},
                     ),
                 ],
             ),
             html.Div(summary["metric"], className="pd-test-value", style={"marginTop": "10px"}),
             html.Div(
-                summary["metric_label"], className="pd-test-meta",
-                style={"fontWeight": "700", "textTransform": "uppercase", "fontSize": "9.5px",
-                       "letterSpacing": "0.35px", "color": "#64748b", "marginTop": "2px"},
+                summary["metric_label"], className="pd-test-meta pd-review-card-metric-label",
+                style={"marginTop": "2px"},
             ),
             html.Div(summary["takeaway"], className="pd-test-meta", style={"marginTop": "8px"}),
         ],
@@ -310,14 +312,12 @@ def _review_scorecard_card(summary: dict) -> html.Article:
 
 def _review_legend(label: str, count: int, tone: str) -> html.Div:
     return html.Div(
-        className="pd-review-legend-chip",
-        style={"display": "inline-flex", "alignItems": "center", "gap": "7px", "padding": "6px 11px",
-               "border": "1px solid #dbe4f0", "borderRadius": "999px", "background": "rgba(248,250,252,.9)"},
+        className=f"pd-review-legend-chip pd-review-legend-chip-{tone}",
+        style={"--legend-tone": _RAG_HEX[tone]},
         children=[
-            html.Span(style={"width": "10px", "height": "10px", "borderRadius": "999px",
-                             "background": _RAG_HEX[tone], "boxShadow": "0 0 0 2px rgba(255,255,255,.9) inset"}),
-            html.Strong(str(count), style={"fontSize": "13px", "color": "#0f172a"}),
-            html.Span(label, style={"fontSize": "11px", "color": "#64748b", "fontWeight": "700"}),
+            html.Span(className="pd-review-legend-dot"),
+            html.Strong(str(count), className="pd-review-legend-count"),
+            html.Span(label, className="pd-review-legend-label"),
         ],
     )
 
@@ -443,7 +443,8 @@ def build_overview_section(
                                 html.Div("Review posture", className="overview-command-hero-kicker"),
                                 html.H4(
                                     f"{len(attention)} of {len(summaries)} areas need attention",
-                                    style={"margin": "0", "color": _RAG_HEX[posture_tone]},
+                                    className="overview-command-hero-title",
+                                    style={"--overview-posture-tone": _RAG_HEX[posture_tone], "margin": "0"},
                                 ),
                             ]),
                             html.Div(
@@ -466,7 +467,16 @@ def build_overview_section(
 # ---------------------------------------------------------------------------
 # 2.2 PSI
 # ---------------------------------------------------------------------------
-def build_psi_section(cfg: PostSubjectiveConfig, summary: dict, thresholds: list[dict], monitoring_point: str, theme: str = "light") -> html.Section:
+def build_psi_section(
+    cfg: PostSubjectiveConfig,
+    summary: dict,
+    thresholds: list[dict],
+    monitoring_point: str,
+    theme: str = "light",
+    *,
+    range_store: dict | None = None,
+    psi_range_key: str | None = None,
+) -> html.Section:
     current = summary.get("current") or {}
     previous = summary.get("previous") or {}
     current_value = current.get(PSI_METRIC)
@@ -502,10 +512,11 @@ def build_psi_section(cfg: PostSubjectiveConfig, summary: dict, thresholds: list
                         "PSI Stability RAG",
                         rag,
                         monitoring_point,
-                        "Population Stability Index on the key-driver distribution; lower PSI is a more stable population.",
+                        "Population Stability Index on the key-driver distribution, comparing the current scoring population against the development reference.",
                         [("Green", "value <= 0.10", "green"), ("Amber", "0.10 < value <= 0.25", "amber"), ("Red", "value > 0.25", "red")],
                         footnote="Lower PSI values indicate a more stable population.",
                         tone=tone,
+                        card_class_name="pd-psi-stability-card",
                     ),
                     build_pd_test_card(
                         PSI_METRIC,
@@ -515,9 +526,10 @@ def build_psi_section(cfg: PostSubjectiveConfig, summary: dict, thresholds: list
                         context,
                         {
                             "card_title": PSI_METRIC,
-                            "test_label": f"PSI ({cfg.label})",
+                            "test_label": "Population Stability Index",
                             "format": "ratio",
-                            "tooltip": "Lower PSI indicates a more stable distribution.",
+                            "extra_meta_rows": [{"label": "Assessment", "value": "Current vs reference snapshot"}],
+                            "tooltip": "Lower PSI indicates a more stable population against the reference distribution.",
                         },
                     ),
                 ],
@@ -529,7 +541,20 @@ def build_psi_section(cfg: PostSubjectiveConfig, summary: dict, thresholds: list
         for row in (summary.get("metric_rows") or [])
         if row.get("Monitoring Period") and row.get(PSI_METRIC) is not None
     ]
+    psi_periods = [row["quarter"] for row in psi_trend]
+    psi_range_value = range_store.get(psi_range_key) if range_store is not None and psi_range_key else None
     if psi_trend:
+        if psi_range_key:
+            body.append(
+                build_section_filter_bar([
+                    build_section_filter_item(
+                        "Display filters",
+                        range_key=psi_range_key,
+                        periods=psi_periods,
+                        range_value=psi_range_value,
+                    ),
+                ])
+            )
         body.append(
             html.Div(
                 id=f"{cfg.prefix}-psi-trend-panel",
@@ -542,7 +567,7 @@ def build_psi_section(cfg: PostSubjectiveConfig, summary: dict, thresholds: list
                     dcc.Graph(
                         id=f"{cfg.prefix}-psi-trend-chart",
                         figure=build_pd_psi_trend_figure(
-                            psi_trend, {"pd_thresholds": thresholds}, monitoring_point, None, theme=theme,
+                            psi_trend, {"pd_thresholds": thresholds}, monitoring_point, psi_range_value, theme=theme,
                         ),
                         config=_GRAPH_CONFIG,
                         className="pd-default-rate-trend-chart pd-default-rate-trend-chart-medium",
@@ -558,8 +583,8 @@ def build_psi_section(cfg: PostSubjectiveConfig, summary: dict, thresholds: list
             build_pd_section_heading(
                 "2.2 PSI",
                 "Population Stability Index",
-                "Tracks the stability of the scoring population over time. A rising PSI signals distribution drift "
-                "that may undermine the model's calibration and discrimination.",
+                "Monitors whether the scoring population has shifted against the reference distribution. Rising PSI "
+                "indicates distribution drift that may undermine calibration and discrimination.",
                 rag,
                 {"show_rag": False},
             ),

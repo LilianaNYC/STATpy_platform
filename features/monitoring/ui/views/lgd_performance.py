@@ -10,7 +10,7 @@ from .....shared.ui.charts import (
     build_lgd_metric_trend_figure,
 )
 from .....shared.ui import controls as shared_filters
-from .....shared.ui.controls import build_chart_header
+from .....shared.ui.controls import build_chart_header, build_section_filter_bar, build_section_filter_item
 from .....shared.domain.calculations import pd_tone_class
 from .....shared.domain.mev_range import (
     calculate_pd_mev_thresholds,
@@ -21,6 +21,7 @@ from .....shared.domain.mev_range import (
     get_lgd_mev_chart_id,
     get_pd_mev_model_development_dates,
     get_pd_mev_scenario_quarter,
+    get_pd_mev_visible_periods,
 )
 from .....shared.domain.quarter_labels import iso_date_to_pd_quarter
 from .....shared.ui.charts import build_pd_mev_range_figure
@@ -91,6 +92,9 @@ DISCRIMINATION_RAG_RANGE_KEY = "lgd_discrimination_rag"
 ME_RANGE_KEY = "lgd_me"
 RMSE_RANGE_KEY = "lgd_rmse"
 KENDALL_RANGE_KEY = "lgd_kendall"
+CALIBRATION_SECTION_RANGE_KEY = "lgd_calibration_section"
+DISCRIMINATION_SECTION_RANGE_KEY = "lgd_discrimination_section"
+PSI_SECTION_RANGE_KEY = "lgd_psi_section"
 
 _GRAPH_CONFIG = {"displayModeBar": False, "responsive": True}
 
@@ -491,6 +495,7 @@ def _build_lgd_mev_range_section(
     selected_models = get_mev_selected_models_simple(catalog, selected_model, selected_segment, model_type="LGD")
 
     available_mev_names = get_pd_mev_available_names_for_models(catalog, selected_models)
+    mev_periods = get_pd_mev_visible_periods(catalog, selected_models, available_mev_names)
 
     model_panels = []
     for model_name in selected_models:
@@ -597,6 +602,18 @@ def _build_lgd_mev_range_section(
     )
 
     body = model_panels if (selected_models and available_mev_names and model_panels) else [empty_state]
+    display_filters = []
+    if mev_periods:
+        display_filters.append(
+            build_section_filter_bar([
+                build_section_filter_item(
+                    "Display filters",
+                    range_key="mev",
+                    periods=mev_periods,
+                    range_value=range_store.get("mev"),
+                ),
+            ])
+        )
 
     return html.Section(
         id="lgd-mev-range",
@@ -641,6 +658,7 @@ def _build_lgd_mev_range_section(
                 selected_models, catalog, monitoring_point,
                 reporting_cycle=reporting_cycle, scenario=scenario,
             ),
+            *display_filters,
             *body,
         ],
     )
@@ -756,7 +774,7 @@ def render_lgd_performance_content(
             build_pd_section_heading(
                 "1.1 Overview",
                 "LGD RAG Assignment Overview",
-                "At-a-glance summary of the 1 year LGD monitoring flow from metric tests to dimension RAGs and Performance RAG.",
+                "At-a-glance summary of the 1-year LGD monitoring flow from metric tests to dimension RAGs and Performance RAG.",
                 summary["performance_rag"],
                 {"show_rag": False},
             ),
@@ -771,11 +789,19 @@ def render_lgd_performance_content(
             build_pd_section_heading(
                 "1.2 Calibration Conservatism",
                 "Calibration Conservatism",
-                "Compare realized LGD against predicted LGD using mean error and RMSE.",
+                "Compares realized LGD against predicted LGD using mean error and RMSE across the monitored 1-year population.",
                 summary["calibration_rag"],
                 {"show_rag": False},
             ),
             html.Div(className="pd-test-grid pd-test-grid-3", children=calibration_cards),
+            build_section_filter_bar([
+                build_section_filter_item(
+                    "Display filters",
+                    range_key=CALIBRATION_SECTION_RANGE_KEY,
+                    periods=calibration_rag_periods,
+                    range_value=range_store.get(CALIBRATION_SECTION_RANGE_KEY),
+                ),
+            ]),
             html.Div(
                 id="lgd-calibration-rag-trend-panel",
                 className="section-card pd-default-rate-trend-section",
@@ -783,16 +809,13 @@ def render_lgd_performance_content(
                     build_chart_header(
                         "Calibration Conservatism RAG Trend",
                         "Quarter-by-quarter Calibration Conservatism RAG shown as a simple color-coded dot timeline.",
-                        CALIBRATION_RAG_RANGE_KEY,
-                        calibration_rag_periods,
-                        range_store.get(CALIBRATION_RAG_RANGE_KEY),
                     ),
                     dcc.Graph(
                         id="lgd-calibration-rag-trend-chart",
                         figure=build_lgd_calibration_rag_trend_figure(
                             calibration_rag_trend,
                             monitoring_point,
-                            range_store.get(CALIBRATION_RAG_RANGE_KEY),
+                            range_store.get(CALIBRATION_SECTION_RANGE_KEY),
                         ),
                         config=_GRAPH_CONFIG,
                         className="pd-default-rate-trend-chart pd-default-rate-trend-chart-compact pd-default-rate-trend-chart-axis-room-compact",
@@ -809,13 +832,17 @@ def render_lgd_performance_content(
                             build_chart_header(
                                 "Mean Error Trend",
                                 "Mean error by monitoring point with LGD threshold shading.",
-                                ME_RANGE_KEY,
-                                calibration_rag_periods,
-                                range_store.get(ME_RANGE_KEY),
                             ),
                             dcc.Graph(
                                 id="lgd-me-trend-chart",
-                                figure=build_lgd_metric_trend_figure(metric_rows, data["monitoring_thresholds"], "ME", monitoring_point, theme),
+                                figure=build_lgd_metric_trend_figure(
+                                    metric_rows,
+                                    data["monitoring_thresholds"],
+                                    "ME",
+                                    monitoring_point,
+                                    theme,
+                                    range_store.get(CALIBRATION_SECTION_RANGE_KEY),
+                                ),
                                 config=_GRAPH_CONFIG,
                                 className="pd-default-rate-trend-chart pd-default-rate-trend-chart-compact pd-default-rate-trend-chart-axis-room-compact",
                             ),
@@ -828,13 +855,17 @@ def render_lgd_performance_content(
                             build_chart_header(
                                 "RMSE Trend",
                                 "Root mean squared error by monitoring point with LGD threshold shading.",
-                                RMSE_RANGE_KEY,
-                                calibration_rag_periods,
-                                range_store.get(RMSE_RANGE_KEY),
                             ),
                             dcc.Graph(
                                 id="lgd-rmse-trend-chart",
-                                figure=build_lgd_metric_trend_figure(metric_rows, data["monitoring_thresholds"], "RMSE", monitoring_point, theme),
+                                figure=build_lgd_metric_trend_figure(
+                                    metric_rows,
+                                    data["monitoring_thresholds"],
+                                    "RMSE",
+                                    monitoring_point,
+                                    theme,
+                                    range_store.get(CALIBRATION_SECTION_RANGE_KEY),
+                                ),
                                 config=_GRAPH_CONFIG,
                                 className="pd-default-rate-trend-chart pd-default-rate-trend-chart-compact pd-default-rate-trend-chart-axis-room-compact",
                             ),
@@ -852,11 +883,19 @@ def render_lgd_performance_content(
             build_pd_section_heading(
                 "1.3 Discriminatory Power",
                 "Discriminatory Power",
-                "Assess whether higher predicted LGD observations rank consistently with higher realized LGD outcomes.",
+                "Assesses whether higher predicted LGD observations rank consistently with higher realized LGD outcomes across the monitored 1-year population.",
                 summary["discrimination_rag"],
                 {"show_rag": False},
             ),
             html.Div(className="pd-test-grid", style={"gridTemplateColumns": "repeat(2, minmax(0, 1fr))"}, children=discrimination_cards[:2]),
+            build_section_filter_bar([
+                build_section_filter_item(
+                    "Display filters",
+                    range_key=DISCRIMINATION_SECTION_RANGE_KEY,
+                    periods=discrimination_rag_periods,
+                    range_value=range_store.get(DISCRIMINATION_SECTION_RANGE_KEY),
+                ),
+            ]),
             html.Div(
                 className="pd-trend-detail-grid",
                 children=[
@@ -867,16 +906,13 @@ def render_lgd_performance_content(
                             build_chart_header(
                                 "Discriminatory Power RAG Trend",
                                 "Quarter-by-quarter Discriminatory Power RAG shown as a simple color-coded dot timeline.",
-                                DISCRIMINATION_RAG_RANGE_KEY,
-                                discrimination_rag_periods,
-                                range_store.get(DISCRIMINATION_RAG_RANGE_KEY),
                             ),
                             dcc.Graph(
                                 id="lgd-discrimination-rag-trend-chart",
                                 figure=build_lgd_discrimination_rag_trend_figure(
                                     discrimination_rag_trend,
                                     monitoring_point,
-                                    range_store.get(DISCRIMINATION_RAG_RANGE_KEY),
+                                    range_store.get(DISCRIMINATION_SECTION_RANGE_KEY),
                                 ),
                                 config=_GRAPH_CONFIG,
                                 className="pd-default-rate-trend-chart pd-default-rate-trend-chart-compact pd-default-rate-trend-chart-axis-room-compact",
@@ -890,13 +926,17 @@ def render_lgd_performance_content(
                             build_chart_header(
                                 "Kendall's Tau Trend",
                                 "Rank-ordering strength by monitoring point with LGD threshold shading.",
-                                KENDALL_RANGE_KEY,
-                                discrimination_rag_periods,
-                                range_store.get(KENDALL_RANGE_KEY),
                             ),
                             dcc.Graph(
                                 id="lgd-kendall-trend-chart",
-                                figure=build_lgd_metric_trend_figure(metric_rows, data["monitoring_thresholds"], "Kendall's Tau", monitoring_point, theme),
+                                figure=build_lgd_metric_trend_figure(
+                                    metric_rows,
+                                    data["monitoring_thresholds"],
+                                    "Kendall's Tau",
+                                    monitoring_point,
+                                    theme,
+                                    range_store.get(DISCRIMINATION_SECTION_RANGE_KEY),
+                                ),
                                 config=_GRAPH_CONFIG,
                                 className="pd-default-rate-trend-chart pd-default-rate-trend-chart-compact pd-default-rate-trend-chart-axis-room-compact",
                             ),
@@ -919,7 +959,8 @@ def render_lgd_performance_content(
             build_pd_chapter_heading(
                 "2.",
                 "Post Subjective Review Analysis",
-                "Qualitative review and scenario context represented using dashboard1's current LGD source data availability.",
+                "Qualitative review of population stability, scenario ranking, sensitivity, and MEV range. No "
+                "standalone chapter RAG is assigned, but material concerns identified here inform the overall Model RAG.",
             ),
         ],
     )
@@ -934,7 +975,15 @@ def render_lgd_performance_content(
         _POST_SUBJECTIVE, data, level, entity, reporting_cycle, scenario, monitoring_point,
         summary, thresholds, selected_model, selected_segment, scenario_ranking_store,
     )
-    psi_section = build_psi_section(_POST_SUBJECTIVE, summary, thresholds, monitoring_point, theme)
+    psi_section = build_psi_section(
+        _POST_SUBJECTIVE,
+        summary,
+        thresholds,
+        monitoring_point,
+        theme,
+        range_store=range_store,
+        psi_range_key=PSI_SECTION_RANGE_KEY,
+    )
     scenario_ranking_section = build_scenario_ranking_section(
         _POST_SUBJECTIVE, data, level, entity, reporting_cycle, monitoring_point, scenario_ranking_store, theme=theme,
     )

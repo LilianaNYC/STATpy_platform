@@ -13,6 +13,7 @@ from ..domain.loss import (
     resolve_loss_segment,
 )
 from ....shared.registration import already_registered
+from ....shared.theme import APP_THEME_ID
 from ..data_access import PD_PERFORMANCE_DATA
 
 _RANGE_PRESET_COUNTS = {"last-4": 4, "last-8": 8, "last-12": 12}
@@ -139,20 +140,54 @@ def register_callbacks(app) -> None:
         value = selected_monitoring_point if selected_monitoring_point in options else (options[0] if options else "")
         return _dropdown_options(options), value
 
+    # -----------------------------------------------------------------
+    # Apply filters: snapshot current filter values into the applied store
+    # -----------------------------------------------------------------
+    @app.callback(
+        Output(layout.APPLIED_FILTERS_STORE_ID, "data"),
+        Input(layout.APPLY_FILTERS_ID, "n_clicks"),
+        State(layout.REPORTING_CYCLE_ID, "value"),
+        State(layout.MODEL_DROPDOWN_ID, "value"),
+        State(layout.SEGMENT_DROPDOWN_ID, "value"),
+        State(layout.MONITORING_POINT_DROPDOWN_ID, "value"),
+        prevent_initial_call=True,
+    )
+    def apply_loss_filters(_n_clicks, reporting_cycle, selected_model, selected_segment, selected_monitoring_point):
+        if not _n_clicks:
+            return no_update
+        return {
+            "reporting_cycle": reporting_cycle,
+            "model": selected_model,
+            "segment": selected_segment,
+            "monitoring_point": selected_monitoring_point,
+        }
+
+    # -----------------------------------------------------------------
+    # Master re-render: applied store + range store -> loss-dashboard-content
+    # -----------------------------------------------------------------
     @app.callback(
         Output(layout.CONTENT_ID, "children"),
-        Input(layout.REPORTING_CYCLE_ID, "value"),
-        Input(layout.MODEL_DROPDOWN_ID, "value"),
-        Input(layout.SEGMENT_DROPDOWN_ID, "value"),
-        Input(layout.MONITORING_POINT_DROPDOWN_ID, "value"),
+        Input(layout.APPLIED_FILTERS_STORE_ID, "data"),
         Input(layout.RANGE_STORE_ID, "data"),
+        Input(APP_THEME_ID, "value"),
+        prevent_initial_call=True,
     )
-    def update_loss_content(reporting_cycle, selected_model, selected_segment, selected_monitoring_point, range_store):
+    def render_loss_content(applied, range_store, theme_value):
+        if not applied:
+            return layout.build_loss_apply_prompt()
+
+        from ....shared.repositories.filters_config import load_filter_config
+        cfg = load_filter_config()
+        default_cycle = cfg["reporting_cycles"][0]["value"] if cfg["reporting_cycles"] else "CCAR 2026"
+
+        reporting_cycle = applied.get("reporting_cycle") or default_cycle
         _install_loss_store(reporting_cycle)
+
         return layout.render_loss_performance_content(
             data,
-            selected_model,
-            selected_segment,
-            selected_monitoring_point,
+            applied.get("model"),
+            applied.get("segment"),
+            applied.get("monitoring_point"),
             range_store or {},
+            theme_value=theme_value,
         )

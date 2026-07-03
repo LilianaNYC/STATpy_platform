@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from dash import dcc, html
 
-from .....shared.ui.charts import build_loss_metric_trend_figure, build_loss_rag_trend_figure
+from .....shared.ui.charts import build_loss_metric_trend_figure
 from .....shared.ui import controls as shared_filters
-from .....shared.ui.controls import build_chart_header
+from .....shared.ui.controls import build_chart_header, build_section_filter_bar, build_section_filter_item
 from .....shared.domain.calculations import format_pd_compact_amount, pd_tone_class
+from .....shared.theme import normalize_theme_value
 from ...domain.loss import (
     build_loss_period_summary,
-    build_loss_rag_trend,
     get_loss_monitoring_point_options,
     get_loss_segments_for_model,
     get_loss_thresholds,
@@ -22,8 +22,11 @@ from .cards import (
     build_pd_test_card,
     pd_rag_dot,
 )
+from .post_subjective import build_executive_summary
 
 CONTENT_ID = "loss-dashboard-content"
+APPLY_FILTERS_ID = "loss-apply-filters"
+APPLIED_FILTERS_STORE_ID = "loss-applied-filters-store"
 REPORTING_CYCLE_ID = "loss-reporting-cycle"
 REPORTING_CYCLE_TOGGLE_ID = "loss-reporting-cycle-toggle"
 REPORTING_CYCLE_MENU_ID = "loss-reporting-cycle-menu"
@@ -43,8 +46,7 @@ SEGMENT_FILTER_KEY = "loss-segment"
 MONITORING_POINT_FILTER_KEY = "loss-monitoring-point"
 LOSS_SUBNAV_ID = "loss-subnav"
 RANGE_STORE_ID = "loss-range-store"
-PERFORMANCE_RAG_RANGE_KEY = "loss_performance_rag"
-ME_PCT_RANGE_KEY = "loss_me_pct"
+PERFORMANCE_SECTION_RANGE_KEY = "loss_performance_section"
 
 _GRAPH_CONFIG = {"displayModeBar": False, "responsive": True}
 
@@ -166,7 +168,9 @@ def render_loss_performance_content(
     selected_segment: str | None,
     selected_monitoring_point: str | None,
     range_store: dict | None = None,
+    theme_value: str | None = None,
 ) -> list:
+    theme = normalize_theme_value(theme_value)
     range_store = range_store or {}
     summary = build_loss_period_summary(data, selected_model, selected_segment, selected_monitoring_point)
     thresholds = get_loss_thresholds(data)
@@ -190,8 +194,7 @@ def render_loss_performance_content(
     current = summary["current"]
     metric_rows = summary["metric_rows"]
     monitoring_point = summary["monitoring_point"]
-    rag_trend = build_loss_rag_trend(data, metric_rows)
-    rag_periods = [row["quarter"] for row in rag_trend]
+    periods = [row["Monitoring Period"] for row in metric_rows]
 
     performance_cards = [
         build_pd_section_rag_card(
@@ -199,7 +202,15 @@ def render_loss_performance_content(
             summary["performance_rag"],
             summary["previous_performance_rag"],
             context,
-            {"hide_status": True, "hide_comparison": True, "meta_label": "Monitoring point"},
+            {
+                "hide_status": True,
+                "hide_comparison": True,
+                "meta_label": "Monitoring point",
+                "extra_meta_rows": [
+                    {"label": "Predicted Loss", "value": _money(current.get("Predicted Loss"))},
+                    {"label": "Actual Loss", "value": _money(current.get("Actual Loss"))},
+                ],
+            },
         ),
         build_pd_test_card(
             "ME %",
@@ -212,8 +223,6 @@ def render_loss_performance_content(
                 "card_title": "Mean Error % 1 year",
                 "extra_meta_rows": [
                     {"label": "Mean Error", "value": _money(current.get("ME"))},
-                    {"label": "Predicted Loss", "value": _money(current.get("Predicted Loss"))},
-                    {"label": "Actual Loss", "value": _money(current.get("Actual Loss"))},
                 ],
             },
         ),
@@ -226,7 +235,7 @@ def render_loss_performance_content(
             build_pd_chapter_heading(
                 "1.",
                 "RAG Assignment",
-                "Core monitoring view for Loss model health, where Mean Error % feeds directly into the Performance RAG.",
+                "Core monitoring view for Loss model health, combining the current overview with mean error diagnostics and the resulting Performance RAG.",
                 options={"note": f"Monitoring point {monitoring_point}"},
             ),
         ],
@@ -239,7 +248,7 @@ def render_loss_performance_content(
             build_pd_section_heading(
                 "1.1 Overview",
                 "Loss RAG Assignment Overview",
-                "At-a-glance summary of the 1 year Loss monitoring flow from Mean Error % to Performance RAG.",
+                "At-a-glance summary of the 1-year Loss monitoring flow from Mean Error % to Performance RAG.",
                 summary["performance_rag"],
                 {"show_rag": False},
             ),
@@ -254,53 +263,96 @@ def render_loss_performance_content(
             build_pd_section_heading(
                 "1.2 Performance",
                 "Performance",
-                "Assess predicted loss against the observed loss proxy using Mean Error %.",
+                "Compares predicted loss against the observed loss proxy using Mean Error % across the monitored 1-year population.",
                 summary["performance_rag"],
                 {"show_rag": False},
             ),
-            html.Div(className="pd-test-grid", style={"gridTemplateColumns": "repeat(2, minmax(0, 1fr))"}, children=performance_cards),
+            html.Div(className="pd-test-grid loss-performance-test-grid", children=performance_cards),
+            build_section_filter_bar([
+                build_section_filter_item(
+                    "Display filters",
+                    range_key=PERFORMANCE_SECTION_RANGE_KEY,
+                    periods=periods,
+                    range_value=range_store.get(PERFORMANCE_SECTION_RANGE_KEY),
+                ),
+            ]),
             html.Div(
-                className="pd-trend-detail-grid",
+                id="loss-me-pct-trend-panel",
+                className="section-card pd-default-rate-trend-section",
                 children=[
-                    html.Div(
-                        id="loss-performance-rag-trend-panel",
-                        className="section-card pd-default-rate-trend-section",
-                        children=[
-                            build_chart_header(
-                                "Performance RAG Trend",
-                                "Quarter-by-quarter Performance RAG shown as a simple color-coded dot timeline.",
-                                PERFORMANCE_RAG_RANGE_KEY,
-                                rag_periods,
-                                range_store.get(PERFORMANCE_RAG_RANGE_KEY),
-                            ),
-                            dcc.Graph(
-                                id="loss-performance-rag-trend-chart",
-                                figure=build_loss_rag_trend_figure(
-                                    rag_trend,
-                                    monitoring_point,
-                                    range_store.get(PERFORMANCE_RAG_RANGE_KEY),
-                                ),
-                                config=_GRAPH_CONFIG,
-                                className="pd-default-rate-trend-chart pd-default-rate-trend-chart-compact pd-default-rate-trend-chart-axis-room-compact",
-                            ),
-                        ],
+                    build_chart_header(
+                        "Mean Error % Trend",
+                        "Mean error percentage by monitoring point, with Loss threshold shading.",
+                    ),
+                    dcc.Graph(
+                        id="loss-me-pct-trend-chart",
+                        figure=build_loss_metric_trend_figure(
+                            metric_rows,
+                            data["monitoring_thresholds"],
+                            monitoring_point,
+                            range_store.get(PERFORMANCE_SECTION_RANGE_KEY),
+                        ),
+                        config=_GRAPH_CONFIG,
+                        className="pd-default-rate-trend-chart pd-default-rate-trend-chart-compact pd-default-rate-trend-chart-axis-room-compact",
+                    ),
+                ],
+            ),
+            html.Div(
+                id="loss-component-me-pct-trend-panel",
+                className="section-card pd-default-rate-trend-section",
+                children=[
+                    build_chart_header(
+                        "Component Mean Error % Trend",
+                        "Mean error percentage by monitoring point for Net Charge-Offs (NCO) and Allowance for Credit Losses (ACL).",
                     ),
                     html.Div(
-                        id="loss-me-pct-trend-panel",
-                        className="section-card pd-default-rate-trend-section",
+                        className="pd-trend-detail-grid loss-component-trend-grid",
                         children=[
-                            build_chart_header(
-                                "Mean Error % Trend",
-                                "Mean error percentage by monitoring point with Loss threshold shading.",
-                                ME_PCT_RANGE_KEY,
-                                rag_periods,
-                                range_store.get(ME_PCT_RANGE_KEY),
+                            html.Div(
+                                className="loss-component-trend-block",
+                                children=[
+                                    build_chart_header(
+                                        "NCO Mean Error % Trend",
+                                        "Net Charge-Off mean error percentage by monitoring point.",
+                                    ),
+                                    dcc.Graph(
+                                        id="loss-nco-me-pct-trend-chart",
+                                        figure=build_loss_metric_trend_figure(
+                                            metric_rows,
+                                            data["monitoring_thresholds"],
+                                            monitoring_point,
+                                            range_store.get(PERFORMANCE_SECTION_RANGE_KEY),
+                                            metric="NCO ME %",
+                                            value_label="NCO Mean Error",
+                                        ),
+                                        config=_GRAPH_CONFIG,
+                                        className="loss-component-trend-chart",
+                                        style={"height": "308px"},
+                                    ),
+                                ],
                             ),
-                            dcc.Graph(
-                                id="loss-me-pct-trend-chart",
-                                figure=build_loss_metric_trend_figure(metric_rows, data["monitoring_thresholds"], monitoring_point),
-                                config=_GRAPH_CONFIG,
-                                className="pd-default-rate-trend-chart pd-default-rate-trend-chart-compact pd-default-rate-trend-chart-axis-room-compact",
+                            html.Div(
+                                className="loss-component-trend-block",
+                                children=[
+                                    build_chart_header(
+                                        "ACL Mean Error % Trend",
+                                        "Allowance for Credit Losses mean error percentage by monitoring point.",
+                                    ),
+                                    dcc.Graph(
+                                        id="loss-acl-me-pct-trend-chart",
+                                        figure=build_loss_metric_trend_figure(
+                                            metric_rows,
+                                            data["monitoring_thresholds"],
+                                            monitoring_point,
+                                            range_store.get(PERFORMANCE_SECTION_RANGE_KEY),
+                                            metric="ACL ME %",
+                                            value_label="ACL Mean Error",
+                                        ),
+                                        config=_GRAPH_CONFIG,
+                                        className="loss-component-trend-chart",
+                                        style={"height": "308px"},
+                                    ),
+                                ],
                             ),
                         ],
                     ),
@@ -309,10 +361,147 @@ def render_loss_performance_content(
         ],
     )
 
+    executive_summary = build_executive_summary(
+        "The Loss Performance dashboard is the monitoring view for the Loss model, which combines PD, LGD, and "
+        "EAD to estimate portfolio-level credit losses. It tracks Mean Error % — the gap between predicted and "
+        "actual loss — against the agreed RAG thresholds, and breaks that comparison out by Net Charge-Offs (NCO) "
+        "and the Allowance for Credit Losses (ACL) so reviewers can judge whether the loss estimate remains "
+        "defensible across reporting cycles.",
+        theme,
+    )
+
     return [
+        executive_summary,
         chapter_1,
         html.Div(className="pd-chapter-body pd-chapter-body-primary", children=[overview_section, performance_section]),
     ]
+
+
+def _build_loss_apply_button() -> html.Div:
+    return html.Div(
+        className="monitoring-filter saas-top-filter-action",
+        children=[
+            html.Div(
+                className="pd-mev-filter-actions",
+                children=[
+                    html.Button(
+                        "Apply filters",
+                        id=APPLY_FILTERS_ID,
+                        className="btn pd-mev-filter-reset saas-top-filter-reset saas-top-filter-apply",
+                        n_clicks=0,
+                        type="button",
+                        title="Load the dashboard using the selected filters.",
+                    ),
+                ],
+            ),
+        ],
+    )
+
+
+def build_loss_apply_prompt() -> html.Section:
+    return html.Section(
+        className="pd-content-section pd-live-section",
+        children=[
+            html.Div(
+                className="pd-performance-note",
+                children=[
+                    html.Strong("Executive summary: "),
+                    "The Loss Performance dashboard is the monitoring view for the Loss model, which combines PD, "
+                    "LGD, and EAD to estimate portfolio-level credit losses. It tracks Mean Error % — the gap "
+                    "between predicted and actual loss — against the agreed RAG thresholds, and breaks that "
+                    "comparison out by Net Charge-Offs (NCO) and the Allowance for Credit Losses (ACL) so "
+                    "reviewers can judge whether the loss estimate remains defensible across reporting cycles.",
+                ],
+            ),
+            html.Div(
+                className="saas-model-panel-stack",
+                children=[
+                    html.Div(
+                        className="section-card pd-mev-empty-state saas-getting-started",
+                        children=[
+                            html.Div("Getting started with the Loss Performance dashboard", className="pd-mev-chart-title"),
+                            html.P(
+                                "Set your filters in the top bar, then click “Apply filters” to render the dashboard. "
+                                "Use the quick guide below to move from setup to analysis smoothly.",
+                                className="pd-section-subtitle",
+                            ),
+                            html.Div(
+                                className="saas-getting-started-summary",
+                                children=[
+                                    html.Div("Quick start", className="saas-getting-started-summary-title"),
+                                    html.Div(
+                                        className="saas-getting-started-highlights",
+                                        children=[
+                                            html.Span("1. Choose Reporting Cycle and Monitoring Point.", className="saas-getting-started-highlight"),
+                                            html.Span("2. Pick a Segment or a Specific Model — not both.", className="saas-getting-started-highlight"),
+                                            html.Span("3. Click Apply filters to load the dashboard.", className="saas-getting-started-highlight"),
+                                        ],
+                                    ),
+                                    html.Div(
+                                        "The dashboard always reflects the most recent applied filter snapshot, not any unapplied edits still sitting in the top bar.",
+                                        className="saas-getting-started-summary-note",
+                                    ),
+                                ],
+                            ),
+                            html.Ol(
+                                className="saas-getting-started-steps",
+                                children=[
+                                    html.Li([
+                                        html.Strong("Pick a Reporting Cycle. "),
+                                        "Choose the cycle to review (e.g. CCAR 2026). This sets which monitoring points and "
+                                        "precomputed metrics are available.",
+                                    ]),
+                                    html.Li([
+                                        html.Strong("Set the Monitoring Point. "),
+                                        "Pick the as-of quarter for the snapshot. The available quarters follow the selected "
+                                        "reporting cycle, and trends are shown up to this point.",
+                                    ]),
+                                    html.Li([
+                                        html.Strong("Choose your population. "),
+                                        "Select a Segment or a single Specific Model — these two filters are mutually "
+                                        "exclusive. Leaving both at “All” reads the portfolio-level (All Models) metrics.",
+                                    ]),
+                                    html.Li([
+                                        html.Strong("Click “Apply filters”. "),
+                                        "The dashboard loads here. Nothing renders until you apply, so this starting guide "
+                                        "stays visible until the first Apply.",
+                                    ]),
+                                    html.Li([
+                                        html.Strong("Read the analysis. "),
+                                        "Once loaded, the dashboard is organised as:",
+                                        html.Ul(
+                                            className="saas-getting-started-substeps",
+                                            children=[
+                                                html.Li([
+                                                    html.Strong("1.1 Overview — "),
+                                                    "a process-flow summary from Mean Error % to the Performance RAG.",
+                                                ]),
+                                                html.Li([
+                                                    html.Strong("1.2 Performance — "),
+                                                    "Performance RAG and Mean Error % test cards, an overall Mean Error % "
+                                                    "trend, and a by-component trend for Net Charge-Offs (NCO) and the "
+                                                    "Allowance for Credit Losses (ACL).",
+                                                ]),
+                                            ],
+                                        ),
+                                    ]),
+                                    html.Li([
+                                        html.Strong("Fine-tune within each section. "),
+                                        "The trend charts have Window / From / To range controls for on-screen analysis — "
+                                        "these do not require re-applying the top filters.",
+                                    ]),
+                                    html.Li([
+                                        html.Strong("Start over. "),
+                                        "Refresh the page at any time to clear the dashboard and return to this starting view.",
+                                    ]),
+                                ],
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+        ],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -332,7 +521,6 @@ def page_layout(data: dict) -> list:
     from ...domain.loss import set_loss_metrics
     cfg = load_filter_config()
     model_options = model_names("loss")
-    default_model = "all"
     segment_options = ["All", *segment_values()]
     reporting_cycle_options = [{"label": c["label"], "value": c["value"]} for c in cfg["reporting_cycles"]]
     default_cycle = reporting_cycle_options[0]["value"] if reporting_cycle_options else "CCAR 2026"
@@ -349,6 +537,7 @@ def page_layout(data: dict) -> list:
 
     return [
         dcc.Store(id=RANGE_STORE_ID, data={}),
+        dcc.Store(id=APPLIED_FILTERS_STORE_ID),
         html.Div(
             className="top-bar",
             children=[
@@ -403,6 +592,7 @@ def page_layout(data: dict) -> list:
                                         value="all",
                                     ),
                                 ),
+                                _build_loss_apply_button(),
                             ],
                         ),
                         html.Div(style={"marginTop": "12px"}, children=[_build_loss_subnav()]),
@@ -417,7 +607,7 @@ def page_layout(data: dict) -> list:
                     className="tab-panel active pd-performance-app",
                     children=html.Div(
                         id=CONTENT_ID,
-                        children=render_loss_performance_content(data, default_model, "All", default_monitoring_point, {}),
+                        children=build_loss_apply_prompt(),
                     ),
                 ),
             ],

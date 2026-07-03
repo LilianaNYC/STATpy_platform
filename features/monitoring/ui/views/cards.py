@@ -73,33 +73,38 @@ def build_pd_test_card(metric, current_values, previous_values, thresholds, cont
         heading_left.append(html.Span(options["test_label"]))
     heading_left.append(html.Div(title_row, className="pd-card-title-row"))
 
+    children = [
+        html.Div(
+            className="pd-test-card-heading",
+            children=[
+                html.Div(heading_left),
+                html.Div(rag, className=f"pd-test-status pd-test-status-{pd_tone_class(rag)}"),
+            ],
+        ),
+        html.Div(format_pd_metric(value, fmt), className="pd-test-value"),
+    ]
+    if not options.get("hide_snapshot"):
+        children.append(html.Div(f"Snapshot date: {context['snapshot_quarter']}", className="pd-test-meta"))
+    children.extend(_meta_rows(options.get("extra_meta_rows")))
+    children.append(
+        html.Div(
+            className="pd-performance-comparison",
+            children=[
+                html.Div([
+                    html.Span(f"Previous ({context.get('previous_quarter') or 'No prior quarter'})"),
+                    html.Strong(format_pd_metric(previous_value, fmt)),
+                ]),
+                html.Div([
+                    html.Span("Change"),
+                    html.Strong(movement["text"], className=f"pd-change {movement['css']}"),
+                ]),
+            ],
+        )
+    )
+
     return html.Article(
         className=f"pd-test-card pd-test-{pd_tone_class(rag)} {options.get('extra_class', '')}".strip(),
-        children=[
-            html.Div(
-                className="pd-test-card-heading",
-                children=[
-                    html.Div(heading_left),
-                    html.Div(rag, className=f"pd-test-status pd-test-status-{pd_tone_class(rag)}"),
-                ],
-            ),
-            html.Div(format_pd_metric(value, fmt), className="pd-test-value"),
-            html.Div(f"Snapshot date: {context['snapshot_quarter']}", className="pd-test-meta"),
-            *_meta_rows(options.get("extra_meta_rows")),
-            html.Div(
-                className="pd-performance-comparison",
-                children=[
-                    html.Div([
-                        html.Span(f"Previous ({context.get('previous_quarter') or 'No prior quarter'})"),
-                        html.Strong(format_pd_metric(previous_value, fmt)),
-                    ]),
-                    html.Div([
-                        html.Span("Change"),
-                        html.Strong(movement["text"], className=f"pd-change {movement['css']}"),
-                    ]),
-                ],
-            ),
-        ],
+        children=children,
     )
 
 
@@ -216,15 +221,16 @@ def build_pd_section_heading(index, title, description, rag, options=None):
     if chip is not None:
         heading_row.append(chip)
 
-    children = [
-        html.Div(
-            children=[
-                html.Div(index, className="pd-content-kicker"),
-                html.Div(heading_row, className="pd-heading-row"),
-                html.P(description),
-            ],
-        ),
+    copy_children = [
+        html.Div(index, className="pd-content-kicker"),
+        html.Div(heading_row, className="pd-heading-row"),
+        html.P(description),
     ]
+    main_children = [html.Div(copy_children, className="pd-domain-heading-copy")]
+    aside_children = []
+
+    if options.get("controls") is not None:
+        aside_children.append(html.Div(options["controls"], className="pd-domain-heading-controls"))
 
     if options.get("show_rag", True):
         status_children = [
@@ -233,9 +239,12 @@ def build_pd_section_heading(index, title, description, rag, options=None):
         ]
         if options.get("status_note"):
             status_children.append(html.Small(options["status_note"]))
-        children.append(html.Div(status_children, className=f"pd-domain-status pd-domain-{pd_tone_class(rag)}"))
+        aside_children.append(html.Div(status_children, className=f"pd-domain-status pd-domain-{pd_tone_class(rag)}"))
 
-    return html.Div(children, className="pd-domain-heading")
+    if aside_children:
+        main_children.append(html.Div(aside_children, className="pd-domain-heading-aside"))
+
+    return html.Div([html.Div(main_children, className="pd-domain-heading-main")], className="pd-domain-heading")
 
 
 def build_pd_chapter_heading(index, title, description, options=None):

@@ -537,9 +537,7 @@ def mev_toggle_label(
 
     all_values = [option["value"] for option in multi_mev_options if option.get("value")]
     if all_values and set(selected_mev_values) == set(all_values):
-        if normalized_mode == "transformed_only":
-            return "All"
-        return "All raw MEVs"
+        return "All"
 
     label_by_value = {option["value"]: option["label"] for option in multi_mev_options if option.get("value")}
     if len(selected_mev_values) == 1:
@@ -835,7 +833,36 @@ def build_model_chart_cards(
             )
         )
 
-    return cards
+    if normalized_mev_mode != "family":
+        return cards
+    return group_cards_into_family_rows(model_name, effective_mev_values, cards)
+
+
+def group_cards_into_family_rows(
+    model_name: str, mev_names: list[str], cards: list, *, max_per_row: int = 2
+) -> list:
+    """Group cards so each transformed MEV's row also holds its raw MEVs, family by family,
+    wrapping a family onto additional rows (never sharing a row with another family) once
+    it exceeds ``max_per_row`` cards."""
+    family_map = records.family_map_for_model(model_name)
+    rows: list = []
+    current_row: list = []
+    current_family_raws: set[str] = set()
+    for mev_name, card in zip(mev_names, cards):
+        is_family_head = mev_name in family_map
+        continues_family = not is_family_head and mev_name in current_family_raws
+        starts_new_row = not continues_family or len(current_row) >= max_per_row
+        if starts_new_row and current_row:
+            rows.append(html.Div(className="pd-mev-chart-family-row", children=current_row))
+            current_row = []
+        current_row.append(card)
+        if is_family_head:
+            current_family_raws = set(family_map.get(mev_name, []))
+        elif not continues_family:
+            current_family_raws = set()
+    if current_row:
+        rows.append(html.Div(className="pd-mev-chart-family-row", children=current_row))
+    return rows
 
 
 def build_model_panel(
@@ -860,7 +887,7 @@ def build_model_panel(
     default_model_scenarios = (
         [scenario_options[0]["value"]] if scenario_options else []
     ) if reference_lines == "monitoring" else [option["value"] for option in scenario_options if option.get("value")]
-    family_mev_options = records.build_model_mev_options(
+    family_mev_options = records.build_family_mev_options(
         records.filter_records_by_model_mevs(visible_records, model_name, "family"),
         mev_label_mode,
     )
@@ -868,7 +895,10 @@ def build_model_panel(
         records.filter_records_by_model_mevs(visible_records, model_name, "transformed_only"),
         mev_label_mode,
     )
-    default_family_mev = family_mev_options[0]["value"] if family_mev_options else ""
+    default_family_mev = next(
+        (option["value"] for option in family_mev_options if option["value"] != records.FAMILY_ALL_VALUE),
+        "",
+    )
     default_model_mevs = [option["value"] for option in transformed_mev_options]
     default_display_mevs = records.active_selected_mevs(
         model_name,
@@ -876,6 +906,7 @@ def build_model_panel(
         default_family_mev,
         default_model_mevs,
         visible_records,
+        mev_label_mode=mev_label_mode,
     )
     date_periods = records.available_date_periods(visible_records)
     mev_names = sorted({

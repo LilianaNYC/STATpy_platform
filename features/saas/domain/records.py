@@ -187,17 +187,50 @@ def build_model_mev_options_for_mode(
     )
 
 
-def family_display_mevs(model_name: str, selected_mev: str | None, records: list[dict] | None = None) -> list[str]:
+FAMILY_ALL_VALUE = "all"
+
+
+def build_family_mev_options(records: list[dict], mev_label_mode: str | None) -> list[dict]:
+    """MEV Family single-select options: 'All' followed by each transformed MEV."""
+    options = build_model_mev_options(records, mev_label_mode)
+    if not options:
+        return options
+    return [{"label": "All", "value": FAMILY_ALL_VALUE}] + options
+
+
+def build_family_mev_options_for_mode(
+    model_name: str,
+    run_for,
+    snapshot_period: str | None,
+    mev_label_mode: str | None,
+    compare_against=None,
+) -> list[dict]:
+    base_records = records_for_model_scope(model_name, run_for, snapshot_period, compare_against)
+    return build_family_mev_options(
+        filter_records_by_model_mevs(base_records, model_name, "family"),
+        mev_label_mode,
+    )
+
+
+def family_display_mevs(
+    model_name: str,
+    selected_mev: str | None,
+    records: list[dict] | None = None,
+    mev_label_mode: str | None = None,
+) -> list[str]:
     available_names = {
         str(row.get("MEV Name") or "").strip()
         for row in (records or [])
         if str(row.get("MEV Name") or "").strip()
     }
-    family_map = family_map_for_model(model_name)
     normalized_selected = str(selected_mev or "").strip()
     if not normalized_selected:
         return []
 
+    if normalized_selected == FAMILY_ALL_VALUE:
+        return selectors.saas_family_ordered_names(model_name, available_names, mev_label_mode)
+
+    family_map = family_map_for_model(model_name)
     family_values = [normalized_selected]
     family_values.extend(family_map.get(normalized_selected, []))
     ordered_values = list(dict.fromkeys(value for value in family_values if value))
@@ -212,10 +245,11 @@ def active_selected_mevs(
     selected_mev_single,
     selected_mevs_multi,
     records: list[dict] | None = None,
+    mev_label_mode: str | None = None,
 ) -> list[str]:
     normalized_mode = selectors.normalize_selected_mev_mode(selected_mev_mode)
     if normalized_mode == "family":
         selected_value = selectors.normalize_selected_mevs(selected_mev_single)
         selected_mev = selected_value[0] if selected_value else None
-        return family_display_mevs(model_name, selected_mev, records)
+        return family_display_mevs(model_name, selected_mev, records, mev_label_mode)
     return selectors.normalize_selected_mevs(selected_mevs_multi)

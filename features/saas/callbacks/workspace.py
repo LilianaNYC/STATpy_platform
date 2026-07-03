@@ -56,6 +56,7 @@ _filter_records_by_snapshot_period = records.filter_records_by_snapshot_period
 _filter_records_by_date_range = records.filter_records_by_date_range
 _records_for_model_scope = records.records_for_model_scope
 _build_model_mev_options_for_mode = records.build_model_mev_options_for_mode
+_build_family_mev_options_for_mode = records.build_family_mev_options_for_mode
 _active_selected_mevs = records.active_selected_mevs
 _single_select_option_classes = views.single_select_option_classes
 _toggle_menu_class = views.toggle_menu_class
@@ -431,12 +432,11 @@ def _register_model_picker_callbacks(app) -> None:
     ):
         model_name = (ctx.triggered_id or {}).get("model")
         normalized_mode = _normalize_selected_mev_mode(selected_mev_mode)
-        single_mev_options = _build_model_mev_options_for_mode(
+        single_mev_options = _build_family_mev_options_for_mode(
             model_name,
             run_for,
             snapshot_period,
             mev_label_mode,
-            "family",
             compare_against,
         )
         multi_mev_options = _build_model_mev_options_for_mode(
@@ -449,9 +449,13 @@ def _register_model_picker_callbacks(app) -> None:
         )
 
         single_option_values = [option["value"] for option in single_mev_options if option.get("value")]
+        default_single_value = next(
+            (value for value in single_option_values if value != records.FAMILY_ALL_VALUE),
+            single_option_values[0] if single_option_values else "",
+        )
         next_single_value = next(
             (value for value in _normalize_selected_mevs(selected_mev_single) if value in single_option_values),
-            single_option_values[0] if single_option_values else "",
+            default_single_value,
         )
         multi_option_values = [option["value"] for option in multi_mev_options if option.get("value")]
         valid_selected_multi = [value for value in _normalize_selected_mevs(selected_mevs_multi) if value in multi_option_values]
@@ -1115,6 +1119,7 @@ def _register_render_callbacks(app) -> None:
             selected_mev_single,
             selected_mevs_multi,
             base_records,
+            mev_label_mode=mev_label_mode,
         )
         mev_names = sorted({str(row.get("MEV Name") or "").strip() for row in records if str(row.get("MEV Name") or "").strip()})
         scenario_names = sorted({str(row.get("Scenario") or "").strip().lower() for row in records if str(row.get("Scenario") or "").strip()})

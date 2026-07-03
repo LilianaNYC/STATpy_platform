@@ -44,7 +44,8 @@ from .....shared.ui.controls import (
     build_chart_header,
     build_frozen_horizon_control,
     build_global_filters,
-    build_range_controls,
+    build_section_filter_bar,
+    build_section_filter_item,
     build_trend_horizon_control,
 )
 from .cards import (
@@ -133,6 +134,10 @@ TREND_HORIZON_GROUPS = {
 
 DEFAULT_TREND_HORIZON_STORE = {"calibration": "1y", "discrimination": "1y"}
 DEFAULT_MEV_FILTER_STORE = {"model": "all", "names": None}
+CALIBRATION_SECTION_RANGE_KEY = "calibration_section"
+DISCRIMINATION_SECTION_RANGE_KEY = "discrimination_section"
+BALANCE_SHEET_SECTION_RANGE_KEY = "balance_sheet_section"
+PSI_SECTION_RANGE_KEY = "psi_section"
 
 _GRAPH_CONFIG = {"displayModeBar": False, "responsive": True}
 
@@ -228,8 +233,8 @@ def _build_psi_stability_card(
                 className="pd-rag-card-method",
                 children=[
                     html.Strong("Methodology: "),
-                    "Population Stability Index on the IRB CRR key-driver distribution, comparing the current "
-                    "performing-book population against the development reference.",
+                    "Population Stability Index on the key-driver distribution, comparing the current scoring "
+                    "population against the development reference.",
                 ],
             ),
             html.Div(
@@ -280,10 +285,10 @@ def _build_psi_stability_summary(
                 "Population Stability Index", current_values, previous_values, thresholds, psi_context,
                 options={
                     "card_title": "Population Stability Index",
-                    "test_label": "PSI based on IRB CRR",
+                    "test_label": "Population Stability Index",
                     "format": "ratio",
                     "extra_meta_rows": [{"label": "Assessment", "value": "Current vs reference snapshot"}],
-                    "tooltip": "Lower PSI indicates a more stable performing-book distribution.",
+                    "tooltip": "Lower PSI indicates a more stable population against the reference distribution.",
                 },
             ),
         ],
@@ -952,8 +957,7 @@ def _pd_post_review_summaries(
         summaries.append({
             "name": "Transition Matrix", "anchor": "pd-transition-matrix-distance", "rag": _worst_rag(rags),
             "metric": f"{peak['delta']:.1%}", "metric_label": "Peak migration gap",
-            "takeaway": f"MM_Pm drifts {peak['delta']:.1%} from anchor by {peak['period']} · "
-                        f"{breaches}/{len(trend)} quarters breach threshold.",
+            "takeaway": f"{breaches}/{len(trend)} quarters breach the transition threshold.",
         })
     else:
         summaries.append({
@@ -970,7 +974,11 @@ def _pd_post_review_summaries(
     summaries.append({
         "name": "PSI", "anchor": "pd-population-stability-index", "rag": psi_rag,
         "metric": f"{latest_psi:.3f}" if latest_psi is not None else "—", "metric_label": f"Latest PSI ({cq})",
-        "takeaway": "Population stability vs reference — lower is more stable (green ≤ 0.10, red > 0.25).",
+        "takeaway": (
+            f"Latest PSI is {latest_psi:.3f}; lower values indicate a more stable population vs reference."
+            if latest_psi is not None
+            else "No PSI metric is available for the current scope."
+        ),
     })
 
     # 2.4 Scenario Ranking --------------------------------------------------
@@ -1040,20 +1048,257 @@ def _build_pd_review_scorecard_card(summary: dict) -> html.Article:
                     html.H4(summary["name"]),
                     html.Span(
                         summary["rag"],
-                        style={
-                            "flex": "0 0 auto", "fontSize": "11px", "fontWeight": "800", "letterSpacing": "0.3px",
-                            "color": _RAG_HEX.get(tone, "#94a3b8"),
-                        },
+                        className="pd-review-card-rag",
+                        style={"--review-rag-tone": _RAG_HEX.get(tone, "#94a3b8")},
                     ),
                 ],
             ),
             html.Div(summary["metric"], className="pd-test-value", style={"marginTop": "10px"}),
             html.Div(
-                summary["metric_label"], className="pd-test-meta",
-                style={"fontWeight": "700", "textTransform": "uppercase", "fontSize": "9.5px",
-                       "letterSpacing": "0.35px", "color": "#64748b", "marginTop": "2px"},
+                summary["metric_label"], className="pd-test-meta pd-review-card-metric-label",
+                style={"marginTop": "2px"},
             ),
             html.Div(summary["takeaway"], className="pd-test-meta", style={"marginTop": "8px"}),
+        ],
+    )
+
+
+def _pd_scope_label(ctx: PdFilterContext) -> str:
+    if ctx.segment and ctx.segment != "all":
+        return ctx.segment
+    models = sorted(model for model in ctx.models if model)
+    if len(models) == 1:
+        return models[0]
+    return "All Models"
+
+
+def _count_pd_attention(summaries: list[dict]) -> int:
+    return sum(1 for summary in summaries if summary.get("rag") in ("Amber", "Red"))
+
+
+def _worst_pd_summary(summaries: list[dict]) -> dict | None:
+    ranked = [
+        summary for summary in summaries
+        if summary.get("rag") in ("Green", "Amber", "Red")
+    ]
+    if not ranked:
+        return None
+    return min(ranked, key=lambda summary: (-_RAG_RANK.get(summary["rag"], -1), summary["name"]))
+
+
+def _build_pd_overview_badge(rag: str) -> html.Span:
+    tone = _rag_tone(rag)
+    return html.Span(
+        className=f"overview-rag-badge overview-rag-{tone}",
+        title=f"RAG: {rag}",
+        **{"aria-label": f"RAG {rag}"},
+    )
+
+
+def _build_pd_overview_kpi(value: str, label: str, tone: str) -> html.Div:
+    return html.Div(
+        className=f"overview-hero-kpi overview-hero-kpi-{tone}",
+        children=[
+            html.Div(value, className="overview-hero-kpi-value"),
+            html.Div(label, className="overview-hero-kpi-label"),
+        ],
+    )
+
+
+def _build_pd_overview_scope_item(label: str, value: str) -> html.Li:
+    return html.Li(
+        children=[
+            html.Span(f"{label}:", className="overview-scope-list-label"),
+            html.Strong(value or "—"),
+        ]
+    )
+
+
+def _build_pd_overview_section_item(summary: dict) -> html.Li:
+    tone = _rag_tone(summary["rag"])
+    return html.Li(
+        className=f"overview-section-item overview-section-item-{tone}",
+        children=[
+            html.Div(
+                className="overview-section-item-main",
+                children=[
+                    _build_pd_overview_badge(summary["rag"]),
+                    html.Div([
+                        html.Strong(summary["name"], className="overview-section-item-title"),
+                        html.Span(summary["takeaway"], className="overview-section-item-copy"),
+                    ]),
+                ],
+            ),
+            html.Span(summary["rag"], className="overview-section-item-status"),
+        ],
+    )
+
+
+def _build_pd_overview_chapter_panel(kicker: str, title: str, rag: str, summaries: list[dict]) -> html.Div:
+    tone = _rag_tone(rag)
+    return html.Div(
+        className=f"overview-chapter-panel overview-chapter-panel-{tone}",
+        children=[
+            html.Div(
+                className="overview-chapter-panel-header",
+                children=[
+                    html.Div([
+                        html.Div(kicker, className="overview-chapter-panel-kicker"),
+                        html.H5(title, className="overview-chapter-panel-title"),
+                    ]),
+                    html.Span(rag, className="overview-chapter-panel-rag"),
+                ],
+            ),
+            html.Ul(
+                className="overview-section-list",
+                children=[_build_pd_overview_section_item(summary) for summary in summaries],
+            ),
+        ],
+    )
+
+
+def _build_pd_main_overview(
+    ctx: PdFilterContext,
+    reporting_cycle: str,
+    scenario: str,
+    chapter_1_rag: str,
+    chapter_1_summaries: list[dict],
+    chapter_2_summaries: list[dict],
+) -> html.Section:
+    chapter_1_attention = _count_pd_attention(chapter_1_summaries)
+    chapter_2_attention = _count_pd_attention(chapter_2_summaries)
+    total_areas = len(chapter_1_summaries) + len(chapter_2_summaries)
+    total_attention = chapter_1_attention + chapter_2_attention
+    chapter_2_rag = _worst_rag([summary.get("rag") for summary in chapter_2_summaries])
+    priority_summary = _worst_pd_summary([
+        *[
+            {**summary, "chapter": "RAG Assignment"}
+            for summary in chapter_1_summaries
+        ],
+        *[
+            {**summary, "chapter": "Post Subjective Review Analysis"}
+            for summary in chapter_2_summaries
+        ],
+    ])
+    priority_label = (
+        f"{priority_summary['chapter']} -> {priority_summary['name']}"
+        if priority_summary and priority_summary.get("rag") in ("Amber", "Red")
+        else "No immediate hotspot"
+    )
+    posture_tone = "red" if any(summary.get("rag") == "Red" for summary in [*chapter_1_summaries, *chapter_2_summaries]) else (
+        "amber" if total_attention else "green"
+    )
+
+    return html.Section(
+        id="pd-dashboard-overview",
+        className="pd-content-section pd-live-section",
+        children=[
+            build_pd_section_heading(
+                "0. Overview",
+                "Main Overview",
+                "Single-screen summary across both dashboard chapters so reviewers can orient themselves before "
+                "moving into the detailed section diagnostics.",
+                "N/A",
+                options={"show_rag": False},
+            ),
+            html.Div(
+                className="overview-command-hero overview-main-card",
+                children=[
+                    html.Div(
+                        className="overview-main-card-top",
+                        children=[
+                            html.Div(
+                                className="overview-command-hero-copy",
+                                children=[
+                                    html.Div("Before the deep dive", className="overview-command-hero-kicker"),
+                                    html.H4(
+                                        f"{total_attention} of {total_areas} monitored areas need attention",
+                                        className="overview-command-hero-title",
+                                        style={"--overview-posture-tone": _RAG_HEX[posture_tone], "margin": "0"},
+                                    ),
+                                    html.P(
+                                        "This overview combines the two chapters into one opening readout so teams can see "
+                                        "where the signal is concentrated before stepping into the detailed charts and tests."
+                                    ),
+                                    html.Div(
+                                        className="overview-main-card-scope",
+                                        children=[
+                                            html.Div("Current scope", className="overview-review-card-kicker"),
+                                            html.Ul(
+                                                className="overview-scope-list overview-scope-list-compact",
+                                                children=[
+                                                    _build_pd_overview_scope_item("Reporting cycle", reporting_cycle or "—"),
+                                                    _build_pd_overview_scope_item("Monitoring point", ctx.monitoring_point or "—"),
+                                                    _build_pd_overview_scope_item("Population", _pd_scope_label(ctx)),
+                                                    _build_pd_overview_scope_item("Scenario", scenario or "—"),
+                                                ],
+                                            ),
+                                        ],
+                                    ),
+                                ],
+                            ),
+                        ],
+                    ),
+                    html.Div(
+                        className="overview-hero-kpis overview-main-card-kpis",
+                        children=[
+                            _build_pd_overview_kpi(str(total_attention), "Areas Needing Attention", posture_tone),
+                            _build_pd_overview_kpi(chapter_1_rag, "RAG Assignment Overall Status", _rag_tone(chapter_1_rag)),
+                            _build_pd_overview_kpi(str(chapter_2_attention), "Post Subjective Review Analysis Test Flagged", _rag_tone(chapter_2_rag)),
+                        ],
+                    ),
+                    html.Div(
+                        className="overview-main-breakdown",
+                        children=[
+                            html.Div(
+                                className="overview-review-card-heading overview-main-breakdown-heading",
+                                children=[
+                                    html.Div("Chapter breakdown", className="overview-review-card-kicker"),
+                                    html.H4("How the dashboard story splits across the two chapters"),
+                                    html.P(
+                                        "Each section below is color-coded by its current RAG so you can spot the "
+                                        "stress points before moving into the detailed trend and diagnostic views."
+                                    ),
+                                ],
+                            ),
+                            html.Div(
+                                className="overview-chapter-grid overview-chapter-grid-single-card",
+                                children=[
+                                    _build_pd_overview_chapter_panel(
+                                        "Chapter 1",
+                                        "RAG Assignment",
+                                        chapter_1_rag,
+                                        chapter_1_summaries,
+                                    ),
+                                    _build_pd_overview_chapter_panel(
+                                        "Chapter 2",
+                                        "Post Subjective Review Analysis",
+                                        chapter_2_rag,
+                                        chapter_2_summaries,
+                                    ),
+                                ],
+                            ),
+                            html.Div(
+                                className="overview-review-focus overview-main-breakdown-focus",
+                                children=[
+                                    html.Div([
+                                        html.Span("Recommended deep dive"),
+                                        html.Strong(priority_label),
+                                    ]),
+                                    html.Div([
+                                        html.Span("Why it matters"),
+                                        html.Strong(
+                                            priority_summary["takeaway"]
+                                            if priority_summary and priority_summary.get("rag") in ("Amber", "Red")
+                                            else "Both chapters are stable for the selected scope."
+                                        ),
+                                    ]),
+                                ],
+                            ),
+                        ],
+                    ),
+                ],
+            ),
         ],
     )
 
@@ -1067,10 +1312,12 @@ def _build_pd_post_review_overview(
     rating_observations,
     cq: str,
     crr_scale,
+    summaries: list[dict] | None = None,
 ) -> html.Section:
-    summaries = _pd_post_review_summaries(
-        data, ctx, reporting_cycle, scenario, observations, rating_observations, cq, crr_scale,
-    )
+    if summaries is None:
+        summaries = _pd_post_review_summaries(
+            data, ctx, reporting_cycle, scenario, observations, rating_observations, cq, crr_scale,
+        )
     attention = [s for s in summaries if s["rag"] in ("Amber", "Red")]
     red = sum(1 for s in summaries if s["rag"] == "Red")
     amber = sum(1 for s in summaries if s["rag"] == "Amber")
@@ -1079,14 +1326,12 @@ def _build_pd_post_review_overview(
 
     def _legend(label: str, count: int, tone: str) -> html.Div:
         return html.Div(
-            className="pd-review-legend-chip",
-            style={"display": "inline-flex", "alignItems": "center", "gap": "7px", "padding": "6px 11px",
-                   "border": "1px solid #dbe4f0", "borderRadius": "999px", "background": "rgba(248,250,252,.9)"},
+            className=f"pd-review-legend-chip pd-review-legend-chip-{tone}",
+            style={"--legend-tone": _RAG_HEX[tone]},
             children=[
-                html.Span(style={"width": "10px", "height": "10px", "borderRadius": "999px",
-                                 "background": _RAG_HEX[tone], "boxShadow": "0 0 0 2px rgba(255,255,255,.9) inset"}),
-                html.Strong(str(count), style={"fontSize": "13px", "color": "#0f172a"}),
-                html.Span(label, style={"fontSize": "11px", "color": "#64748b", "fontWeight": "700"}),
+                html.Span(className="pd-review-legend-dot"),
+                html.Strong(str(count), className="pd-review-legend-count"),
+                html.Span(label, className="pd-review-legend-label"),
             ],
         )
 
@@ -1113,7 +1358,8 @@ def _build_pd_post_review_overview(
                                 html.Div("Review posture", className="overview-command-hero-kicker"),
                                 html.H4(
                                     f"{len(attention)} of {len(summaries)} areas need attention",
-                                    style={"margin": "0", "color": _RAG_HEX[posture_tone]},
+                                    className="overview-command-hero-title",
+                                    style={"--overview-posture-tone": _RAG_HEX[posture_tone], "margin": "0"},
                                 ),
                             ]),
                             html.Div(
@@ -1534,6 +1780,18 @@ def _build_mev_range_section(data: dict, ctx: PdFilterContext, range_store: dict
     )
 
     body = model_panels if (chart_model_names and chart_mev_names and model_panels) else [empty_state]
+    display_filters = []
+    if mev_periods:
+        display_filters.append(
+            build_section_filter_bar([
+                build_section_filter_item(
+                    "Display filters",
+                    range_key="mev",
+                    periods=mev_periods,
+                    range_value=range_store.get("mev"),
+                ),
+            ])
+        )
 
     return html.Section(
         id="pd-mev-range",
@@ -1590,6 +1848,7 @@ def _build_mev_range_section(data: dict, ctx: PdFilterContext, range_store: dict
                 reporting_cycle=reporting_cycle,
                 scenario=scenario,
             ),
+            *display_filters,
             *body,
         ],
     )
@@ -1657,7 +1916,7 @@ def render_pd_performance_content(
         if not go_live_start or period >= go_live_start
     ]
 
-    discrimination_trend_horizon_key = _trend_horizon_value(trend_horizon_store, "discrimination")
+    discrimination_trend_horizon_key = "1y"
     discrimination_trend_context = get_pd_performance_context_for_horizon(performance_horizons, discrimination_trend_horizon_key, ctx)
     discrimination_trend_periods = get_pd_range_periods(ctx.quarters, discrimination_trend_context["snapshot_quarter"])
 
@@ -1739,10 +1998,9 @@ def render_pd_performance_content(
     discrimination_rag = calculate_pd_discrimination_section_rag(thresholds, current_rag_values, discrimination_default_count)
     previous_discrimination_rag = calculate_pd_discrimination_section_rag(thresholds, previous_rag_values, previous_discrimination_default_count)
     discrimination_rag_tooltip = (
-        "If the 1-year default count is below 15, the RAG is forced to Amber. "
-        "Otherwise: if Delta Accuracy Ratio is Red and Accuracy Ratio is Green, the RAG is "
-        "Amber. If Delta Accuracy Ratio is Red and Accuracy Ratio is Amber, the RAG is Red. "
-        "Otherwise the Accuracy Ratio RAG is used."
+        "If the 1-year default count is below 15, the RAG is forced to Amber. Otherwise, if Delta Accuracy Ratio "
+        "is Red and Accuracy Ratio is Green, the RAG is Amber. If Delta Accuracy Ratio is Red and Accuracy Ratio "
+        "is Amber, the RAG is Red. In all other cases, the Accuracy Ratio RAG is used."
     )
     accuracy_ratio_rag = calculate_pd_metric_rag(thresholds, "Accuracy Ratio", current_rag_values["Accuracy Ratio"])
     delta_accuracy_ratio_rag = calculate_pd_metric_rag(thresholds, "Delta Accuracy Ratio", current_rag_values["Delta Accuracy Ratio"])
@@ -1885,8 +2143,8 @@ def render_pd_performance_content(
                     html.Div("1.1 Overview", className="pd-content-kicker"),
                     html.H3("PD RAG Assignment Overview"),
                     html.P(
-                        "At-a-glance summary of the current ECL PIT PD and Balance Sheet PD calibration and "
-                        "discriminatory power diagnostics."
+                        "At-a-glance summary of the 1-year PD monitoring flow across ECL PIT PD and Balance Sheet PD "
+                        "calibration and discriminatory-power diagnostics."
                     ),
                 ],
             ),
@@ -1902,6 +2160,7 @@ def render_pd_performance_content(
         observations, rating_observations, calibration_trend_context["snapshot_quarter"], calibration_trend_horizon_key, ctx, crr_scale,
     )
     calibration_rag_trend = build_pd_calibration_rag_trend(observations, rating_observations, cq, ctx, crr_scale, monitoring_thresholds)
+    calibration_section_periods = calibration_trend_periods or get_pd_range_periods(ctx.quarters, cq)
 
     section_1_2 = html.Section(
         id="pd-calibration-rag",
@@ -1910,12 +2169,21 @@ def render_pd_performance_content(
             build_pd_section_heading(
                 "1.2 ECL PIT PD - Calibration Conservatism",
                 "ECL PIT PD - Calibration Conservatism",
-                "Compare observed defaults with predicted PIT PD, and review monotonicity across rating grades for "
-                "the ECL monitoring population.",
+                "Compares observed defaults with predicted PIT PD and reviews monotonicity across rating grades for "
+                "the monitored ECL 1-year population.",
                 calibration_rag,
                 options={"show_rag": False},
             ),
             html.Div(className="pd-test-grid pd-calibration-test-grid", children=calibration_horizon_cards),
+            build_section_filter_bar([
+                build_section_filter_item(
+                    "Display filters",
+                    extra_controls=build_trend_horizon_control("calibration_ci", calibration_trend_horizon_key),
+                    range_key=CALIBRATION_SECTION_RANGE_KEY,
+                    periods=calibration_section_periods,
+                    range_value=range_store.get(CALIBRATION_SECTION_RANGE_KEY),
+                ),
+            ]),
             html.Div(
                 className="pd-trend-detail-grid",
                 children=[
@@ -1927,13 +2195,14 @@ def render_pd_performance_content(
                                 "Calibration Conservatism RAG (ECL PIT) Trend",
                                 "Quarter-by-quarter Calibration Conservatism RAG (ECL PIT) shown as a simple "
                                 "color-coded dot timeline.",
-                                "calibration_rag",
-                                get_pd_range_periods(ctx.quarters, cq),
-                                range_store.get("calibration_rag"),
                             ),
                             _chart_surface(
                                 "pd-calibration-rag-trend-chart",
-                                build_pd_calibration_rag_trend_figure(calibration_rag_trend, cq, range_store.get("calibration_rag")),
+                                build_pd_calibration_rag_trend_figure(
+                                    calibration_rag_trend,
+                                    cq,
+                                    range_store.get(CALIBRATION_SECTION_RANGE_KEY),
+                                ),
                                 "pd-default-rate-trend-chart pd-default-rate-trend-chart-compact pd-default-rate-trend-chart-axis-room-compact",
                             ),
                         ],
@@ -1944,17 +2213,17 @@ def render_pd_performance_content(
                         children=[
                             build_chart_header(
                                 "Confidence Interval Test Trend",
-                                f"Confidence interval test trend using the {calibration_trend_context['horizon_label']} "
-                                f"time horizon. Markers use RAG colors.",
-                                "calibration_ci",
-                                calibration_trend_periods,
-                                range_store.get("calibration_ci"),
-                                extra_controls=build_trend_horizon_control("calibration_ci", calibration_trend_horizon_key),
+                                f"Confidence interval test trend for the {calibration_trend_context['horizon_label']} "
+                                f"horizon. Markers use RAG colors.",
                             ),
                             _chart_surface(
                                 "pd-confidence-interval-trend-chart",
                                 build_pd_confidence_interval_trend_figure(
-                                    calibration_performance_trend, monitoring_thresholds, calibration_trend_context["snapshot_quarter"], range_store.get("calibration_ci"), theme=theme,
+                                    calibration_performance_trend,
+                                    monitoring_thresholds,
+                                    calibration_trend_context["snapshot_quarter"],
+                                    range_store.get(CALIBRATION_SECTION_RANGE_KEY),
+                                    theme=theme,
                                 ),
                                 "pd-default-rate-trend-chart pd-default-rate-trend-chart-medium pd-default-rate-trend-chart-axis-room-medium",
                             ),
@@ -1969,15 +2238,16 @@ def render_pd_performance_content(
                     build_chart_header(
                         "Notching Trend",
                         f"Actual notch, predicted notch, and notching difference using the "
-                        f"{calibration_trend_context['horizon_label']} time horizon.",
-                        "calibration_notching",
-                        calibration_trend_periods,
-                        range_store.get("calibration_notching"),
-                        extra_controls=build_trend_horizon_control("calibration_notching", calibration_trend_horizon_key),
+                        f"{calibration_trend_context['horizon_label']} horizon.",
                     ),
                     _chart_surface(
                         "pd-notching-trend-chart",
-                        build_pd_notching_trend_figure(calibration_performance_trend, monitoring_thresholds, range_store.get("calibration_notching"), theme=theme),
+                        build_pd_notching_trend_figure(
+                            calibration_performance_trend,
+                            monitoring_thresholds,
+                            range_store.get(CALIBRATION_SECTION_RANGE_KEY),
+                            theme=theme,
+                        ),
                         "pd-default-rate-trend-chart pd-notching-trend-chart",
                     ),
                 ],
@@ -1989,15 +2259,16 @@ def render_pd_performance_content(
                     build_chart_header(
                         "Calibration Trend",
                         f"Actual vs. predicted default rates and their ratio using the "
-                        f"{calibration_trend_context['horizon_label']} time horizon. Ratio trend markers use RAG colors.",
-                        "calibration_default_rate",
-                        calibration_trend_periods,
-                        range_store.get("calibration_default_rate"),
-                        extra_controls=build_trend_horizon_control("calibration_default_rate", calibration_trend_horizon_key),
+                        f"{calibration_trend_context['horizon_label']} horizon. Ratio trend markers use RAG colors.",
                     ),
                     _chart_surface(
                         "pd-default-rate-trend-chart",
-                        build_pd_default_rate_trend_figure(calibration_performance_trend, monitoring_thresholds, range_store.get("calibration_default_rate"), theme=theme),
+                        build_pd_default_rate_trend_figure(
+                            calibration_performance_trend,
+                            monitoring_thresholds,
+                            range_store.get(CALIBRATION_SECTION_RANGE_KEY),
+                            theme=theme,
+                        ),
                         "pd-default-rate-trend-chart pd-calibration-trend-chart",
                     ),
                 ],
@@ -2016,8 +2287,13 @@ def render_pd_performance_content(
         observations, rating_observations, go_live_context["snapshot_quarter"], go_live_horizon_key, ctx, crr_scale,
     )
     discrimination_trend_figures = build_pd_discrimination_trend_figures(
-        discrimination_performance_trend, monitoring_thresholds, discrimination_trend_context["snapshot_quarter"], range_store.get("discrimination_trend"), theme=theme,
+        discrimination_performance_trend,
+        monitoring_thresholds,
+        discrimination_trend_context["snapshot_quarter"],
+        range_store.get(DISCRIMINATION_SECTION_RANGE_KEY),
+        theme=theme,
     )
+    discrimination_section_periods = discrimination_trend_periods or get_pd_range_periods(ctx.quarters, cq)
 
     section_1_3 = html.Section(
         id="pd-discrimination-rag",
@@ -2026,8 +2302,8 @@ def render_pd_performance_content(
             build_pd_section_heading(
                 "1.3 ECL PIT PD - Discriminatory Power",
                 "ECL PIT PD - Discriminatory Power",
-                "Assess how effectively PIT PD separates higher-risk and lower-risk observations within the "
-                "monitored ECL population.",
+                "Assesses how effectively PIT PD separates higher-risk and lower-risk observations within the "
+                "monitored ECL 1-year population.",
                 discrimination_rag,
                 options={"show_rag": False},
             ),
@@ -2065,6 +2341,15 @@ def render_pd_performance_content(
                     ),
                 ],
             ),
+            build_section_filter_bar([
+                build_section_filter_item(
+                    "Display filters",
+                    extra_controls=build_frozen_horizon_control("Discriminatory power PD horizon"),
+                    range_key=DISCRIMINATION_SECTION_RANGE_KEY,
+                    periods=discrimination_section_periods,
+                    range_value=range_store.get(DISCRIMINATION_SECTION_RANGE_KEY),
+                ),
+            ]),
             html.Div(
                 id="pd-discrimination-rag-trend-panel",
                 className="section-card pd-discrimination-trend-section",
@@ -2072,13 +2357,14 @@ def render_pd_performance_content(
                     build_chart_header(
                         "Discriminatory Power RAG Trend",
                         "Quarter-by-quarter Discriminatory Power RAG shown as a simple color-coded dot timeline.",
-                        "discrimination_rag",
-                        get_pd_range_periods(ctx.quarters, cq),
-                        range_store.get("discrimination_rag"),
                     ),
                     _chart_surface(
                         "pd-discrimination-rag-trend-chart",
-                        build_pd_discrimination_rag_trend_figure(discrimination_rag_trend, cq, range_store.get("discrimination_rag")),
+                        build_pd_discrimination_rag_trend_figure(
+                            discrimination_rag_trend,
+                            cq,
+                            range_store.get(DISCRIMINATION_SECTION_RANGE_KEY),
+                        ),
                         "pd-default-rate-trend-chart pd-default-rate-trend-chart-compact",
                     ),
                 ],
@@ -2089,17 +2375,19 @@ def render_pd_performance_content(
                 children=[
                     build_chart_header(
                         "Accuracy Ratio and Go-Live Delta Trend",
-                        f"Accuracy Ratio, Go Live Accuracy Ratio, and Delta Accuracy Ratio from "
+                        f"Accuracy Ratio, Go-live Accuracy Ratio, and Delta Accuracy Ratio from "
                         f"{go_live_start or 'the configured go-live period'} onward. PD horizon is fixed to the "
-                        f"{go_live_context['horizon_label']} time horizon and delta markers use threshold shading.",
-                        "discrimination_accuracy",
-                        go_live_periods,
-                        range_store.get("discrimination_accuracy"),
-                        extra_controls=build_frozen_horizon_control("Accuracy trend PD horizon"),
+                        f"{go_live_context['horizon_label']} horizon, and delta markers use threshold shading.",
                     ),
                     _chart_surface(
                         "pd-go-live-accuracy-trend-chart",
-                        build_pd_go_live_accuracy_trend_figure(go_live_performance_trend, monitoring_thresholds, go_live_start, range_store.get("discrimination_accuracy"), theme=theme),
+                        build_pd_go_live_accuracy_trend_figure(
+                            go_live_performance_trend,
+                            monitoring_thresholds,
+                            go_live_start,
+                            range_store.get(DISCRIMINATION_SECTION_RANGE_KEY),
+                            theme=theme,
+                        ),
                         "pd-default-rate-trend-chart pd-go-live-accuracy-trend-chart",
                     ),
                 ],
@@ -2109,14 +2397,10 @@ def render_pd_performance_content(
                 className="section-card pd-discrimination-trend-section",
                 children=[
                     build_chart_header(
-                        "Discriminatory Power Trend Other Metrics Trend",
+                        "Discriminatory Power Other Metrics Trend",
                         f"Gini Coefficient, KS Statistic, and Kendall's Tau through "
-                        f"{discrimination_trend_context['snapshot_quarter']} using the "
-                        f"{discrimination_trend_context['horizon_label']} time horizon. Markers use RAG colors.",
-                        "discrimination_trend",
-                        discrimination_trend_periods,
-                        range_store.get("discrimination_trend"),
-                        extra_controls=build_trend_horizon_control("discrimination_trend", discrimination_trend_horizon_key),
+                        f"{discrimination_trend_context['snapshot_quarter']} for the "
+                        f"{discrimination_trend_context['horizon_label']} horizon. Markers use RAG colors.",
                     ),
                     html.Div(
                         id="pd-discrimination-trend-grid",
@@ -2153,6 +2437,7 @@ def render_pd_performance_content(
     balance_sheet_rag_trend = build_pd_balance_sheet_calibration_rag_trend(
         observations, rating_observations, balance_sheet_context["snapshot_quarter"], ctx, crr_scale, monitoring_thresholds,
     )
+    balance_sheet_section_periods = balance_sheet_periods
 
     section_1_4 = html.Section(
         id="pd-balance-sheet-calibration",
@@ -2161,8 +2446,8 @@ def render_pd_performance_content(
             build_pd_section_heading(
                 "1.4 Balance Sheet PD - Calibration Conservatism",
                 "Balance Sheet PD - Calibration Conservatism",
-                "Assess balance sheet PD calibration using the same framework as ECL PIT calibration, "
-                "evaluating the 1-year population with CPD NCO as the predicted PD source.",
+                "Assesses balance sheet PD calibration using the same framework as ECL PIT calibration for the "
+                "monitored 1-year population, with CPD NCO as the predicted PD source.",
                 "N/A",
                 options={"show_rag": False},
             ),
@@ -2184,6 +2469,15 @@ def render_pd_performance_content(
                     ),
                 ],
             ),
+            build_section_filter_bar([
+                build_section_filter_item(
+                    "Display filters",
+                    extra_controls=build_frozen_horizon_control("Balance sheet calibration PD horizon"),
+                    range_key=BALANCE_SHEET_SECTION_RANGE_KEY,
+                    periods=balance_sheet_section_periods,
+                    range_value=range_store.get(BALANCE_SHEET_SECTION_RANGE_KEY),
+                ),
+            ]),
             html.Div(
                 className="pd-trend-detail-grid",
                 children=[
@@ -2194,14 +2488,14 @@ def render_pd_performance_content(
                             build_chart_header(
                                 "Balance Sheet Calibration Conservatism RAG Trend",
                                 "Quarter-by-quarter Calibration Conservatism RAG shown as a simple color-coded dot timeline.",
-                                "balance_sheet_calibration_rag",
-                                balance_sheet_periods,
-                                range_store.get("balance_sheet_calibration_rag"),
-                                extra_controls=build_frozen_horizon_control("Balance sheet calibration RAG PD horizon"),
                             ),
                             _chart_surface(
                                 "pd-balance-sheet-calibration-rag-trend-chart",
-                                build_pd_balance_sheet_calibration_rag_trend_figure(balance_sheet_rag_trend, balance_sheet_context["snapshot_quarter"], range_store.get("balance_sheet_calibration_rag")),
+                                build_pd_balance_sheet_calibration_rag_trend_figure(
+                                    balance_sheet_rag_trend,
+                                    balance_sheet_context["snapshot_quarter"],
+                                    range_store.get(BALANCE_SHEET_SECTION_RANGE_KEY),
+                                ),
                                 "pd-default-rate-trend-chart pd-default-rate-trend-chart-compact pd-default-rate-trend-chart-axis-room-compact",
                             ),
                         ],
@@ -2212,16 +2506,18 @@ def render_pd_performance_content(
                         children=[
                             build_chart_header(
                                 "Balance Sheet Confidence Interval Test Trend",
-                                f"Confidence interval test trend using {balance_sheet_context['predicted_column']} "
-                                f"for the fixed {balance_sheet_context['horizon_label']} horizon. Markers use RAG colors.",
-                                "balance_sheet_ci",
-                                balance_sheet_periods,
-                                range_store.get("balance_sheet_ci"),
-                                extra_controls=build_frozen_horizon_control("Balance sheet calibration PD horizon"),
+                                f"Confidence interval test trend for {balance_sheet_context['predicted_column']} "
+                                f"at the fixed {balance_sheet_context['horizon_label']} horizon. Markers use RAG colors.",
                             ),
                             _chart_surface(
                                 "pd-balance-sheet-confidence-interval-trend-chart",
-                                build_pd_confidence_interval_trend_figure(balance_sheet_performance_trend, monitoring_thresholds, balance_sheet_context["snapshot_quarter"], range_store.get("balance_sheet_ci"), theme=theme),
+                                build_pd_confidence_interval_trend_figure(
+                                    balance_sheet_performance_trend,
+                                    monitoring_thresholds,
+                                    balance_sheet_context["snapshot_quarter"],
+                                    range_store.get(BALANCE_SHEET_SECTION_RANGE_KEY),
+                                    theme=theme,
+                                ),
                                 "pd-default-rate-trend-chart pd-default-rate-trend-chart-medium pd-default-rate-trend-chart-axis-room-medium",
                             ),
                         ],
@@ -2235,15 +2531,16 @@ def render_pd_performance_content(
                     build_chart_header(
                         "Balance Sheet Notching Trend",
                         f"Actual notch, predicted notch, and notching difference using "
-                        f"{balance_sheet_context['predicted_column']} for the fixed {balance_sheet_context['horizon_label']} horizon.",
-                        "balance_sheet_notching",
-                        balance_sheet_periods,
-                        range_store.get("balance_sheet_notching"),
-                        extra_controls=build_frozen_horizon_control("Balance sheet calibration PD horizon"),
+                        f"{balance_sheet_context['predicted_column']} at the fixed {balance_sheet_context['horizon_label']} horizon.",
                     ),
                     _chart_surface(
                         "pd-balance-sheet-notching-trend-chart",
-                        build_pd_notching_trend_figure(balance_sheet_performance_trend, monitoring_thresholds, range_store.get("balance_sheet_notching"), theme=theme),
+                        build_pd_notching_trend_figure(
+                            balance_sheet_performance_trend,
+                            monitoring_thresholds,
+                            range_store.get(BALANCE_SHEET_SECTION_RANGE_KEY),
+                            theme=theme,
+                        ),
                         "pd-default-rate-trend-chart pd-notching-trend-chart",
                     ),
                 ],
@@ -2255,21 +2552,51 @@ def render_pd_performance_content(
                     build_chart_header(
                         "Balance Sheet Calibration Trend",
                         f"Actual vs. predicted default rates and their ratio using "
-                        f"{balance_sheet_context['predicted_column']} for the fixed {balance_sheet_context['horizon_label']} "
+                        f"{balance_sheet_context['predicted_column']} at the fixed {balance_sheet_context['horizon_label']} "
                         f"horizon. Ratio trend markers use RAG colors.",
-                        "balance_sheet_default_rate",
-                        balance_sheet_periods,
-                        range_store.get("balance_sheet_default_rate"),
-                        extra_controls=build_frozen_horizon_control("Balance sheet calibration PD horizon"),
                     ),
                     _chart_surface(
                         "pd-balance-sheet-default-rate-trend-chart",
-                        build_pd_default_rate_trend_figure(balance_sheet_performance_trend, monitoring_thresholds, range_store.get("balance_sheet_default_rate"), theme=theme),
+                        build_pd_default_rate_trend_figure(
+                            balance_sheet_performance_trend,
+                            monitoring_thresholds,
+                            range_store.get(BALANCE_SHEET_SECTION_RANGE_KEY),
+                            theme=theme,
+                        ),
                         "pd-default-rate-trend-chart pd-calibration-trend-chart",
                     ),
                 ],
             ),
         ],
+    )
+
+    chapter_1_summaries = [
+        {
+            "name": "Calibration Conservatism",
+            "rag": calibration_rag,
+            "takeaway": "Combines ECL PIT calibration assignment, notching, and confidence interval diagnostics.",
+        },
+        {
+            "name": "Discriminatory Power",
+            "rag": discrimination_rag,
+            "takeaway": "Reflects Accuracy Ratio, Delta Accuracy Ratio, and the default-count overlay.",
+        },
+        {
+            "name": "Balance Sheet Calibration",
+            "rag": balance_sheet_rag,
+            "takeaway": "Tracks the balance-sheet calibration view using the fixed CPD NCO horizon.",
+        },
+    ]
+    post_review_summaries = _pd_post_review_summaries(
+        data, ctx, reporting_cycle, scenario, observations, rating_observations, cq, crr_scale,
+    )
+    dashboard_overview = _build_pd_main_overview(
+        ctx,
+        reporting_cycle,
+        scenario,
+        performance_pd_overview["rag"],
+        chapter_1_summaries,
+        post_review_summaries,
     )
 
     # -----------------------------------------------------------------
@@ -2297,10 +2624,9 @@ def render_pd_performance_content(
             build_pd_chapter_heading(
                 "2.",
                 "Post Subjective Review Analysis",
-                "This section presents a qualitative assessment with a binary outcome, such as whether rank "
-                "ordering is maintained. While no standalone RAG is assigned to this analysis, any material "
-                "concerns identified through the deep-dive review will be highlighted in the monitoring report and "
-                "reflected in the overall Model RAG.",
+                "Qualitative review of transition behaviour, population stability, scenario ranking, sensitivity, "
+                "and MEV range. No standalone chapter RAG is assigned, but material concerns identified here inform "
+                "the overall Model RAG.",
                 options={"note": f"Monitoring point {cq}"},
             ),
         ],
@@ -2308,6 +2634,7 @@ def render_pd_performance_content(
 
     section_2_1 = _build_pd_post_review_overview(
         data, ctx, reporting_cycle, scenario, observations, rating_observations, cq, crr_scale,
+        summaries=post_review_summaries,
     )
 
     section_2_2 = _build_pd_transition_matrix_section(data, ctx, reporting_cycle, theme, range_store)
@@ -2323,11 +2650,20 @@ def render_pd_performance_content(
         children=[
             build_pd_section_heading(
                 "2.3 PSI", "PSI",
-                "PSI based on IRB CRR key-driver stability, monitoring whether the performing-book population "
-                "has shifted against the reference distribution.",
-                "N/A", options={"show_rag": False},
+                "Monitors whether the scoring population has shifted against the reference distribution. Rising PSI "
+                "indicates distribution drift that may undermine calibration and discrimination.",
+                "N/A",
+                options={"show_rag": False},
             ),
             _build_psi_stability_summary(psi_performance_trend, thresholds, cq),
+            build_section_filter_bar([
+                build_section_filter_item(
+                    "Display filters",
+                    range_key=PSI_SECTION_RANGE_KEY,
+                    periods=psi_periods,
+                    range_value=range_store.get(PSI_SECTION_RANGE_KEY),
+                ),
+            ]),
             html.Div(
                 id="pd-psi-trend-panel",
                 className="section-card pd-default-rate-trend-section",
@@ -2335,13 +2671,16 @@ def render_pd_performance_content(
                     build_chart_header(
                         "Population Stability Index Trend",
                         "Quarter-by-quarter PSI for the selected population, with threshold bands and RAG-colored markers.",
-                        "psi_trend",
-                        psi_periods,
-                        range_store.get("psi_trend"),
                     ),
                     dcc.Graph(
                         id="pd-psi-trend-chart",
-                        figure=build_pd_psi_trend_figure(psi_performance_trend, monitoring_thresholds, cq, range_store.get("psi_trend"), theme=theme),
+                        figure=build_pd_psi_trend_figure(
+                            psi_performance_trend,
+                            monitoring_thresholds,
+                            cq,
+                            range_store.get(PSI_SECTION_RANGE_KEY),
+                            theme=theme,
+                        ),
                         config=_GRAPH_CONFIG,
                         className="pd-default-rate-trend-chart pd-default-rate-trend-chart-medium",
                     ),
@@ -2388,7 +2727,7 @@ def render_pd_performance_content(
         ],
     )
 
-    return [executive_summary, chapter_1, chapter_1_body, chapter_2, chapter_2_body]
+    return [executive_summary, dashboard_overview, chapter_1, chapter_1_body, chapter_2, chapter_2_body]
 
 
 # ---------------------------------------------------------------------------

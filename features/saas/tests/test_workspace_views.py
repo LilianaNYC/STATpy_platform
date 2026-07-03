@@ -109,7 +109,7 @@ def test_mev_toggle_label_handles_all_raw_mevs():
         ],
     )
 
-    assert label == "All raw MEVs"
+    assert label == "All"
 
 
 def test_build_model_chart_cards_returns_empty_mev_card_without_figure_builder():
@@ -157,7 +157,40 @@ def test_build_model_chart_cards_uses_injected_figure_builder():
     )
 
     assert len(calls) == 1
-    assert cards[0].children[-1].figure == {"data": [], "layout": {"title": "Test"}}
+    assert cards[0].children[0].children[-1].figure == {"data": [], "layout": {"title": "Test"}}
+
+
+def test_build_model_chart_cards_groups_each_family_onto_its_own_row(monkeypatch):
+    monkeypatch.setattr(
+        views.records,
+        "family_map_for_model",
+        lambda _model_name: {"T1": ["R1", "R2"], "T2": ["R3"]},
+    )
+    mev_names = ["T1", "R1", "R2", "T2", "R3"]
+    records_ = [{"MEV Name": name, "Scenario": "baseline"} for name in mev_names]
+
+    cards = views.build_model_chart_cards(
+        "Model A",
+        records_,
+        records_,
+        "family",
+        ["baseline"],
+        "history",
+        None,
+        None,
+        None,
+        mev_names,
+        [],
+        figure_builder=lambda *_args: {"data": [], "layout": {}},
+    )
+
+    assert [row.className for row in cards] == ["pd-mev-chart-family-row"] * 3
+    assert [len(row.children) for row in cards] == [2, 1, 2]
+    titles_by_row = [
+        [card.children[0].children[0].children[0].children for card in row.children]
+        for row in cards
+    ]
+    assert titles_by_row == [["T1", "R1"], ["R2"], ["T2", "R3"]]
 
 
 def test_format_monitoring_date_returns_quarter_label():
