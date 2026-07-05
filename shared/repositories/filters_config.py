@@ -57,7 +57,7 @@ _DEFAULTS: dict = {
         "pd": ["PD Model A", "PD Model B"],
         "lgd": ["LGD Model A"],
         "ead": ["EAD Model A"],
-        "loss": ["Loss Model"],
+        "loss": ["All Models"],
     },
 }
 

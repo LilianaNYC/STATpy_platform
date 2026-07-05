@@ -12,13 +12,11 @@ from .callbacks import ead_performance as ead_callbacks
 from .callbacks import lgd_performance as lgd_callbacks
 from .callbacks import loss_performance as loss_callbacks
 from .callbacks import overview as overview_callbacks
-from .callbacks import overview_v2 as overview_v2_callbacks
 from .callbacks import pd_performance as pd_callbacks
 from .ui.pages import ead_performance as ead_page
 from .ui.pages import lgd_performance as lgd_page
 from .ui.pages import loss_performance as loss_page
 from .ui.pages import overview as overview_page
-from .ui.pages import overview_v2 as overview_v2_page
 from .ui.pages import pd_performance as pd_page
 
 PAGES: tuple[PageDefinition, ...] = (
@@ -26,17 +24,9 @@ PAGES: tuple[PageDefinition, ...] = (
         key="overview",
         label="Overview",
         path="/overview",
-        icon="📋",
+        icon="🗺️",
         build_layout=overview_page.build_layout,
         register_callbacks=overview_callbacks.register_callbacks,
-    ),
-    PageDefinition(
-        key="overview_v2",
-        label="Overview v2",
-        path="/overview-v2",
-        icon="🗺️",
-        build_layout=overview_v2_page.build_layout,
-        register_callbacks=overview_v2_callbacks.register_callbacks,
     ),
     PageDefinition(
         key="pd_performance",

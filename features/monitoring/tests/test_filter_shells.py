@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 from dash.development.base_component import Component
-from dash.dcc import Checklist, Dropdown
+from dash.dcc import Dropdown
 
 from STATpy_platform.features.monitoring.ui.views import ead_performance as ead_page
 from STATpy_platform.features.monitoring.ui.views import lgd_performance as lgd_page
 from STATpy_platform.features.monitoring.ui.views import loss_performance as loss_page
-from STATpy_platform.features.monitoring.ui.views import overview as overview_page
 
 
 def _children_of(node) -> list:
@@ -45,7 +44,6 @@ def _find_component_by_id(node, component_id):
 
 def test_monitoring_top_filters_use_pd_single_select_shells():
     pages = [
-        (overview_page.build_layout(), 3),
         (lgd_page.build_layout(), 2),
         (ead_page.page_layout(), 2),
         (loss_page.build_layout(), 2),
@@ -54,17 +52,6 @@ def test_monitoring_top_filters_use_pd_single_select_shells():
     for layout, expected_count in pages:
         count = sum(_count_class_token(node, "single-select-dropdown") for node in layout)
         assert count >= expected_count
-
-
-def test_overview_specific_models_use_checkbox_dropdown():
-    layout = overview_page.build_layout()
-    model_filter = None
-    for node in layout:
-        model_filter = _find_component_by_id(node, overview_page.MODEL_ID)
-        if model_filter is not None:
-            break
-    assert isinstance(model_filter, Checklist)
-    assert model_filter.className == "pd-models-checklist"
 
 
 def test_performance_specific_models_use_single_select_dropdown():

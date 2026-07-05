@@ -88,7 +88,7 @@ def _build_loss_subnav() -> html.Div:
         className="monitoring-section-subnav",
         children=[
             html.Div(
-                className="monitoring-section-subnav-group pd-subnav-group active",
+                className="monitoring-section-subnav-group pd-subnav-group pd-subnav-group-rag active",
                 children=[
                     html.Div("RAG Assignment", className="monitoring-section-subnav-label"),
                     html.Div(

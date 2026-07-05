@@ -1,8 +1,4 @@
-"""Callbacks for the monitoring overview page.
-
-Ported from ``integrated:callbacks/monitoring_overview_callbacks.py`` into
-the main-branch page structure.
-"""
+"""Callbacks for the Overview page."""
 
 from __future__ import annotations
 
@@ -11,36 +7,26 @@ from dash import ALL, Input, Output, State, ctx, no_update
 from ..ui import common as filter_shell
 from ..ui.views import overview as layout
 from ....shared.ui import controls
-from ..domain.overview import build_overview_rows, overview_filter_options
 from ....shared.registration import already_registered
+from ....shared.theme import APP_THEME_ID, normalize_theme_value
 from ..data_access import PD_PERFORMANCE_DATA
-
-_OVERVIEW_ROWS = build_overview_rows(PD_PERFORMANCE_DATA)
 
 _RANGE_PRESET_COUNTS = {"last-4": 4, "last-8": 8, "last-12": 12}
 
 
-def _dropdown_options(values: list[str]) -> list[dict]:
-    return [{"label": value, "value": value} for value in values]
-
-
 def register_callbacks(app) -> None:
-    """Register all Overview callbacks against *app* (idempotent)."""
+    """Register Overview callbacks against ``app`` (idempotent)."""
     if already_registered(app, "page:monitoring.overview"):
         return
 
-    overview_rows = _OVERVIEW_ROWS
     data = PD_PERFORMANCE_DATA
 
     for value_id, toggle_id, menu_id, filter_key in (
-        (layout.PERIOD_ID, layout.PERIOD_TOGGLE_ID, layout.PERIOD_MENU_ID, layout.PERIOD_FILTER_KEY),
-        (layout.SEGMENT_ID, layout.SEGMENT_TOGGLE_ID, layout.SEGMENT_MENU_ID, layout.SEGMENT_FILTER_KEY),
-        (
-            layout.MODEL_GROUP_ID,
-            layout.MODEL_GROUP_TOGGLE_ID,
-            layout.MODEL_GROUP_MENU_ID,
-            layout.MODEL_GROUP_FILTER_KEY,
-        ),
+        (layout.REPORTING_CYCLE_ID, layout.REPORTING_CYCLE_TOGGLE_ID, layout.REPORTING_CYCLE_MENU_ID, layout.REPORTING_CYCLE_FILTER_KEY),
+        (layout.MONITORING_POINT_ID, layout.MONITORING_POINT_TOGGLE_ID, layout.MONITORING_POINT_MENU_ID, layout.MONITORING_POINT_FILTER_KEY),
+        (layout.SEGMENT_MODEL_GROUP_ID, layout.SEGMENT_MODEL_GROUP_TOGGLE_ID, layout.SEGMENT_MODEL_GROUP_MENU_ID, layout.SEGMENT_MODEL_GROUP_FILTER_KEY),
+        (layout.RAG_TREND_METRIC_ID, layout.RAG_TREND_METRIC_TOGGLE_ID, layout.RAG_TREND_METRIC_MENU_ID, layout.RAG_TREND_METRIC_FILTER_KEY),
+        (layout.SEGMENT_RAG_TREND_METRIC_ID, layout.SEGMENT_RAG_TREND_METRIC_TOGGLE_ID, layout.SEGMENT_RAG_TREND_METRIC_MENU_ID, layout.SEGMENT_RAG_TREND_METRIC_FILTER_KEY),
     ):
         filter_shell.register_single_select_callbacks(
             app,
@@ -49,14 +35,23 @@ def register_callbacks(app) -> None:
             menu_id=menu_id,
             filter_key=filter_key,
         )
-    filter_shell.register_checkbox_dropdown_callbacks(
-        app,
-        checklist_id=layout.MODEL_ID,
-        select_all_id=layout.MODEL_SELECT_ALL_ID,
-        toggle_id=layout.MODEL_TOGGLE_ID,
-        menu_id=layout.MODEL_MENU_ID,
-    )
 
+    @app.callback(
+        Output(layout.MONITORING_POINT_ID, "options"),
+        Output(layout.MONITORING_POINT_ID, "value"),
+        Input(layout.REPORTING_CYCLE_ID, "value"),
+        Input(layout.MONITORING_POINT_ID, "value"),
+    )
+    def sync_overview_monitoring_point_dropdown(reporting_cycle, selected_monitoring_point):
+        options = controls.REPORTING_CYCLE_QUARTERS.get(reporting_cycle, [])
+        value = selected_monitoring_point if selected_monitoring_point in options else (options[0] if options else "")
+        return [{"label": option, "value": option} for option in options], value
+
+    # -----------------------------------------------------------------
+    # RAG trend range picker (on-page control, no re-Apply required).
+    # Shared by both chapters -- each uses its own range_key
+    # (RAG_TREND_RANGE_KEY / SEGMENT_RAG_TREND_RANGE_KEY) within the same store.
+    # -----------------------------------------------------------------
     @app.callback(
         Output(layout.RANGE_STORE_ID, "data"),
         Input({"type": controls.RANGE_WINDOW_ID, "key": ALL}, "value"),
@@ -68,12 +63,13 @@ def register_callbacks(app) -> None:
         State({"type": controls.RANGE_FROM_ID, "key": ALL}, "options"),
         State(layout.RANGE_STORE_ID, "data"),
         prevent_initial_call=True,
+        allow_duplicate=True,
     )
     def update_overview_range_store(
         window_values, from_values, to_values, window_ids, from_ids, to_ids, from_options_list, range_store,
     ):
         triggered = ctx.triggered_id
-        if not triggered or triggered.get("key") != layout.RAG_TREND_RANGE_KEY:
+        if not triggered:
             return no_update
 
         range_key = triggered["key"]
@@ -81,7 +77,10 @@ def register_callbacks(app) -> None:
 
         if triggered["type"] == controls.RANGE_WINDOW_ID:
             preset = window_values[window_ids.index(triggered)]
-            from_idx = from_ids.index({"type": controls.RANGE_FROM_ID, "key": range_key})
+            from_id = {"type": controls.RANGE_FROM_ID, "key": range_key}
+            if from_id not in from_ids:
+                return no_update
+            from_idx = from_ids.index(from_id)
             periods = [option["value"] for option in from_options_list[from_idx] if option["value"]]
             if preset == "all":
                 range_store[range_key] = {"from": "", "to": ""}
@@ -94,6 +93,8 @@ def register_callbacks(app) -> None:
             boundary = "from" if triggered["type"] == controls.RANGE_FROM_ID else "to"
             ids = from_ids if boundary == "from" else to_ids
             values = from_values if boundary == "from" else to_values
+            if triggered not in ids:
+                return no_update
             value = values[ids.index(triggered)]
 
             current = dict(range_store.get(range_key) or {"from": "", "to": ""})
@@ -109,32 +110,101 @@ def register_callbacks(app) -> None:
 
         return range_store
 
+    # -----------------------------------------------------------------
+    # Apply filters: snapshot current filter values into the applied store
+    # -----------------------------------------------------------------
     @app.callback(
-        Output(layout.MODEL_ID, "options"),
-        Input(layout.MODEL_GROUP_ID, "value"),
+        Output(layout.APPLIED_FILTERS_STORE_ID, "data"),
+        Input(layout.APPLY_FILTERS_ID, "n_clicks"),
+        State(layout.REPORTING_CYCLE_ID, "value"),
+        State(layout.MONITORING_POINT_ID, "value"),
+        State(layout.SEGMENT_MODEL_GROUP_ID, "value"),
+        prevent_initial_call=True,
     )
-    def sync_overview_model_options(model_group):
-        options = overview_filter_options(overview_rows, model_group or "All")
-        model_values = [value for value in options["models"] if value != "All"]
-        return _dropdown_options(model_values)
+    def apply_overview_filters(_n_clicks, reporting_cycle, monitoring_point, segment_model_group):
+        if not _n_clicks:
+            return no_update
+        return {
+            "reporting_cycle": reporting_cycle,
+            "monitoring_point": monitoring_point,
+            "segment_model_group": segment_model_group,
+        }
 
+    # -----------------------------------------------------------------
+    # Master re-render: applied store + theme -> content.
+    #
+    # The RAG-trend dimension dropdowns and range controls live INSIDE this
+    # callback's own output (they don't exist until content has rendered at
+    # least once), so they cannot also be Inputs/State here -- that would be
+    # a circular dependency that never fires on the first "Apply" click.
+    # They're wired to their own mini-callbacks below instead, which read
+    # the cached rows this callback writes to SCOPED_ROWS_STORE_ID /
+    # SEGMENT_SCOPED_ROWS_STORE_ID.
+    # -----------------------------------------------------------------
     @app.callback(
         Output(layout.CONTENT_ID, "children"),
-        Input(layout.PERIOD_ID, "value"),
-        Input(layout.MODEL_GROUP_ID, "value"),
-        Input(layout.MODEL_ID, "value"),
-        Input(layout.SEGMENT_ID, "value"),
+        Output(layout.SCOPED_ROWS_STORE_ID, "data"),
+        Output(layout.SEGMENT_SCOPED_ROWS_STORE_ID, "data"),
+        Input(layout.APPLIED_FILTERS_STORE_ID, "data"),
+        Input(APP_THEME_ID, "value"),
+        State(layout.RANGE_STORE_ID, "data"),
+        prevent_initial_call=True,
+    )
+    def render_overview_content(applied, theme_value, range_store):
+        if not applied:
+            return layout.build_overview_apply_prompt(), no_update, no_update
+
+        from ....shared.repositories.filters_config import load_filter_config
+        cfg = load_filter_config()
+        default_cycle = cfg["reporting_cycles"][0]["value"] if cfg["reporting_cycles"] else "CCAR 2026"
+
+        reporting_cycle = applied.get("reporting_cycle") or default_cycle
+
+        children, scoped_rows, segment_scoped_rows = layout.render_overview_content(
+            data,
+            reporting_cycle,
+            applied.get("monitoring_point") or "All",
+            "Overall RAG",
+            "Overall RAG",
+            range_store or {},
+            theme_value=theme_value,
+            segment_model_group=applied.get("segment_model_group") or "All",
+        )
+        return children, scoped_rows, segment_scoped_rows
+
+    # -----------------------------------------------------------------
+    # RAG trend charts: each chapter's dimension picker + range controls
+    # update just that chart, without recomputing/re-rendering the rest of
+    # the page.
+    # -----------------------------------------------------------------
+    @app.callback(
+        Output(layout.RAG_TREND_CHART_ID, "figure"),
         Input(layout.RAG_TREND_METRIC_ID, "value"),
         Input(layout.RANGE_STORE_ID, "data"),
+        State(layout.SCOPED_ROWS_STORE_ID, "data"),
+        State(APP_THEME_ID, "value"),
+        State(layout.APPLIED_FILTERS_STORE_ID, "data"),
+        prevent_initial_call=True,
     )
-    def update_overview_content(monitoring_period, model_group, model, segment, rag_trend_metric, range_store):
-        return layout.render_overview_content(
-            data,
-            overview_rows,
-            monitoring_period or "All",
-            model_group or "All",
-            model,
-            segment or "All",
-            rag_trend_metric or "Overall RAG",
-            range_store or {},
-        )
+    def update_overview_trend_chart(rag_trend_metric, range_store, scoped_rows, theme_value, applied):
+        if not scoped_rows:
+            return no_update
+        theme = normalize_theme_value(theme_value)
+        monitoring_point = (applied or {}).get("monitoring_point") or "All"
+        return layout.build_trend_figure(scoped_rows, rag_trend_metric or "Overall RAG", range_store or {}, theme, monitoring_point)
+
+    @app.callback(
+        Output(layout.SEGMENT_RAG_TREND_CHART_ID, "figure"),
+        Input(layout.SEGMENT_RAG_TREND_METRIC_ID, "value"),
+        Input(layout.RANGE_STORE_ID, "data"),
+        State(layout.SEGMENT_SCOPED_ROWS_STORE_ID, "data"),
+        State(APP_THEME_ID, "value"),
+        State(layout.APPLIED_FILTERS_STORE_ID, "data"),
+        prevent_initial_call=True,
+    )
+    def update_overview_segment_trend_chart(rag_trend_metric, range_store, segment_scoped_rows, theme_value, applied):
+        if not segment_scoped_rows:
+            return no_update
+        theme = normalize_theme_value(theme_value)
+        monitoring_point = (applied or {}).get("monitoring_point") or "All"
+        return layout.build_segment_trend_figure(segment_scoped_rows, rag_trend_metric or "Overall RAG", range_store or {}, theme, monitoring_point)

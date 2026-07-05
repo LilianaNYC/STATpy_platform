@@ -1,19 +1,15 @@
-"""Smoke and structure tests for the Monitoring Overview page."""
+"""Focused regression tests for the Overview page."""
 
 from __future__ import annotations
 
 from dash.development.base_component import Component
 
-from STATpy_platform.features.monitoring.ui.views import overview as page
-
-
-EXPECTED_WORKSTREAM_PATHS = {
-    "/overview",
-    "/",
-    "/lgd-performance",
-    "/ead-performance",
-    "/loss-performance",
-}
+from STATpy_platform.features.monitoring.domain.overview import governance_summary
+from STATpy_platform.features.monitoring.ui.views.overview import (
+    _build_governance_section,
+    _heatmap_column_headers,
+    _rag_heatmap_figure,
+)
 
 
 def _children_of(node) -> list:
@@ -25,100 +21,133 @@ def _children_of(node) -> list:
     return [children]
 
 
-def _collect_workstream_paths(node) -> set[str]:
-    if not isinstance(node, Component):
-        return set()
-
-    collected = set()
-    class_name = getattr(node, "className", "") or ""
-    href = getattr(node, "href", None)
-    if isinstance(href, str) and "overview-workstream-card" in class_name.split():
-        collected.add(href)
-
-    for child in _children_of(node):
-        collected |= _collect_workstream_paths(child)
-
-    return collected
-
-
 def _collect_text(node) -> list[str]:
-    if node is None:
-        return []
     if isinstance(node, str):
         return [node]
     if not isinstance(node, Component):
         return []
-
-    collected = []
-    for child in _children_of(node):
-        collected.extend(_collect_text(child))
-    return collected
+    return [
+        text
+        for child in _children_of(node)
+        for text in _collect_text(child)
+    ]
 
 
 def _collect_class_tokens(node) -> set[str]:
     if not isinstance(node, Component):
         return set()
-
-    class_name = getattr(node, "className", "") or ""
-    tokens = set(class_name.split())
+    tokens = set((getattr(node, "className", "") or "").split())
     for child in _children_of(node):
         tokens |= _collect_class_tokens(child)
     return tokens
 
 
-def _count_class_token(node, token: str) -> int:
-    if not isinstance(node, Component):
-        return 0
-
-    class_name = getattr(node, "className", "") or ""
-    count = 1 if token in class_name.split() else 0
-    for child in _children_of(node):
-        count += _count_class_token(child, token)
-    return count
-
-
-def test_overview_layout_builds():
-    layout = page.build_layout()
-    assert isinstance(layout, list) and layout
-
-
-def test_overview_build_stores():
-    stores = page.build_stores()
-    assert {store.id for store in stores} == {"overview-range-store"}
-
-
-def test_overview_workstream_links_render():
-    layout = page.build_layout()
-    workstream_paths = set()
-    for node in layout:
-        workstream_paths |= _collect_workstream_paths(node)
-
-    assert workstream_paths == EXPECTED_WORKSTREAM_PATHS
-
-
-def test_overview_summary_removes_health_rate_and_donut():
-    layout = page.build_layout()
-    text = []
-    class_tokens = set()
-    for node in layout:
-        text.extend(_collect_text(node))
-        class_tokens |= _collect_class_tokens(node)
-
-    assert "Health Rate" not in text
-    assert "overview-hero-donut" not in class_tokens
+def _sample_governance_data() -> tuple[list[dict], list[dict]]:
+    current_rows = [
+        {
+            "Model Group": "PD",
+            "Model": "PD Model A",
+            "Monitoring Period": "2025Q4",
+            "Overall RAG": "Amber",
+        },
+        {
+            "Model Group": "Loss",
+            "Model": "Loss Model A",
+            "Monitoring Period": "2025Q4",
+            "Overall RAG": "Green",
+        },
+    ]
+    findings = [
+        {
+            "Model Group": "PD",
+            "Model": "PD Model A",
+            "Monitoring Period": "2025Q4",
+            "Metric": "Overall RAG",
+            "RAG": "Amber",
+        },
+        {
+            "Model Group": "PD",
+            "Model": "PD Model A",
+            "Monitoring Period": "2025Q4",
+            "Metric": "Calibration RAG",
+            "RAG": "Red",
+        },
+    ]
+    return current_rows, findings
 
 
-def test_overview_heatmap_renders_as_matrix():
-    layout = page.build_layout()
-    text = []
-    class_tokens = set()
-    heatmap_cell_count = 0
-    for node in layout:
-        text.extend(_collect_text(node))
-        class_tokens |= _collect_class_tokens(node)
-        heatmap_cell_count += _count_class_token(node, "overview-heatmap-cell")
+def test_governance_summary_prefers_underlying_test_as_driver():
+    current_rows, findings = _sample_governance_data()
 
-    assert "RAG cells by status" in text
-    assert "overview-heatmap-panel" in class_tokens
-    assert "overview-heatmap-stat-grid" in class_tokens
-    assert heatmap_cell_count > 0
+    summary = governance_summary(current_rows, findings)
+
+    assert summary["top_metric"] == "Calibration RAG"
+    assert summary["top_metric_count"] == 1
+    assert "PD PD Model A" not in summary["narrative"]
+
+
+def test_governance_section_renders_one_decision_board():
+    current_rows, findings = _sample_governance_data()
+
+    section = _build_governance_section(current_rows, findings)
+    text = _collect_text(section)
+    class_tokens = _collect_class_tokens(section)
+
+    assert "Decision Summary" in text
+    assert "Escalation required" in text
+    assert "Escalation Register — 2025Q4" in text
+    assert "Calibration RAG" in text
+    assert "Portfolio RAG Mix" not in text
+    assert "Overall RAG distribution" not in text
+    assert "overview-governance-board" in class_tokens
+
+
+def test_governance_narrative_preserves_underlying_red_escalation():
+    current_rows, findings = _sample_governance_data()
+    current_rows[0]["Overall RAG"] = "Green"
+    findings = [row for row in findings if row["Metric"] != "Overall RAG"]
+
+    summary = governance_summary(current_rows, findings)
+
+    assert summary["red"] == 0
+    assert len(summary["escalations"]) == 1
+    assert "underlying test still requires escalation" in summary["narrative"]
+
+
+def test_heatmap_headers_emphasize_overall_as_section_verdict():
+    headers = _heatmap_column_headers(["Calibration RAG", "Discrimination RAG", "Balance Sheet Calibration RAG", "Overall RAG"])
+    text = _collect_text(headers)
+    class_tokens = _collect_class_tokens(headers)
+
+    assert "Overall" in text
+    assert "overview-heatmap-column-header-overall" in class_tokens
+    assert "overview-heatmap-column-header-kicker" in class_tokens
+
+
+def test_heatmap_figure_highlights_overall_column():
+    rows = [
+        {
+            "Model Group": "PD",
+            "Model": "PD Model A",
+            "Monitoring Period": "2025Q4",
+            "Calibration RAG": "Green",
+            "Discrimination RAG": "Amber",
+            "Balance Sheet Calibration RAG": "Red",
+            "Overall RAG": "Red",
+            "Transition Matrix RAG": "N/A",
+            "PSI RAG": "Amber",
+            "Scenario Ranking RAG": "Green",
+            "Sensitivity Analysis RAG": "Green",
+            "MEV Range RAG": "Green",
+            "Transition Matrix Metric": "—",
+            "PSI Metric": "0.142",
+            "Scenario Ranking Metric": "Maintained",
+            "Sensitivity Analysis Metric": "3.1%",
+            "MEV Range Metric": "2 breaches",
+        }
+    ]
+
+    figure = _rag_heatmap_figure(rows, "light")
+
+    assert len(figure.layout.shapes) >= 3
+    assert any(getattr(shape, "type", None) == "rect" for shape in figure.layout.shapes)

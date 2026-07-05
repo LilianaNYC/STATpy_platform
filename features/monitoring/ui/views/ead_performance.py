@@ -553,7 +553,7 @@ def _build_ead_subnav() -> html.Div:
         className="monitoring-section-subnav",
         children=[
             html.Div(
-                className="monitoring-section-subnav-group pd-subnav-group active",
+                className="monitoring-section-subnav-group pd-subnav-group pd-subnav-group-rag active",
                 children=[
                     html.Div("RAG Assignment", className="monitoring-section-subnav-label"),
                     html.Div(
@@ -567,7 +567,7 @@ def _build_ead_subnav() -> html.Div:
                 ],
             ),
             html.Div(
-                className="monitoring-section-subnav-group monitoring-section-subnav-group-secondary pd-subnav-group",
+                className="monitoring-section-subnav-group pd-subnav-group pd-subnav-group-post-review",
                 children=[
                     html.Div("Post Subjective Review Analysis", className="monitoring-section-subnav-label"),
                     html.Div(
