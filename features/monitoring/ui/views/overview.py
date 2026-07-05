@@ -283,7 +283,7 @@ def _build_overview_subnav() -> html.Div:
         className="monitoring-section-subnav",
         children=[
             html.Div(
-                className="monitoring-section-subnav-group pd-subnav-group active",
+                className="monitoring-section-subnav-group pd-subnav-group pd-subnav-group-overview active",
                 children=[
                     html.Div("Models", className="monitoring-section-subnav-label"),
                     html.Div(
@@ -298,7 +298,7 @@ def _build_overview_subnav() -> html.Div:
                 ],
             ),
             html.Div(
-                className="monitoring-section-subnav-group pd-subnav-group",
+                className="monitoring-section-subnav-group pd-subnav-group pd-subnav-group-rag",
                 children=[
                     html.Div("Segments", className="monitoring-section-subnav-label"),
                     html.Div(
@@ -1487,9 +1487,9 @@ def render_overview_content(
     children = [
         executive_summary,
         chapter_1,
-        html.Div(className="pd-chapter-body pd-chapter-body-primary", children=chapter_1_sections),
+        html.Div(className="pd-chapter-body pd-chapter-body-overview", children=chapter_1_sections),
         chapter_2,
-        html.Div(className="pd-chapter-body pd-chapter-body-primary", children=chapter_2_sections),
+        html.Div(className="pd-chapter-body pd-chapter-body-rag", children=chapter_2_sections),
     ]
     return children, scoped_rows, segment_scoped_rows
 
