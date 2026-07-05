@@ -107,10 +107,14 @@ def test_pd_main_overview_summarizes_both_chapters_before_the_deep_dive():
     layout = _render_pd_content()
     text = " ".join(_collect_text(node) for node in layout)
     ids = []
+    class_tokens = set()
+    aria_labels = []
     for node in layout:
         ids.extend(_collect_prop_values(node, "id"))
+        class_tokens |= _collect_class_tokens(node)
+        aria_labels.extend(_collect_prop_values(node, "aria-label"))
 
-    assert "Main Overview" in text
+    assert "Dashboard Main Overview" in text
     assert "Before the deep dive" in text
     assert "How the dashboard story splits across the two chapters" in text
     assert "Recommended deep dive" in text
@@ -118,16 +122,38 @@ def test_pd_main_overview_summarizes_both_chapters_before_the_deep_dive():
     assert "2. Post Subjective Review Analysis" in text
     assert "Calibration Conservatism" in text
     assert "Discriminatory Power" in text
+    assert "Performance PD RAG" in text
     assert "Transition Matrix" in text
+    assert "Ranking maintained" in text
+    assert "Peak shock impact" in text
     assert "pd-dashboard-overview" in ids
-    assert text.index("Main Overview") < text.index("RAG Assignment")
+    assert "overview-chapter-diagram" in class_tokens
+    assert "overview-post-review-strip" in class_tokens
+    assert "Overview area 1" in aria_labels
+    assert "Overview area 8" in aria_labels
+    assert text.index("Dashboard Main Overview") < text.index("RAG Assignment")
 
 
 def test_pd_subnav_keeps_main_overview_without_adding_a_dashboard_summary_row():
     layout = page.build_layout()
     text = " ".join(_collect_text(node) for node in layout)
 
-    assert "Main Overview" in text
+    assert "All Overviews" in text
+    assert "Dashboard Main Overview" in text
+    assert "RAG Assignment Overview" in text
+    assert "Post Subjective Review Analysis Overview" in text
+    assert "RAG Assignment" in text
+    assert "Post Subjective Review Analysis" in text
+    assert "ECL PIT PD - Calibration Conservatism" in text
+    assert "ECL PIT PD - Discriminatory Power" in text
+    assert "Balance Sheet PD - Calibration Conservatism" in text
+    assert "Transition Matrix" in text
+    assert "PSI" in text
+    assert "Scenario Ranking" in text
+    assert "Sensitivity Analysis" in text
+    assert "MEV Range" in text
+    assert text.index("All Overviews") < text.index("RAG Assignment")
+    assert text.index("RAG Assignment") < text.index("Post Subjective Review Analysis")
     assert "Dashboard Summary" not in text
 
 

@@ -78,15 +78,17 @@ SUBNAV_ID = "pd-subnav"
 # Section ids in scroll order, used by assets/js/monitoring_pd_subnav.js to highlight the
 # sub-nav link for whichever section is currently at the top of the viewport
 # (port of MONITORING_PD_SECTION_IDS / updateMonitoringPdSubnavActiveState).
+OVERVIEW_LINKS = [
+    ("pd-dashboard-overview", "Dashboard Main Overview"),
+    ("pd-analysis-scope", "RAG Assignment Overview"),
+    ("pd-post-subjective-overview", "Post Subjective Review Analysis Overview"),
+]
 RAG_ASSIGNMENT_LINKS = [
-    ("pd-dashboard-overview", "Main Overview"),
-    ("pd-analysis-scope", "RAG Overview"),
     ("pd-calibration-rag", "ECL PIT PD - Calibration Conservatism"),
     ("pd-discrimination-rag", "ECL PIT PD - Discriminatory Power"),
     ("pd-balance-sheet-calibration", "Balance Sheet PD - Calibration Conservatism"),
 ]
 POST_SUBJECTIVE_REVIEW_LINKS = [
-    ("pd-post-subjective-overview", "Post Review Overview"),
     ("pd-transition-matrix-distance", "Transition Matrix"),
     ("pd-population-stability-index", "PSI"),
     ("pd-scenario-ranking", "Scenario Ranking"),
@@ -331,7 +333,7 @@ def _subnav_link(section_id: str, label: str, active: bool) -> html.Button:
 
 
 def build_section_subnav() -> html.Div:
-    """RAG Assignment / Post Subjective jump links.
+    """Overview / RAG Assignment / Post Subjective jump links.
 
     Port of the `#monitoring-pd-subnav` markup. Clicking a link scrolls to
     the corresponding section; the active link/group is kept in sync with
@@ -343,20 +345,33 @@ def build_section_subnav() -> html.Div:
         className="monitoring-section-subnav",
         children=[
             html.Div(
-                className="monitoring-section-subnav-group pd-subnav-group active",
+                className="monitoring-section-subnav-group pd-subnav-group pd-subnav-group-overview active",
                 children=[
-                    html.Div("RAG Assignment", className="monitoring-section-subnav-label"),
+                    html.Div("All Overviews", className="monitoring-section-subnav-label"),
                     html.Div(
                         className="monitoring-section-subnav-links",
                         children=[
                             _subnav_link(section_id, label, active=index == 0)
-                            for index, (section_id, label) in enumerate(RAG_ASSIGNMENT_LINKS)
+                            for index, (section_id, label) in enumerate(OVERVIEW_LINKS)
                         ],
                     ),
                 ],
             ),
             html.Div(
-                className="monitoring-section-subnav-group monitoring-section-subnav-group-secondary pd-subnav-group",
+                className="monitoring-section-subnav-group pd-subnav-group pd-subnav-group-rag",
+                children=[
+                    html.Div("RAG Assignment", className="monitoring-section-subnav-label"),
+                    html.Div(
+                        className="monitoring-section-subnav-links",
+                        children=[
+                            _subnav_link(section_id, label, active=False)
+                            for section_id, label in RAG_ASSIGNMENT_LINKS
+                        ],
+                    ),
+                ],
+            ),
+            html.Div(
+                className="monitoring-section-subnav-group pd-subnav-group pd-subnav-group-post-review",
                 children=[
                     html.Div("Post Subjective Review Analysis", className="monitoring-section-subnav-label"),
                     html.Div(

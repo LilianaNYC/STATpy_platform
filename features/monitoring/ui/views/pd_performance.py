@@ -55,6 +55,7 @@ from .cards import (
     build_pd_section_heading,
     build_pd_section_rag_card,
     build_pd_test_card,
+    pd_rag_dot,
 )
 from .....shared.domain.mev_range import (
     calculate_pd_mev_thresholds,
@@ -477,7 +478,7 @@ def _build_pd_transition_matrix_section(
     range_store = range_store or {}
     trend = _build_pd_transition_delta_trend(data, reporting_cycle, ctx)
     heading = build_pd_section_heading(
-        "2.2 Transition Matrix", "Transition Matrix",
+        "2.1 Transition Matrix", "Transition Matrix",
         "Migration of the through-the-horizon PD (MM_Pm) away from its anchor (MM_P0). The delta widens as the "
         "transition structure drifts from the reference, independent of macro scenario.",
         "N/A", options={"show_rag": False},
@@ -688,7 +689,7 @@ def _build_pd_scenario_ranking_section(
         className="pd-content-section pd-live-section",
         children=[
             build_pd_section_heading(
-                "2.4 Scenario Ranking",
+                "2.3 Scenario Ranking",
                 "Scenario Ranking",
                 "Compares projected PD paths across selected scenarios and checks whether higher-stress scenarios "
                 "consistently rank above lower-stress paths. Any rank inversion suggests the scenario response may "
@@ -902,7 +903,7 @@ def _build_pd_sensitivity_section(data: dict, ctx: PdFilterContext, reporting_cy
         className="pd-content-section pd-live-section",
         children=[
             build_pd_section_heading(
-                "2.5 Sensitivity Analysis",
+                "2.4 Sensitivity Analysis",
                 "Sensitivity Analysis",
                 "Compares baseline projected PD values against a simultaneous 2 standard deviation shock applied to transformed MEVs.",
                 "N/A",
@@ -914,7 +915,7 @@ def _build_pd_sensitivity_section(data: dict, ctx: PdFilterContext, reporting_cy
 
 
 # ---------------------------------------------------------------------------
-# 2.1 Post Subjective Review Analysis Overview (review scorecard)
+# 2.0 Post Subjective Review Analysis Overview (review scorecard)
 # ---------------------------------------------------------------------------
 
 _RAG_RANK = {"N/A": -1, "Green": 0, "Amber": 1, "Red": 2}
@@ -948,7 +949,7 @@ def _pd_post_review_summaries(
     projections = data.get("sensitivity_projections") or []
     summaries: list[dict] = []
 
-    # 2.2 Transition Matrix -------------------------------------------------
+    # 2.1 Transition Matrix -------------------------------------------------
     trend = _build_pd_transition_delta_trend(data, reporting_cycle, ctx)
     if trend:
         rags = [calculate_pd_metric_rag(thresholds, "Transition Matrix", row["delta"]) for row in trend]
@@ -966,7 +967,7 @@ def _pd_post_review_summaries(
             "takeaway": "No MM_P0 / MM_Pm margin data for the current scope.",
         })
 
-    # 2.3 PSI ---------------------------------------------------------------
+    # 2.2 PSI ---------------------------------------------------------------
     psi_trend = build_pd_performance_trend_for_horizon(observations, rating_observations, cq, "1y", ctx, crr_scale)
     psi_rows = [r for r in psi_trend if r.get("quarter") and r["quarter"] <= cq]
     latest_psi = psi_rows[-1].get("population_stability_index") if psi_rows else None
@@ -981,7 +982,7 @@ def _pd_post_review_summaries(
         ),
     })
 
-    # 2.4 Scenario Ranking --------------------------------------------------
+    # 2.3 Scenario Ranking --------------------------------------------------
     sr_rows = _filter_pd_projection_rows(projections, reporting_cycle, ctx)
     if sr_rows:
         sr = _scenario_ranking_summary(sr_rows)
@@ -999,7 +1000,7 @@ def _pd_post_review_summaries(
             "takeaway": "No scenario projection data for the current scope.",
         })
 
-    # 2.5 Sensitivity Analysis ---------------------------------------------
+    # 2.4 Sensitivity Analysis ---------------------------------------------
     threshold_value = _get_pd_sensitivity_threshold(monitoring_thresholds).get("threshold")
     sens_rows = _filter_pd_sensitivity_rows(projections, reporting_cycle, ctx)
     sens = _sensitivity_impact_summary(sens_rows, threshold_value)
@@ -1013,7 +1014,7 @@ def _pd_post_review_summaries(
                     else "No sensitivity projection data for the current scope.",
     })
 
-    # 2.6 MEV Range ---------------------------------------------------------
+    # 2.5 MEV Range ---------------------------------------------------------
     catalog = data.get("mev_catalog") or {}
     counts = {"Green": 0, "Amber": 0, "Red": 0, "N/A": 0}
     total = 0
@@ -1134,8 +1135,143 @@ def _build_pd_overview_section_item(summary: dict) -> html.Li:
     )
 
 
-def _build_pd_overview_chapter_panel(kicker: str, title: str, rag: str, summaries: list[dict]) -> html.Div:
-    tone = _rag_tone(rag)
+def _build_pd_chapter_1_diagram_node(summary: dict, label: str, href: str, extra_class: str = "") -> html.A:
+    tone = _rag_tone(summary.get("rag", "N/A"))
+    return html.A(
+        href=href,
+        className=f"overview-chapter-diagram-node overview-chapter-diagram-node-{tone} {extra_class}".strip(),
+        children=[
+            html.Span(label, className="overview-chapter-diagram-node-label"),
+            html.Span(
+                [pd_rag_dot(summary.get("rag", "N/A")), html.Strong(summary.get("rag", "N/A"))],
+                className="overview-chapter-diagram-node-value",
+            ),
+        ],
+        **{"aria-label": f"Jump to {label} section"},
+    )
+
+
+def _build_pd_overview_area_index(index: int, tone: str = "neutral") -> html.Span:
+    return html.Span(
+        str(index),
+        className=f"overview-area-index overview-area-index-{tone}",
+        **{"aria-label": f"Overview area {index}"},
+    )
+
+
+def _build_pd_chapter_1_diagram(chapter_1_rag: str, summaries: list[dict]) -> html.Div:
+    by_name = {summary["name"]: summary for summary in summaries}
+    rows = []
+    for index, (name, label, href, extra_class) in enumerate([
+        ("Calibration Conservatism", "Calibration Conservatism RAG (ECL PIT)", "#pd-calibration-rag", "overview-chapter-diagram-node-primary"),
+        ("Discriminatory Power", "Discriminatory Power RAG", "#pd-discrimination-rag", ""),
+        ("Balance Sheet Calibration", "Calibration Conservatism RAG (Balance Sheet)", "#pd-balance-sheet-calibration", ""),
+    ], start=1):
+        summary = by_name.get(name, {"rag": "N/A"})
+        node = _build_pd_chapter_1_diagram_node(summary, label, href, extra_class)
+        node.children = [_build_pd_overview_area_index(index, _rag_tone(summary["rag"])), *list(node.children)]
+        rows.append(node)
+        rows.append(html.Span(className=f"overview-chapter-diagram-connector overview-chapter-diagram-connector-{index}", **{"aria-hidden": "true"}))
+
+    tone = _rag_tone(chapter_1_rag)
+    rows.append(
+        html.Div(
+            className=f"overview-chapter-diagram-output overview-chapter-diagram-output-{tone}",
+            children=[
+                html.Span(["Performance", html.Br(), "PD RAG"], className="overview-chapter-diagram-output-label"),
+                html.Span([pd_rag_dot(chapter_1_rag), html.Strong(chapter_1_rag)], className="overview-chapter-diagram-output-value"),
+            ],
+        )
+    )
+    return html.Div(className="overview-chapter-diagram", children=rows)
+
+
+def _build_pd_chapter_2_overview_card(summary: dict, index: int) -> html.A:
+    tone = _rag_tone(summary["rag"])
+    return html.A(
+        href=f"#{summary['anchor']}",
+        className=f"overview-post-review-mini overview-post-review-mini-{tone}",
+        children=[
+            _build_pd_overview_area_index(index, tone),
+            html.Div(
+                className="overview-post-review-mini-header",
+                children=[html.Strong(summary["name"], className="overview-post-review-mini-title")],
+            ),
+            html.Div(summary["metric"], className="overview-post-review-mini-value"),
+            html.Div(summary["metric_label"], className="overview-post-review-mini-label"),
+            html.Div(summary["takeaway"], className="overview-post-review-mini-copy"),
+        ],
+        **{"aria-label": f"Jump to {summary['name']} section"},
+    )
+
+
+def _build_pd_chapter_2_overview_group(title: str, copy: str, cards: list[html.A], layout_class: str) -> html.Div:
+    return html.Div(
+        className="overview-post-review-group",
+        children=[
+            html.Div(
+                className="overview-post-review-group-heading",
+                children=[
+                    html.Span(title, className="overview-post-review-group-kicker"),
+                    html.P(copy, className="overview-post-review-group-copy"),
+                ],
+            ),
+            html.Div(
+                className=f"overview-post-review-strip {layout_class}",
+                children=cards,
+            ),
+        ],
+    )
+
+
+def _build_pd_chapter_2_overview_strip(summaries: list[dict]) -> html.Div:
+    indexed = {
+        summary["name"]: _build_pd_chapter_2_overview_card(summary, index)
+        for index, summary in enumerate(summaries, start=4)
+    }
+    core_checks = [
+        indexed[name]
+        for name in ("Transition Matrix", "PSI", "Scenario Ranking")
+        if name in indexed
+    ]
+    boundary_checks = [
+        indexed[name]
+        for name in ("Sensitivity Analysis", "MEV Range")
+        if name in indexed
+    ]
+    groups = []
+    if core_checks:
+        groups.append(
+            _build_pd_chapter_2_overview_group(
+                "Core stability checks",
+                "Start with migration, population stability, and ranking order.",
+                core_checks,
+                "overview-post-review-strip-primary",
+            )
+        )
+    if boundary_checks:
+        groups.append(
+            _build_pd_chapter_2_overview_group(
+                "Stress and boundary checks",
+                "Use these to confirm whether shocks or MEV ranges push the model outside expected behaviour.",
+                boundary_checks,
+                "overview-post-review-strip-secondary",
+            )
+        )
+    return html.Div(className="overview-post-review-board", children=groups)
+
+
+def _build_pd_overview_chapter_panel(
+    kicker: str,
+    title: str,
+    rag: str,
+    summaries: list[dict],
+    body=None,
+    panel_tone: str | None = None,
+    show_rag: bool = True,
+) -> html.Div:
+    tone = panel_tone or _rag_tone(rag)
+    rag_tone = _rag_tone(rag)
     return html.Div(
         className=f"overview-chapter-panel overview-chapter-panel-{tone}",
         children=[
@@ -1146,10 +1282,14 @@ def _build_pd_overview_chapter_panel(kicker: str, title: str, rag: str, summarie
                         html.Div(kicker, className="overview-chapter-panel-kicker"),
                         html.H5(title, className="overview-chapter-panel-title"),
                     ]),
-                    html.Span(rag, className="overview-chapter-panel-rag"),
+                    *(
+                        [html.Span(rag, className=f"overview-chapter-panel-rag overview-chapter-panel-rag-{rag_tone}")]
+                        if show_rag
+                        else []
+                    ),
                 ],
             ),
-            html.Ul(
+            body or html.Ul(
                 className="overview-section-list",
                 children=[_build_pd_overview_section_item(summary) for summary in summaries],
             ),
@@ -1194,10 +1334,9 @@ def _build_pd_main_overview(
         className="pd-content-section pd-live-section",
         children=[
             build_pd_section_heading(
-                "0. Overview",
-                "Main Overview",
-                "Single-screen summary across both dashboard chapters so reviewers can orient themselves before "
-                "moving into the detailed section diagnostics.",
+                "0.0 Overview",
+                "Dashboard Main Overview",
+                "Single-screen summary across both dashboard chapters before moving into the detailed diagnostics.",
                 "N/A",
                 options={"show_rag": False},
             ),
@@ -1217,8 +1356,7 @@ def _build_pd_main_overview(
                                         style={"--overview-posture-tone": _RAG_HEX[posture_tone], "margin": "0"},
                                     ),
                                     html.P(
-                                        "This overview combines the two chapters into one opening readout so teams can see "
-                                        "where the signal is concentrated before stepping into the detailed charts and tests."
+                                        "This opening readout shows where the signal is concentrated before the detailed charts and tests."
                                     ),
                                     html.Div(
                                         className="overview-main-card-scope",
@@ -1256,8 +1394,7 @@ def _build_pd_main_overview(
                                     html.Div("Chapter breakdown", className="overview-review-card-kicker"),
                                     html.H4("How the dashboard story splits across the two chapters"),
                                     html.P(
-                                        "Each section below is color-coded by its current RAG so you can spot the "
-                                        "stress points before moving into the detailed trend and diagnostic views."
+                                        "Each section below keeps the current RAG context so you can spot the stress points quickly."
                                     ),
                                 ],
                             ),
@@ -1269,12 +1406,18 @@ def _build_pd_main_overview(
                                         "RAG Assignment",
                                         chapter_1_rag,
                                         chapter_1_summaries,
+                                        body=_build_pd_chapter_1_diagram(chapter_1_rag, chapter_1_summaries),
+                                        panel_tone="neutral",
+                                        show_rag=False,
                                     ),
                                     _build_pd_overview_chapter_panel(
                                         "Chapter 2",
                                         "Post Subjective Review Analysis",
                                         chapter_2_rag,
                                         chapter_2_summaries,
+                                        body=_build_pd_chapter_2_overview_strip(chapter_2_summaries),
+                                        panel_tone="neutral",
+                                        show_rag=False,
                                     ),
                                 ],
                             ),
@@ -1340,8 +1483,8 @@ def _build_pd_post_review_overview(
         className="pd-content-section pd-live-section",
         children=[
             build_pd_section_heading(
-                "2.1 Overview",
-                "PD Post Subjective Review Analysis Overview",
+                "2.0 Overview",
+                "Post Subjective Review Analysis Overview",
                 "At-a-glance health of every post subjective review test for the current scope. Each card shows the "
                 "worst-case RAG across the projection horizon, a headline metric, and a one-line takeaway.",
                 "N/A", options={"show_rag": False},
@@ -1653,7 +1796,7 @@ def _build_mev_rag_summary_panel(
 
 
 # ---------------------------------------------------------------------------
-# 2.6 MEV Range (buildPdMevRangeSection)
+# 2.5 MEV Range (buildPdMevRangeSection)
 # ---------------------------------------------------------------------------
 
 
@@ -1798,7 +1941,7 @@ def _build_mev_range_section(data: dict, ctx: PdFilterContext, range_store: dict
         className="pd-content-section pd-live-section",
         children=[
             build_pd_section_heading(
-                "2.6 MEV Range",
+                "2.5 MEV Range",
                 "MEV Range",
                 "Checks whether the macro-economic variables (MEVs) driving PD models under stress remain within their trained operating range.",
                 "N/A",
@@ -2140,8 +2283,8 @@ def render_pd_performance_content(
             html.Div(
                 className="pd-content-heading",
                 children=[
-                    html.Div("1.1 Overview", className="pd-content-kicker"),
-                    html.H3("PD RAG Assignment Overview"),
+                    html.Div("1.0 Overview", className="pd-content-kicker"),
+                    html.H3("RAG Assignment Overview"),
                     html.P(
                         "At-a-glance summary of the 1-year PD monitoring flow across ECL PIT PD and Balance Sheet PD "
                         "calibration and discriminatory-power diagnostics."
@@ -2154,7 +2297,7 @@ def render_pd_performance_content(
     )
 
     # -----------------------------------------------------------------
-    # 1.2 ECL PIT PD - Calibration Conservatism
+    # 1.1 ECL PIT PD - Calibration Conservatism
     # -----------------------------------------------------------------
     calibration_performance_trend = build_pd_performance_trend_for_horizon(
         observations, rating_observations, calibration_trend_context["snapshot_quarter"], calibration_trend_horizon_key, ctx, crr_scale,
@@ -2167,7 +2310,7 @@ def render_pd_performance_content(
         className="pd-content-section pd-live-section",
         children=[
             build_pd_section_heading(
-                "1.2 ECL PIT PD - Calibration Conservatism",
+                "1.1 ECL PIT PD - Calibration Conservatism",
                 "ECL PIT PD - Calibration Conservatism",
                 "Compares observed defaults with predicted PIT PD and reviews monotonicity across rating grades for "
                 "the monitored ECL 1-year population.",
@@ -2277,7 +2420,7 @@ def render_pd_performance_content(
     )
 
     # -----------------------------------------------------------------
-    # 1.3 ECL PIT PD - Discriminatory Power
+    # 1.2 ECL PIT PD - Discriminatory Power
     # -----------------------------------------------------------------
     discrimination_performance_trend = build_pd_performance_trend_for_horizon(
         observations, rating_observations, discrimination_trend_context["snapshot_quarter"], discrimination_trend_horizon_key, ctx, crr_scale,
@@ -2300,7 +2443,7 @@ def render_pd_performance_content(
         className="pd-content-section pd-live-section",
         children=[
             build_pd_section_heading(
-                "1.3 ECL PIT PD - Discriminatory Power",
+                "1.2 ECL PIT PD - Discriminatory Power",
                 "ECL PIT PD - Discriminatory Power",
                 "Assesses how effectively PIT PD separates higher-risk and lower-risk observations within the "
                 "monitored ECL 1-year population.",
@@ -2429,7 +2572,7 @@ def render_pd_performance_content(
     )
 
     # -----------------------------------------------------------------
-    # 1.4 Balance Sheet PD - Calibration Conservatism
+    # 1.3 Balance Sheet PD - Calibration Conservatism
     # -----------------------------------------------------------------
     balance_sheet_performance_trend = build_pd_performance_trend_for_horizon(
         observations, rating_observations, balance_sheet_context["snapshot_quarter"], "nco_1y", ctx, crr_scale,
@@ -2444,7 +2587,7 @@ def render_pd_performance_content(
         className="pd-content-section pd-live-section",
         children=[
             build_pd_section_heading(
-                "1.4 Balance Sheet PD - Calibration Conservatism",
+                "1.3 Balance Sheet PD - Calibration Conservatism",
                 "Balance Sheet PD - Calibration Conservatism",
                 "Assesses balance sheet PD calibration using the same framework as ECL PIT calibration for the "
                 "monitored 1-year population, with CPD NCO as the predicted PD source.",
@@ -2649,7 +2792,7 @@ def render_pd_performance_content(
         className="pd-content-section pd-live-section",
         children=[
             build_pd_section_heading(
-                "2.3 PSI", "PSI",
+                "2.2 PSI", "PSI",
                 "Monitors whether the scoring population has shifted against the reference distribution. Rising PSI "
                 "indicates distribution drift that may undermine calibration and discrimination.",
                 "N/A",

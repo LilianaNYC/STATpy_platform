@@ -11,7 +11,7 @@ from ....shared.domain import constants as config
 from ....shared.domain.calculations import calculate_pd_metric_rag
 
 LOSS_METRICS = ["ME %"]
-LOSS_MODEL_LABEL = "Loss model"
+LOSS_MODEL_LABEL = "All Models"
 
 
 # ---------------------------------------------------------------------------
@@ -19,7 +19,7 @@ LOSS_MODEL_LABEL = "Loss model"
 # ---------------------------------------------------------------------------
 # The Loss tab reads metric rows straight from ``Loss_Performance_Metrics`` via
 # a store keyed by ``(level, value)``. There is a single loss model, so the
-# model-level entity is ``"Loss model"``. The cycle callback installs the
+# model-level entity is ``"All Models"``. The cycle callback installs the
 # selected reporting cycle's store and quarters here.
 
 _LOSS_STORE: dict | None = None
