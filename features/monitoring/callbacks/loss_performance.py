@@ -8,7 +8,6 @@ from ..ui import common as filter_shell
 from ..ui.views import loss_performance as layout
 from ....shared.ui import controls
 from ..domain.loss import (
-    get_loss_monitoring_point_options,
     get_loss_segments_for_model,
     resolve_loss_segment,
 )

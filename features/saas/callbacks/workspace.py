@@ -9,7 +9,6 @@ from dash.exceptions import PreventUpdate
 
 from ....shared.ui import controls as shared_filters
 from ....shared.ui.charts import SAAS_SCENARIO_LABEL_MAP
-from ....shared.domain.calculations import is_finite_number
 from ....shared import theme
 from ....shared.registration import already_registered
 from ..data_access import SAAS_PAGE_DATA
@@ -24,7 +23,6 @@ _scoped_run_for_values = selectors.scoped_run_for_values
 _run_for_meta_label = selectors.run_for_meta_label
 _build_compare_against_options = selectors.build_compare_against_options
 _compare_against_toggle_label = selectors.compare_against_toggle_label
-_model_names_for_filters = selectors.model_names_for_filters
 _model_options_for_filters = selectors.model_options_for_filters
 _model_toggle_label = selectors.model_toggle_label
 _normalize_selected_models = selectors.normalize_selected_models
@@ -36,41 +34,26 @@ _normalize_mev_label_mode = selectors.normalize_mev_label_mode
 _normalize_theme_value = selectors.normalize_theme_value
 _effective_model_names = selectors.effective_model_names
 _primary_run_for_value = selectors.primary_run_for_value
-_mev_types_for_name = selectors.mev_types_for_name
-_excel_mev_type_label = selectors.excel_mev_type_label
-_saas_family_ordered_names = selectors.saas_family_ordered_names
 _show_historical_statistics = selectors.show_historical_statistics
-_excel_to_py_date = metrics.excel_to_py_date
-_excel_quarter_label = metrics.excel_quarter_label
-_compute_saas_metric_record = metrics.compute_saas_metric_record
-_build_saas_chart_spec = metrics.build_saas_chart_spec
-_saas_baseline_projection_bounds = metrics.saas_baseline_projection_bounds
 _compute_saas_metrics = metrics.compute_saas_metrics
 _compute_saas_reconciliation = metrics.compute_saas_reconciliation
 _compute_saas_projection_comparison = metrics.compute_saas_projection_comparison
-_compute_historical_dispersion_stats = metrics.compute_historical_dispersion_stats
-_coerce_quarter = records.coerce_quarter
-_date_period_key = records.date_period_key
 _available_date_periods = records.available_date_periods
 _filter_records_by_snapshot_period = records.filter_records_by_snapshot_period
 _filter_records_by_date_range = records.filter_records_by_date_range
-_records_for_model_scope = records.records_for_model_scope
 _build_model_mev_options_for_mode = records.build_model_mev_options_for_mode
 _build_family_mev_options_for_mode = records.build_family_mev_options_for_mode
 _active_selected_mevs = records.active_selected_mevs
 _single_select_option_classes = views.single_select_option_classes
 _toggle_menu_class = views.toggle_menu_class
-_pluralize = views.pluralize
 _build_empty_state = views.build_empty_state
 _mev_picker_label = views.mev_picker_label
-_mev_picker_empty_label = views.mev_picker_empty_label
 _mev_picker_section_class = views.mev_picker_section_class
 _build_single_mev_option_buttons = views.build_single_mev_option_buttons
 _scenario_toggle_label = views.scenario_toggle_label
 _single_selected_scenario = views.single_selected_scenario
 _mev_type_toggle_label = views.mev_type_toggle_label
 _mev_toggle_label = views.mev_toggle_label
-_format_month_year = views.format_month_year
 
 
 def _register_menu_callbacks(app) -> None:
@@ -1121,24 +1104,6 @@ def _register_render_callbacks(app) -> None:
             base_records,
             mev_label_mode=mev_label_mode,
         )
-        mev_names = sorted({str(row.get("MEV Name") or "").strip() for row in records if str(row.get("MEV Name") or "").strip()})
-        scenario_names = sorted({str(row.get("Scenario") or "").strip().lower() for row in records if str(row.get("Scenario") or "").strip()})
-        date_values = sorted({row.get("Date") for row in records if row.get("Date") is not None})
-
-        meta_parts = [f"Reporting Cycle: {_run_for_meta_label(selected_run_fors)}"]
-        snapshot_label = next(
-            (option["label"] for option in layout.SUBNAV_VIEW_OPTIONS if option["value"] == snapshot_period_value),
-            None,
-        )
-        if snapshot_label:
-            meta_parts.append(snapshot_label)
-        if mev_names:
-            meta_parts.append(_pluralize(len(mev_names), "MEV"))
-        if scenario_names:
-            meta_parts.append(_pluralize(len(scenario_names), "scenario"))
-        if date_values:
-            meta_parts.append(f"{_format_month_year(date_values[0])} to {_format_month_year(date_values[-1])}")
-
         return (
             views.build_model_chart_cards(
                 model_name,
@@ -1151,7 +1116,6 @@ def _register_render_callbacks(app) -> None:
                 range_value,
                 reference_lines,
                 active_selected_mevs,
-                meta_parts,
                 figure_builder=figures.build_model_figure,
                 primary_run_for=selected_run_fors[0] if selected_run_fors else None,
                 show_historical_statistics=show_historical_statistics,

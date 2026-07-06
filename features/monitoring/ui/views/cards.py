@@ -15,7 +15,6 @@ from dash import html
 
 from .....shared.domain.calculations import (
     calculate_pd_metric_rag,
-    fmt_n,
     format_pd_compact_amount,
     format_pd_metric,
     format_pd_rag_change,

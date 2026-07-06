@@ -10,7 +10,6 @@ import polars as pl
 from ....shared.domain import constants as config
 from ....shared.domain.calculations import calculate_pd_metric_rag
 
-LOSS_METRICS = ["ME %"]
 LOSS_MODEL_LABEL = "All Models"
 
 

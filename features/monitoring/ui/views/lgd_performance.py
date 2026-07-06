@@ -67,7 +67,6 @@ SEGMENT_DROPDOWN_ID = "lgd-segment-dropdown"
 MONITORING_POINT_DROPDOWN_ID = "lgd-monitoring-point-dropdown"
 MODEL_TOGGLE_ID = "lgd-model-toggle"
 MODEL_MENU_ID = "lgd-model-menu"
-MODEL_SELECT_ALL_ID = "lgd-model-select-all"
 SEGMENT_TOGGLE_ID = "lgd-segment-toggle"
 SEGMENT_MENU_ID = "lgd-segment-menu"
 MONITORING_POINT_TOGGLE_ID = "lgd-monitoring-point-toggle"
@@ -87,11 +86,6 @@ _POST_SUBJECTIVE = PostSubjectiveConfig(
     sensitivity_key="lgd_sensitivity_projections",
     scenario_filter_id=SCENARIO_RANKING_FILTER_ID,
 )
-CALIBRATION_RAG_RANGE_KEY = "lgd_calibration_rag"
-DISCRIMINATION_RAG_RANGE_KEY = "lgd_discrimination_rag"
-ME_RANGE_KEY = "lgd_me"
-RMSE_RANGE_KEY = "lgd_rmse"
-KENDALL_RANGE_KEY = "lgd_kendall"
 CALIBRATION_SECTION_RANGE_KEY = "lgd_calibration_section"
 DISCRIMINATION_SECTION_RANGE_KEY = "lgd_discrimination_section"
 PSI_SECTION_RANGE_KEY = "lgd_psi_section"
@@ -249,7 +243,6 @@ def _build_lgd_overview_flow(summary: dict) -> html.Div:
     )
 
 
-MEV_RANGE_KEY = "lgd_mev"
 
 # ---------------------------------------------------------------------------
 # MEV Range helpers (mirroring PD Performance)

@@ -12,7 +12,6 @@ from .....shared.theme import normalize_theme_value
 from ...domain.loss import (
     build_loss_period_summary,
     get_loss_monitoring_point_options,
-    get_loss_segments_for_model,
     get_loss_thresholds,
 )
 from .cards import (
@@ -36,7 +35,6 @@ SEGMENT_DROPDOWN_ID = "loss-segment-dropdown"
 MONITORING_POINT_DROPDOWN_ID = "loss-monitoring-point-dropdown"
 MODEL_TOGGLE_ID = "loss-model-toggle"
 MODEL_MENU_ID = "loss-model-menu"
-MODEL_SELECT_ALL_ID = "loss-model-select-all"
 SEGMENT_TOGGLE_ID = "loss-segment-toggle"
 SEGMENT_MENU_ID = "loss-segment-menu"
 MONITORING_POINT_TOGGLE_ID = "loss-monitoring-point-toggle"

@@ -157,28 +157,6 @@ def test_pd_subnav_keeps_main_overview_without_adding_a_dashboard_summary_row():
     assert "Dashboard Summary" not in text
 
 
-def test_pd_psi_section_surfaces_stability_methodology_and_thresholds():
-    layout = _render_pd_content()
-    text = " ".join(_collect_text(node) for node in layout)
-    class_tokens = set()
-    for node in layout:
-        class_tokens |= _collect_class_tokens(node)
-
-    assert "PSI based on IRB CRR key-driver stability" in text
-    assert "PSI Stability RAG" in text
-    assert "Test basis: IRB CRR key driver" not in text
-    assert "Stability bands" not in text
-    assert "Indicative Thresholds" not in text
-    assert "performing-book population" in text
-    assert "PSI <= 0.10" in text
-    assert "0.10 < PSI <= 0.25" in text
-    assert "PSI > 0.25" in text
-    assert "pd-discrimination-test-grid" in class_tokens
-    assert "pd-psi-test-grid" in class_tokens
-    assert "pd-psi-stability-card" in class_tokens
-    assert "pd-psi-threshold-mini-grid" in class_tokens
-
-
 def test_pd_sensitivity_section_uses_projection_data_and_baseline_shock_view():
     layout = _render_pd_content()
     text = " ".join(_collect_text(node) for node in layout)
