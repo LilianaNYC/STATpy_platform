@@ -48,7 +48,6 @@ MONITORING_POINT_MENU_ID = "pd-monitoring-point-menu"
 PORTFOLIO_SEGMENT_TOGGLE_ID = "pd-portfolio-segment-toggle"
 PORTFOLIO_SEGMENT_MENU_ID = "pd-portfolio-segment-menu"
 MODELS_ID = "pd-models"
-MODELS_SELECT_ALL_ID = "pd-models-select-all"
 MODELS_TOGGLE_ID = "pd-models-toggle"
 MODELS_MENU_ID = "pd-models-menu"
 FILTER_HELP_ID = "pd-filter-help"
@@ -60,17 +59,6 @@ RANGE_WINDOW_ID = "pd-range-window"
 RANGE_FROM_ID = "pd-range-from"
 RANGE_TO_ID = "pd-range-to"
 TREND_HORIZON_ID = "pd-trend-horizon"
-
-# MEV Range chart-filter controls (port of buildPdMevFilterRow's PD model
-# select, MEV checkbox-dropdown, and "Reset chart filters" button).
-MEV_MODEL_FILTER_ID = "pd-mev-model-filter"
-MEV_MODEL_TOGGLE_ID = "pd-mev-model-toggle"
-MEV_MODEL_MENU_ID = "pd-mev-model-menu"
-MEV_NAME_FILTER_ID = "pd-mev-name-filter"
-MEV_NAME_SELECT_ALL_ID = "pd-mev-name-select-all"
-MEV_NAME_TOGGLE_ID = "pd-mev-name-toggle"
-MEV_NAME_MENU_ID = "pd-mev-name-menu"
-MEV_RESET_ID = "pd-mev-filter-reset"
 
 # Section sub-navigation (port of `#monitoring-pd-subnav`).
 SUBNAV_ID = "pd-subnav"
@@ -155,60 +143,6 @@ def build_single_select_dropdown(
                         className="single-select-option is-selected" if option["value"] == value else "single-select-option",
                     )
                     for option in options
-                ],
-            ),
-        ],
-    )
-
-
-def build_checkbox_dropdown(
-    *,
-    checklist_id: str,
-    select_all_id: str,
-    toggle_id: str,
-    menu_id: str,
-    options: list[dict],
-    value: list[str],
-    toggle_label: str,
-    disabled: bool = False,
-    extra_class: str = "",
-) -> html.Div:
-    """Custom multi-select checkbox-dropdown with "All" toggle.
-
-    Used by the global filter bar (Specific Models) and the MEV chart-filter
-    row (MEV name).  Callbacks for the open/close toggle, "All" checkbox sync,
-    and toggle-label update are registered per instance in ``callbacks.py``.
-    """
-    all_values = [option["value"] for option in options]
-    all_selected = all_values and set(value) == set(all_values)
-
-    return html.Div(
-        className=f"checkbox-dropdown {extra_class}".strip(),
-        children=[
-            html.Button(
-                toggle_label,
-                id=toggle_id,
-                type="button",
-                n_clicks=0,
-                className="checkbox-dropdown-toggle",
-                disabled=disabled,
-            ),
-            html.Div(
-                id=menu_id,
-                className="checkbox-dropdown-menu",
-                children=[
-                    dcc.Checklist(
-                        id=select_all_id,
-                        options=[{"label": "All", "value": "all"}],
-                        value=["all"] if all_selected else [],
-                        className="pd-models-select-all",
-                    ),
-                    dcc.Checklist(
-                        id=checklist_id,
-                        options=options,
-                        value=value,
-                        className="pd-models-checklist",
-                    ),
                 ],
             ),
         ],

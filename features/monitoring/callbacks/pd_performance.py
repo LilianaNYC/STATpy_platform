@@ -16,6 +16,7 @@ from dash import ALL, Input, Output, State, ctx, html, no_update
 
 from ..ui.views import pd_performance as layout
 from ....shared.ui import controls
+from ....shared.theme import APP_THEME_ID
 from ....shared.domain.calculations import PdFilterContext, set_precomputed_metrics
 from ....shared.registration import already_registered
 from ..data_access import PD_PERFORMANCE_DATA
@@ -29,7 +30,6 @@ def register_callbacks(app) -> None:
         return
 
     data = PD_PERFORMANCE_DATA
-    monitoring_point_labels = {quarter: quarter for quarter in sorted(data["quarters"], reverse=True)}
     segment_labels = {"all": "All", **{value: value for value in data["segment_values"]}}
 
     # -----------------------------------------------------------------
@@ -413,7 +413,7 @@ def register_callbacks(app) -> None:
         Input(layout.TREND_HORIZON_STORE_ID, "data"),
         Input(layout.MEV_FILTER_STORE_ID, "data"),
         Input(layout.SCENARIO_RANKING_STORE_ID, "data"),
-        Input(layout.APP_THEME_ID, "value"),
+        Input(APP_THEME_ID, "value"),
         prevent_initial_call=True,
     )
     def render_pd_performance_content(

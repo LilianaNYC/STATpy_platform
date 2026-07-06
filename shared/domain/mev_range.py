@@ -14,7 +14,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from . import constants as config
 from .quarter_labels import compare_pd_quarter_labels, _pd_quarter_sort_key
 from .calculations import PdFilterContext, is_finite_number, _to_number
 

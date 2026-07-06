@@ -32,16 +32,6 @@ def toggle_menu_class(current_class: str | None, *, base_class: str) -> str:
     return f"{base_class} open"
 
 
-def pluralize(count: int, label: str) -> str:
-    return f"{count} {label}" if count == 1 else f"{count} {label}s"
-
-
-def format_month_year(value) -> str | None:
-    if value is None or not hasattr(value, "strftime"):
-        return None
-    return value.strftime("%b %Y")
-
-
 def format_monitoring_date(date_value) -> str:
     if date_value is None:
         return "—"
@@ -656,7 +646,6 @@ def build_model_chart_cards(
     range_value,
     reference_lines: str | None,
     selected_mevs,
-    shared_meta_parts: list[str],
     *,
     figure_builder,
     primary_run_for: str | None = None,
@@ -909,18 +898,6 @@ def build_model_panel(
         mev_label_mode=mev_label_mode,
     )
     date_periods = records.available_date_periods(visible_records)
-    mev_names = sorted({
-        str(row.get("MEV Name") or "").strip()
-        for row in visible_records
-        if str(row.get("MEV Name") or "").strip()
-    })
-    scenario_names = sorted({
-        str(row.get("Scenario") or "").strip().lower()
-        for row in visible_records
-        if str(row.get("Scenario") or "").strip()
-    })
-    date_values = sorted({row.get("Date") for row in visible_records if row.get("Date") is not None})
-
     # A model can belong to multiple segments - list every distinct one.
     model_segments_map = SAAS_PAGE_DATA.get("model_segments_map", {})
     model_segment_values = model_segments_map.get(model_name) or []
@@ -929,22 +906,6 @@ def build_model_panel(
     else:
         segment_name = layout.format_segment_label(SAAS_PAGE_DATA.get("model_segments", {}).get(model_name))
     segment_field_label = "Segments" if len(model_segment_values) > 1 else "Segment"
-    range_start = format_month_year(date_values[0]) if date_values else None
-    range_end = format_month_year(date_values[-1]) if date_values else None
-
-    meta_parts = [f"Reporting Cycle: {selectors.run_for_meta_label(run_for)}"]
-    snapshot_label = next(
-        (option["label"] for option in layout.SUBNAV_VIEW_OPTIONS if option["value"] == snapshot_period_value),
-        None,
-    )
-    if snapshot_label:
-        meta_parts.append(snapshot_label)
-    if mev_names:
-        meta_parts.append(pluralize(len(mev_names), "MEV"))
-    if scenario_names:
-        meta_parts.append(pluralize(len(scenario_names), "scenario"))
-    if range_start and range_end:
-        meta_parts.append(f"{range_start} to {range_end}")
 
     selected_run_fors = selectors.normalize_selected_run_fors(run_for)
     chart_cards = build_model_chart_cards(
@@ -958,7 +919,6 @@ def build_model_panel(
         None,
         reference_lines,
         default_display_mevs,
-        meta_parts,
         figure_builder=figure_builder,
         primary_run_for=selected_run_fors[0] if selected_run_fors else None,
         show_historical_statistics=show_historical_statistics,

@@ -127,7 +127,6 @@ def test_build_model_chart_cards_returns_empty_mev_card_without_figure_builder()
         None,
         None,
         [],
-        [],
         figure_builder=fail_if_called,
     )
 
@@ -152,7 +151,6 @@ def test_build_model_chart_cards_uses_injected_figure_builder():
         None,
         None,
         ["MEV A"],
-        [],
         figure_builder=build_figure,
     )
 
@@ -180,7 +178,6 @@ def test_build_model_chart_cards_groups_each_family_onto_its_own_row(monkeypatch
         None,
         None,
         mev_names,
-        [],
         figure_builder=lambda *_args: {"data": [], "layout": {}},
     )
 

@@ -34,7 +34,6 @@ DATE_COLUMN = "MONTH END-SNAPSHOT DATE"
 SEGMENT_COLUMN = "Portfolio"
 FACILITY_ID_COLUMN = "facility id"
 PD_MODEL_COLUMN = "pd_model"
-RATING_COLUMN = "rating_grade"
 
 PD_PREDICTED_1Y_COLUMN = "CPD_1y_base"
 PD_PREDICTED_2Y_COLUMN = "CPD_2y_base"
@@ -47,7 +46,6 @@ EAD_MODEL_COLUMN = "ead_model"
 EAD_REALIZED_COLUMN = "realized_ead"
 LGD_MODEL_COLUMN = "lgd_model"
 LGD_PREDICTED_1Y_COLUMN = "LGD_1y_base"
-LGD_PREDICTED_2Y_COLUMN = "LGD_2y_base"
 LGD_REALIZED_COLUMN = "realized_lgd"
 LIMIT_AMOUNT_COLUMN = "limit_amount"
 BALANCE_COLUMN = "Balance"
@@ -91,7 +89,6 @@ PD_THRESHOLD_METRIC_ALIASES = {
 }
 
 RAG_SCORE = {"N/A": 0, "Green": 1, "Amber": 2, "Red": 3}
-INVERSE_RAG_SCORE = {score: rag for rag, score in RAG_SCORE.items()}
 
 # ---------------------------------------------------------------------------
 # Go-live window for the frozen 1y discrimination accuracy trend

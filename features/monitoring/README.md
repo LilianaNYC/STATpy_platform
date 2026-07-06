@@ -42,7 +42,7 @@ features/monitoring/
 │   │   ├── overview.py · pd_performance.py · lgd_performance.py
 │   │   ├── ead_performance.py · loss_performance.py
 │   │   └── cards.py     Reusable RAG / test / KPI card builders
-│   └── common.py        Shared filter-dropdown shell helpers (single/checkbox)
+│   └── common.py        Shared single-select filter-dropdown shell helpers
 │
 ├── callbacks/           Glue between UI events and the data/domain layers
 │   ├── overview.py · pd_performance.py · lgd_performance.py

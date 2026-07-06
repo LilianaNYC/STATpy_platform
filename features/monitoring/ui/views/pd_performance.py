@@ -111,7 +111,7 @@ from .....shared.domain.calculations import (
 # Top-level component / store ids
 # ---------------------------------------------------------------------------
 
-from .....shared.theme import APP_THEME_ID, normalize_theme_value
+from .....shared.theme import normalize_theme_value
 
 CONTENT_ID = "pd-performance-content"
 RANGE_STORE_ID = "pd-range-store"
@@ -1721,7 +1721,6 @@ def _build_mev_rag_summary_panel(
     model_rows = []
     for summary in summaries:
         worst = summary["worst_rag"]
-        worst_tone = worst.lower() if worst in ("Green", "Amber", "Red") else "na"
         dev_label = " / ".join(_format_mev_quarter(d) for d in summary["development_dates"]) if summary["development_dates"] else "—"
         severe_label = _format_mev_quarter(summary["severe_quarter"]) if summary["severe_quarter"] else (monitoring_point or "—")
 
@@ -1813,7 +1812,7 @@ def _build_mev_range_section(data: dict, ctx: PdFilterContext, range_store: dict
 
 
     model_panels = []
-    for model_index, model_name in enumerate(chart_model_names):
+    for model_name in chart_model_names:
         model_data = catalog.get(model_name, {})
         mev_entries = sorted(
             ((name, mdata) for name, mdata in (model_data.get("mevs") or {}).items() if name in chart_mev_names),
@@ -1828,7 +1827,7 @@ def _build_mev_range_section(data: dict, ctx: PdFilterContext, range_store: dict
             if scenario_quarter:
                 break
         chart_cards = []
-        for mev_index, (mev_name, mev_data) in enumerate(mev_entries):
+        for mev_name, mev_data in mev_entries:
             mev_mnemonic = mev_mnemonic_map.get(mev_name, mev_name)
             mev_description = mev_description_map.get(mev_name, "")
             thresholds = calculate_pd_mev_thresholds(mev_data.get("dev_range") or {})
@@ -2054,10 +2053,6 @@ def render_pd_performance_content(
     go_live_horizon_key = "1y"
     go_live_context = get_pd_performance_context_for_horizon(performance_horizons, go_live_horizon_key, ctx)
     go_live_start = get_pd_go_live_quarter(observations, go_live_horizon_key, ctx)
-    go_live_periods = [
-        period for period in get_pd_range_periods(ctx.quarters, go_live_context["snapshot_quarter"])
-        if not go_live_start or period >= go_live_start
-    ]
 
     discrimination_trend_horizon_key = "1y"
     discrimination_trend_context = get_pd_performance_context_for_horizon(performance_horizons, discrimination_trend_horizon_key, ctx)

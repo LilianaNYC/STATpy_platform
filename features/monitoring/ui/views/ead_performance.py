@@ -73,7 +73,6 @@ SEGMENT_DROPDOWN_ID = "ead-segment-dropdown"
 MONITORING_POINT_DROPDOWN_ID = "ead-monitoring-point-dropdown"
 MODEL_TOGGLE_ID = "ead-model-toggle"
 MODEL_MENU_ID = "ead-model-menu"
-MODEL_SELECT_ALL_ID = "ead-model-select-all"
 SEGMENT_TOGGLE_ID = "ead-segment-toggle"
 SEGMENT_MENU_ID = "ead-segment-menu"
 MONITORING_POINT_TOGGLE_ID = "ead-monitoring-point-toggle"
@@ -93,11 +92,6 @@ _POST_SUBJECTIVE = PostSubjectiveConfig(
     sensitivity_key="ead_sensitivity_projections",
     scenario_filter_id=SCENARIO_RANKING_FILTER_ID,
 )
-CALIBRATION_RAG_RANGE_KEY = "ead_calibration_rag"
-DISCRIMINATION_RAG_RANGE_KEY = "ead_discrimination_rag"
-ME_RANGE_KEY = "ead_me"
-RMSE_RANGE_KEY = "ead_rmse"
-KENDALL_RANGE_KEY = "ead_kendall"
 CALIBRATION_SECTION_RANGE_KEY = "ead_calibration_section"
 DISCRIMINATION_SECTION_RANGE_KEY = "ead_discrimination_section"
 PSI_SECTION_RANGE_KEY = "ead_psi_section"
@@ -127,7 +121,6 @@ def _subnav_link(section_id: str, label: str, active: bool = False) -> html.Butt
     )
 
 
-MEV_RANGE_KEY = "ead_mev"
 
 # ---------------------------------------------------------------------------
 # MEV Range helpers (mirroring PD Performance)
