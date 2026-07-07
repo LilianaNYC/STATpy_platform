@@ -130,7 +130,7 @@ def register_callbacks(app) -> None:
     )
     def sync_lgd_monitoring_point_dropdown(reporting_cycle, selected_monitoring_point):
         options = controls.REPORTING_CYCLE_QUARTERS.get(reporting_cycle, [])
-        value = selected_monitoring_point if selected_monitoring_point in options else (options[0] if options else "")
+        value = filter_shell.resolve_monitoring_point_value(options, selected_monitoring_point)
         return _dropdown_options(options), value
 
     # -----------------------------------------------------------------

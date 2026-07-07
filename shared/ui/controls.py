@@ -67,22 +67,30 @@ SUBNAV_ID = "pd-subnav"
 # sub-nav link for whichever section is currently at the top of the viewport
 # (port of MONITORING_PD_SECTION_IDS / updateMonitoringPdSubnavActiveState).
 OVERVIEW_LINKS = [
-    ("pd-dashboard-overview", "Dashboard Main Overview"),
-    ("pd-analysis-scope", "RAG Assignment Overview"),
-    ("pd-post-subjective-overview", "Post Subjective Review Analysis Overview"),
+    ("pd-dashboard-overview", "Main Overview"),
 ]
 RAG_ASSIGNMENT_LINKS = [
+    ("pd-analysis-scope", "RAG Assignment Overview"),
     ("pd-calibration-rag", "ECL PIT PD - Calibration Conservatism"),
     ("pd-discrimination-rag", "ECL PIT PD - Discriminatory Power"),
     ("pd-balance-sheet-calibration", "Balance Sheet PD - Calibration Conservatism"),
 ]
 POST_SUBJECTIVE_REVIEW_LINKS = [
+    ("pd-post-subjective-overview", "Post Subjective Review Analysis Overview"),
     ("pd-transition-matrix-distance", "Transition Matrix"),
     ("pd-population-stability-index", "PSI"),
     ("pd-scenario-ranking", "Scenario Ranking"),
     ("pd-sensitivity-analysis", "Sensitivity Analysis"),
     ("pd-mev-range", "MEV Range"),
 ]
+
+
+def resolve_monitoring_point_value(options: list[str] | None, value: str | None) -> str:
+    """Use the current monitoring point when valid, otherwise fall back to the latest one."""
+    options = options or []
+    if value in options:
+        return value or ""
+    return options[-1] if options else ""
 
 
 # ---------------------------------------------------------------------------
@@ -281,7 +289,7 @@ def build_section_subnav() -> html.Div:
             html.Div(
                 className="monitoring-section-subnav-group pd-subnav-group pd-subnav-group-overview active",
                 children=[
-                    html.Div("All Overviews", className="monitoring-section-subnav-label"),
+                    html.Div("Executive Overview", className="monitoring-section-subnav-label"),
                     html.Div(
                         className="monitoring-section-subnav-links",
                         children=[

@@ -432,9 +432,13 @@ def _register_model_picker_callbacks(app) -> None:
         )
 
         single_option_values = [option["value"] for option in single_mev_options if option.get("value")]
-        default_single_value = next(
-            (value for value in single_option_values if value != records.FAMILY_ALL_VALUE),
-            single_option_values[0] if single_option_values else "",
+        default_single_value = (
+            records.FAMILY_ALL_VALUE
+            if records.FAMILY_ALL_VALUE in single_option_values
+            else next(
+                (value for value in single_option_values if value != records.FAMILY_ALL_VALUE),
+                single_option_values[0] if single_option_values else "",
+            )
         )
         next_single_value = next(
             (value for value in _normalize_selected_mevs(selected_mev_single) if value in single_option_values),
