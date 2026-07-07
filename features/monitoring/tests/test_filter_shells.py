@@ -5,6 +5,8 @@ from __future__ import annotations
 from dash.development.base_component import Component
 from dash.dcc import Dropdown
 
+from STATpy_platform.features.monitoring.ui import common as filter_shell
+from STATpy_platform.features.monitoring.ui.views import overview as overview_page
 from STATpy_platform.features.monitoring.ui.views import ead_performance as ead_page
 from STATpy_platform.features.monitoring.ui.views import lgd_performance as lgd_page
 from STATpy_platform.features.monitoring.ui.views import loss_performance as loss_page
@@ -71,3 +73,23 @@ def test_performance_specific_models_use_single_select_dropdown():
         # the LGD/EAD/Loss tabs.
         assert isinstance(model_filter, Dropdown)
         assert getattr(model_filter, "multi", False) is not True
+
+
+def test_monitoring_point_defaults_use_latest_visible_option():
+    pages = [
+        (overview_page.build_layout(), overview_page.MONITORING_POINT_ID),
+        (lgd_page.build_layout(), lgd_page.MONITORING_POINT_DROPDOWN_ID),
+        (ead_page.page_layout(), ead_page.MONITORING_POINT_DROPDOWN_ID),
+        (loss_page.build_layout(), loss_page.MONITORING_POINT_DROPDOWN_ID),
+    ]
+
+    for layout, component_id in pages:
+        monitoring_point = None
+        for node in layout:
+            monitoring_point = _find_component_by_id(node, component_id)
+            if monitoring_point is not None:
+                break
+
+        assert isinstance(monitoring_point, Dropdown)
+        option_values = [option["value"] for option in (monitoring_point.options or [])]
+        assert monitoring_point.value == filter_shell.resolve_monitoring_point_value(option_values, None)

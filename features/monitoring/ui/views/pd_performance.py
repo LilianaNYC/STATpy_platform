@@ -1096,25 +1096,6 @@ def _build_pd_overview_badge(rag: str) -> html.Span:
     )
 
 
-def _build_pd_overview_kpi(value: str, label: str, tone: str) -> html.Div:
-    return html.Div(
-        className=f"overview-hero-kpi overview-hero-kpi-{tone}",
-        children=[
-            html.Div(value, className="overview-hero-kpi-value"),
-            html.Div(label, className="overview-hero-kpi-label"),
-        ],
-    )
-
-
-def _build_pd_overview_scope_item(label: str, value: str) -> html.Li:
-    return html.Li(
-        children=[
-            html.Span(f"{label}:", className="overview-scope-list-label"),
-            html.Strong(value or "—"),
-        ]
-    )
-
-
 def _build_pd_overview_section_item(summary: dict) -> html.Li:
     tone = _rag_tone(summary["rag"])
     return html.Li(
@@ -1298,9 +1279,6 @@ def _build_pd_overview_chapter_panel(
 
 
 def _build_pd_main_overview(
-    ctx: PdFilterContext,
-    reporting_cycle: str,
-    scenario: str,
     chapter_1_rag: str,
     chapter_1_summaries: list[dict],
     chapter_2_summaries: list[dict],
@@ -1358,31 +1336,8 @@ def _build_pd_main_overview(
                                     html.P(
                                         "This opening readout shows where the signal is concentrated before the detailed charts and tests."
                                     ),
-                                    html.Div(
-                                        className="overview-main-card-scope",
-                                        children=[
-                                            html.Div("Current scope", className="overview-review-card-kicker"),
-                                            html.Ul(
-                                                className="overview-scope-list overview-scope-list-compact",
-                                                children=[
-                                                    _build_pd_overview_scope_item("Reporting cycle", reporting_cycle or "—"),
-                                                    _build_pd_overview_scope_item("Monitoring point", ctx.monitoring_point or "—"),
-                                                    _build_pd_overview_scope_item("Population", _pd_scope_label(ctx)),
-                                                    _build_pd_overview_scope_item("Scenario", scenario or "—"),
-                                                ],
-                                            ),
-                                        ],
-                                    ),
                                 ],
                             ),
-                        ],
-                    ),
-                    html.Div(
-                        className="overview-hero-kpis overview-main-card-kpis",
-                        children=[
-                            _build_pd_overview_kpi(str(total_attention), "Areas Needing Attention", posture_tone),
-                            _build_pd_overview_kpi(chapter_1_rag, "RAG Assignment Overall Status", _rag_tone(chapter_1_rag)),
-                            _build_pd_overview_kpi(str(chapter_2_attention), "Post Subjective Review Analysis Test Flagged", _rag_tone(chapter_2_rag)),
                         ],
                     ),
                     html.Div(
@@ -1403,7 +1358,7 @@ def _build_pd_main_overview(
                                 children=[
                                     _build_pd_overview_chapter_panel(
                                         "Chapter 1",
-                                        "RAG Assignment",
+                                        "RAG Assignment Overview",
                                         chapter_1_rag,
                                         chapter_1_summaries,
                                         body=_build_pd_chapter_1_diagram(chapter_1_rag, chapter_1_summaries),
@@ -1412,7 +1367,7 @@ def _build_pd_main_overview(
                                     ),
                                     _build_pd_overview_chapter_panel(
                                         "Chapter 2",
-                                        "Post Subjective Review Analysis",
+                                        "Post Subjective Review Analysis Overview",
                                         chapter_2_rag,
                                         chapter_2_summaries,
                                         body=_build_pd_chapter_2_overview_strip(chapter_2_summaries),
@@ -2729,9 +2684,6 @@ def render_pd_performance_content(
         data, ctx, reporting_cycle, scenario, observations, rating_observations, cq, crr_scale,
     )
     dashboard_overview = _build_pd_main_overview(
-        ctx,
-        reporting_cycle,
-        scenario,
         performance_pd_overview["rag"],
         chapter_1_summaries,
         post_review_summaries,

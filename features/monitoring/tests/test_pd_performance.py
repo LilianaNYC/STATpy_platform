@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dash.development.base_component import Component
 
+from STATpy_platform.features.monitoring.ui import common as filter_shell
 from STATpy_platform.features.monitoring.ui.views import pd_performance as page
 
 
@@ -103,6 +104,25 @@ def test_pd_performance_build_stores():
     }
 
 
+def test_pd_monitoring_point_shell_marks_only_the_selected_option():
+    options = [
+        {"label": "2025Q4", "value": "2025Q4"},
+        {"label": "2026Q1", "value": "2026Q1"},
+        {"label": "2026Q2", "value": "2026Q2"},
+        {"label": "2026Q3", "value": "2026Q3"},
+    ]
+
+    label, buttons = filter_shell.build_single_select_shell(
+        options=options,
+        value="2025Q4",
+        filter_key="monitoring-point",
+    )
+
+    assert label == "2025Q4"
+    assert buttons[0].className == "single-select-option is-selected"
+    assert all(button.className == "single-select-option" for button in buttons[1:])
+
+
 def test_pd_main_overview_summarizes_both_chapters_before_the_deep_dive():
     layout = _render_pd_content()
     text = " ".join(_collect_text(node) for node in layout)
@@ -126,6 +146,10 @@ def test_pd_main_overview_summarizes_both_chapters_before_the_deep_dive():
     assert "Transition Matrix" in text
     assert "Ranking maintained" in text
     assert "Peak shock impact" in text
+    assert "Current scope" not in text
+    assert "Areas Needing Attention" not in text
+    assert "RAG Assignment Overall Status" not in text
+    assert "Post Subjective Review Analysis Test Flagged" not in text
     assert "pd-dashboard-overview" in ids
     assert "overview-chapter-diagram" in class_tokens
     assert "overview-post-review-strip" in class_tokens
@@ -138,12 +162,14 @@ def test_pd_subnav_keeps_main_overview_without_adding_a_dashboard_summary_row():
     layout = page.build_layout()
     text = " ".join(_collect_text(node) for node in layout)
 
-    assert "All Overviews" in text
-    assert "Dashboard Main Overview" in text
-    assert "RAG Assignment Overview" in text
-    assert "Post Subjective Review Analysis Overview" in text
+    assert "Executive Overview" in text
+    assert "Main Overview" in text
     assert "RAG Assignment" in text
+    assert text.index("Main Overview") < text.index("RAG Assignment")
+    assert "RAG Assignment Overview" in text
     assert "Post Subjective Review Analysis" in text
+    assert text.index("RAG Assignment Overview") < text.index("Post Subjective Review Analysis")
+    assert "Post Subjective Review Analysis Overview" in text
     assert "ECL PIT PD - Calibration Conservatism" in text
     assert "ECL PIT PD - Discriminatory Power" in text
     assert "Balance Sheet PD - Calibration Conservatism" in text
@@ -152,8 +178,9 @@ def test_pd_subnav_keeps_main_overview_without_adding_a_dashboard_summary_row():
     assert "Scenario Ranking" in text
     assert "Sensitivity Analysis" in text
     assert "MEV Range" in text
-    assert text.index("All Overviews") < text.index("RAG Assignment")
-    assert text.index("RAG Assignment") < text.index("Post Subjective Review Analysis")
+    assert text.index("Executive Overview") < text.index("Main Overview")
+    assert text.index("RAG Assignment") < text.index("RAG Assignment Overview")
+    assert text.index("Post Subjective Review Analysis") < text.index("Post Subjective Review Analysis Overview")
     assert "Dashboard Summary" not in text
 
 
