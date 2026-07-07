@@ -766,12 +766,15 @@ def _register_filter_callbacks(app) -> None:
         prevent_initial_call=True,
     )
     def sync_saas_model_selection(select_all_value, models_value, models_options):
-        all_names = [option["value"] for option in models_options if option.get("value")]
+        # Options may be narrowed by the search box, so "All" only adds or
+        # removes the visible models and leaves hidden selections untouched.
+        visible_names = [option["value"] for option in models_options if option.get("value")]
+        current_values = list(models_value or [])
         if ctx.triggered_id == layout.MODEL_NAME_SELECT_ALL_ID:
             if "all" in (select_all_value or []):
-                return all_names, no_update
-            return [], no_update
-        select_all = ["all"] if all_names and set(models_value or []) == set(all_names) else []
+                return current_values + [name for name in visible_names if name not in current_values], no_update
+            return [value for value in current_values if value not in set(visible_names)], no_update
+        select_all = ["all"] if visible_names and set(visible_names).issubset(current_values) else []
         return no_update, select_all
 
     @app.callback(
@@ -785,8 +788,9 @@ def _register_filter_callbacks(app) -> None:
         Output(layout.FILTER_HELP_ID, "children"),
         Input(layout.SEGMENT_NAME_ID, "value"),
         Input(layout.MODEL_NAME_ID, "value"),
+        Input(layout.MODEL_NAME_SEARCH_ID, "value"),
     )
-    def sync_saas_filter_controls(segment, selected_models):
+    def sync_saas_filter_controls(segment, selected_models, model_search):
         segment_active = _is_segment_active(segment)
         all_options = _model_options_for_filters(None)
         all_option_values = [option["value"] for option in all_options]
@@ -808,6 +812,16 @@ def _register_filter_callbacks(app) -> None:
                 help_text = "Specific Models filtering is active. Clear the model selection to use the Segment filter."
             else:
                 help_text = ""
+
+        # The search box narrows only the visible options; models checked before
+        # searching stay selected even while hidden.
+        search_text = str(model_search or "").strip().lower()
+        if search_text:
+            model_options = [
+                option for option in model_options
+                if search_text in str(option.get("label", "")).lower()
+                or search_text in str(option.get("value", "")).lower()
+            ]
 
         return (
             has_specific_model_selection,
@@ -845,15 +859,15 @@ def _register_filter_callbacks(app) -> None:
         prev_values = [value for value in _normalize_multi_values(prev_values) if value in option_values]
 
         if layout.COMPARE_AGAINST_ID in triggered_ids:
-            # Selecting "None" or a reporting cycle should deselect the other -
-            # keep only whichever option was just checked.
+            # Multiple reporting cycles may be selected, but "None" is mutually
+            # exclusive with them: checking it clears the cycles, and checking a
+            # cycle drops "None".
             added = [value for value in raw_values if value not in prev_values]
-            if added:
-                result = [added[-1]]
-            elif raw_values:
-                result = raw_values
-            else:
+            if layout.COMPARE_AGAINST_NONE_VALUE in added:
                 result = [layout.COMPARE_AGAINST_NONE_VALUE]
+            else:
+                cycle_values = [value for value in raw_values if value != layout.COMPARE_AGAINST_NONE_VALUE]
+                result = cycle_values if cycle_values else [layout.COMPARE_AGAINST_NONE_VALUE]
         else:
             result = prev_values if prev_values else [layout.COMPARE_AGAINST_NONE_VALUE]
 

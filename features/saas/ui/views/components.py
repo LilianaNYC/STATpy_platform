@@ -1016,6 +1016,10 @@ def build_model_panel(
                 ],
             ),
             html.Div(
+                "Tip: drag on a chart to zoom in; double-click the chart to return to the original view.",
+                className="pd-mev-chart-meta saas-zoom-note",
+            ),
+            html.Div(
                 id={"type": layout.MODEL_MEV_GRID_TYPE, "model": model_name},
                 className="pd-mev-chart-grid",
                 children=chart_cards,

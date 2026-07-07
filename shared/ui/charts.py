@@ -344,7 +344,7 @@ def _format_saas_legend_label(
     scenario_label: str,
     multiple_models: bool,
     run_for: str | None = None,
-    multiple_run_fors: bool = False,
+    include_run_for: bool = False,
     compact: bool = False,
 ) -> str:
     compact_scenario_label = {
@@ -359,7 +359,7 @@ def _format_saas_legend_label(
     else:
         label = base_label
 
-    if multiple_run_fors and run_for:
+    if include_run_for and run_for:
         label = f"{run_for} {label}"
 
     return label
@@ -1964,6 +1964,8 @@ def build_saas_mev_time_series_figure(
 
     multiple_models = len(selected_models) > 1
     multiple_run_fors = len(selected_run_fors) > 1
+    # None/Min-Max modes always label traces with their reporting cycle, even for a single cycle.
+    include_run_for_in_legend = multiple_run_fors or reference_lines in ("none", "min_max")
     legend_item_count = len(grouped)
     compact_legend = legend_item_count >= 5
     ultra_compact_legend = legend_item_count >= 9
@@ -2010,7 +2012,8 @@ def build_saas_mev_time_series_figure(
         is_primary_run_for = bool(primary_run_for and run_for == primary_run_for)
         run_for_dash = run_for_dash_map.get(run_for, "solid")
         if reference_lines in ("monitoring", "min_max", "none"):
-            run_for_dash = "solid" if is_primary_run_for or not multiple_run_fors else "dash"
+            # run_for_dash stays per-cycle: the primary cycle is solid and each
+            # Compare To cycle keeps its own distinct dash pattern.
             if normalized_theme == "dark":
                 color = "#86efac" if scenario == "baseline" else "#fb7185" if scenario == "intsevere" else "#d8e1ee"
             else:
@@ -2024,7 +2027,7 @@ def build_saas_mev_time_series_figure(
             scenario_label=scenario_label,
             multiple_models=multiple_models,
             run_for=_compact_run_for_label(run_for) if ultra_compact_legend else run_for,
-            multiple_run_fors=multiple_run_fors,
+            include_run_for=include_run_for_in_legend,
             compact=compact_legend,
         )
         legend_rank = (
