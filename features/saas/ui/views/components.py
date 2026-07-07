@@ -884,10 +884,8 @@ def build_model_panel(
         records.filter_records_by_model_mevs(visible_records, model_name, "transformed_only"),
         mev_label_mode,
     )
-    default_family_mev = next(
-        (option["value"] for option in family_mev_options if option["value"] != records.FAMILY_ALL_VALUE),
-        "",
-    )
+    # "All" is prepended by build_family_mev_options, so the first option is the default.
+    default_family_mev = family_mev_options[0]["value"] if family_mev_options else ""
     default_model_mevs = [option["value"] for option in transformed_mev_options]
     default_display_mevs = records.active_selected_mevs(
         model_name,
@@ -1010,6 +1008,10 @@ def build_model_panel(
                         ],
                     ),
                 ],
+            ),
+            html.Div(
+                "Tip: drag on a chart to zoom in; double-click the chart to return to the original view.",
+                className="pd-mev-chart-meta saas-zoom-note",
             ),
             html.Div(
                 id={"type": layout.MODEL_MEV_GRID_TYPE, "model": model_name},

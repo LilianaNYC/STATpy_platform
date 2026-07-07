@@ -30,6 +30,7 @@ MODEL_NAME_ID = "saas-model-name"
 MODEL_NAME_SELECT_ALL_ID = "saas-model-name-select-all"
 MODEL_NAME_TOGGLE_ID = "saas-model-name-toggle"
 MODEL_NAME_MENU_ID = "saas-model-name-menu"
+MODEL_NAME_SEARCH_ID = "saas-model-name-search"
 
 MEV_MODEL_PANELS_ID = "saas-mev-model-panels"
 FILTER_HELP_ID = "saas-filter-help"
@@ -267,6 +268,14 @@ def _build_checklist_filter(
                         id=menu_id,
                         className="checkbox-dropdown-menu",
                         children=[
+                            dcc.Input(
+                                id=MODEL_NAME_SEARCH_ID,
+                                type="text",
+                                placeholder="Type to search models…",
+                                value="",
+                                autoComplete="off",
+                                className="pd-models-search",
+                            ) if select_all_id else None,
                             dcc.Checklist(
                                 id=select_all_id,
                                 options=[{"label": "All", "value": "all"}] if select_all_id else [],
@@ -844,7 +853,8 @@ def build_apply_prompt() -> html.Div:
                     ]),
                     html.Li([
                         html.Strong("Fine-tune each model card. "),
-                        "Within a card you can switch the scenario, MEV, and visible date range without re-applying the top filters. These card-level changes are for on-screen analysis only.",
+                        "Within a card you can switch the scenario, MEV, and visible date range without re-applying the top filters. These card-level changes are for on-screen analysis only. "
+                        "The charts are interactive: drag to zoom in, and double-click a chart to return to its original view.",
                     ]),
                     html.Li([
                         html.Strong("Export what you need. "),
