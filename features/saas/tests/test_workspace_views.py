@@ -4,7 +4,30 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from dash.development.base_component import Component
+
 from STATpy_platform.features.saas.ui.views import workspace as page, components as views
+
+
+def _children_of(node) -> list:
+    children = getattr(node, "children", None)
+    if children is None:
+        return []
+    if isinstance(children, (list, tuple)):
+        return list(children)
+    return [children]
+
+
+def _find_component_by_id(node, component_id):
+    if not isinstance(node, Component):
+        return None
+    if getattr(node, "id", None) == component_id:
+        return node
+    for child in _children_of(node):
+        found = _find_component_by_id(child, component_id)
+        if found is not None:
+            return found
+    return None
 
 
 def test_single_select_option_classes_marks_selected_value():
@@ -110,6 +133,93 @@ def test_mev_toggle_label_handles_all_raw_mevs():
     )
 
     assert label == "All"
+
+
+def test_mev_toggle_label_handles_all_family_mevs():
+    label = views.mev_toggle_label(
+        "family",
+        views.records.FAMILY_ALL_VALUE,
+        [],
+        [
+            {"label": "All", "value": views.records.FAMILY_ALL_VALUE},
+            {"label": "Transformed A", "value": "transformed_a"},
+        ],
+        [],
+    )
+
+    assert label == "All"
+
+
+def test_build_model_panel_defaults_family_picker_to_all(monkeypatch):
+    monkeypatch.setitem(
+        views.records.SAAS_PAGE_DATA,
+        "model_mev_map",
+        {"Model A": {"transformed": ["Transformed A", "Transformed B"], "raw": ["Raw A", "Raw B"]}},
+    )
+    monkeypatch.setitem(
+        views.records.SAAS_PAGE_DATA,
+        "model_mev_family_map",
+        {"Model A": {"Transformed A": ["Raw A"], "Transformed B": ["Raw B"]}},
+    )
+    monkeypatch.setitem(
+        views.SAAS_PAGE_DATA,
+        "model_segments_map",
+        {"Model A": ["Segment A"]},
+    )
+    monkeypatch.setattr(views.selectors, "model_descriptive_label", lambda model_name: model_name)
+
+    panel = views.build_model_panel(
+        1,
+        "Model A",
+        [
+            {
+                "Model Name": "Model A",
+                "MEV Name": "Transformed A",
+                "Scenario": "baseline",
+                "Quarter": 0,
+                "Date": datetime(2024, 3, 31),
+                "Run For": "Cycle A",
+            },
+            {
+                "Model Name": "Model A",
+                "MEV Name": "Raw A",
+                "Scenario": "baseline",
+                "Quarter": 0,
+                "Date": datetime(2024, 3, 31),
+                "Run For": "Cycle A",
+            },
+            {
+                "Model Name": "Model A",
+                "MEV Name": "Transformed B",
+                "Scenario": "baseline",
+                "Quarter": 0,
+                "Date": datetime(2024, 3, 31),
+                "Run For": "Cycle A",
+            },
+            {
+                "Model Name": "Model A",
+                "MEV Name": "Raw B",
+                "Scenario": "baseline",
+                "Quarter": 0,
+                "Date": datetime(2024, 3, 31),
+                "Run For": "Cycle A",
+            },
+        ],
+        ["Cycle A"],
+        [],
+        "history",
+        None,
+        None,
+        figure_builder=lambda *_args, **_kwargs: {"data": [], "layout": {}},
+    )
+
+    family_picker = _find_component_by_id(
+        panel,
+        {"type": page.MODEL_MEV_SINGLE_VALUE_TYPE, "model": "Model A"},
+    )
+
+    assert family_picker is not None
+    assert family_picker.value == views.records.FAMILY_ALL_VALUE
 
 
 def test_build_model_chart_cards_returns_empty_mev_card_without_figure_builder():

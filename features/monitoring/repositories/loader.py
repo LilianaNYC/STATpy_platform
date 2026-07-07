@@ -208,7 +208,7 @@ def load_pd_mev_catalog() -> dict[str, Any]:
         mnemonic = str(row.get("US Mnemonic", "")).strip()
         long_name = str(row.get("Long Name", "")).strip()
         description = str(row.get("Description", "")).strip()
-        contribution = row.get("Model controbution", row.get("Model contribution"))
+        contribution = row.get("Model contribution")
         if model_key and segment:
             model_segments.setdefault(model_key, [])
             if segment not in model_segments[model_key]:

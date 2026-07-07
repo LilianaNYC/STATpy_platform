@@ -884,8 +884,14 @@ def build_model_panel(
         records.filter_records_by_model_mevs(visible_records, model_name, "transformed_only"),
         mev_label_mode,
     )
-    # "All" is prepended by build_family_mev_options, so the first option is the default.
-    default_family_mev = family_mev_options[0]["value"] if family_mev_options else ""
+    default_family_mev = (
+        records.FAMILY_ALL_VALUE
+        if records.FAMILY_ALL_VALUE in {option["value"] for option in family_mev_options}
+        else next(
+            (option["value"] for option in family_mev_options if option["value"] != records.FAMILY_ALL_VALUE),
+            "",
+        )
+    )
     default_model_mevs = [option["value"] for option in transformed_mev_options]
     default_display_mevs = records.active_selected_mevs(
         model_name,

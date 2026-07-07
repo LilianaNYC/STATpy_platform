@@ -1626,7 +1626,7 @@ def page_layout(data: dict) -> list:
     default_cycle = reporting_cycle_options[0]["value"] if reporting_cycle_options else "CCAR 2026"
     cycle_quarters = shared_filters.REPORTING_CYCLE_QUARTERS.get(default_cycle, [])
     monitoring_point_options = [{"label": q, "value": q} for q in cycle_quarters]
-    default_monitoring_point = cycle_quarters[0] if cycle_quarters else ""
+    default_monitoring_point = shared_filters.resolve_monitoring_point_value(cycle_quarters, None)
 
     return [
         dcc.Store(id=RANGE_STORE_ID, data={}),

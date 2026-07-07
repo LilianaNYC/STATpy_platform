@@ -33,6 +33,20 @@ def build_single_select_options(*, options: list[dict] | None, value: str | None
     ]
 
 
+def build_single_select_shell(*, options: list[dict] | None, value: str | None, filter_key: str) -> tuple[str, list]:
+    """Return the current toggle label + option buttons for a single-select shell."""
+    return _option_label(options, value), build_single_select_options(
+        options=options,
+        value=value,
+        filter_key=filter_key,
+    )
+
+
+def resolve_monitoring_point_value(options: list[str] | None, value: str | None) -> str:
+    """Use the current monitoring point when valid, otherwise fall back to the latest one."""
+    return controls.resolve_monitoring_point_value(options, value)
+
+
 def register_single_select_callbacks(
     app,
     *,
@@ -73,7 +87,7 @@ def register_single_select_callbacks(
         Input(value_id, "options"),
     )
     def sync_single_select_shell(value, options):
-        return _option_label(options, value), build_single_select_options(
+        return build_single_select_shell(
             options=options,
             value=value,
             filter_key=filter_key,

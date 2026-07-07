@@ -94,3 +94,24 @@ def test_active_selected_mevs_expands_family_when_requested(monkeypatch):
         "Raw B",
     ]
     assert records.active_selected_mevs("Model A", "raw_only", "Transformed A", ["Raw A"], rows) == ["Raw A"]
+
+
+def test_active_selected_mevs_expands_all_family_default(monkeypatch):
+    monkeypatch.setitem(
+        records.SAAS_PAGE_DATA,
+        "model_mev_family_map",
+        {"Model A": {"Transformed A": ["Raw A"], "Transformed B": ["Raw B"]}},
+    )
+    rows = [
+        {"MEV Name": "Transformed A"},
+        {"MEV Name": "Raw A"},
+        {"MEV Name": "Transformed B"},
+        {"MEV Name": "Raw B"},
+    ]
+
+    assert records.active_selected_mevs("Model A", "family", records.FAMILY_ALL_VALUE, [], rows) == [
+        "Transformed A",
+        "Raw A",
+        "Transformed B",
+        "Raw B",
+    ]

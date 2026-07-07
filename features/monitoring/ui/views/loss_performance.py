@@ -529,7 +529,7 @@ def page_layout(data: dict) -> list:
         set_loss_metrics(None, [])
     cycle_quarters = shared_filters.REPORTING_CYCLE_QUARTERS.get(default_cycle, [])
     monitoring_options = cycle_quarters if cycle_quarters else get_loss_monitoring_point_options(data, None, "All")
-    default_monitoring_point = monitoring_options[0] if monitoring_options else ""
+    default_monitoring_point = shared_filters.resolve_monitoring_point_value(monitoring_options, None)
 
     model_select_options = [{"label": "All models", "value": "all"}] + [{"label": name, "value": name} for name in model_options]
 

@@ -12,8 +12,9 @@ whenever any of it changes.
 
 from __future__ import annotations
 
-from dash import ALL, Input, Output, State, ctx, html, no_update
+from dash import ALL, Input, Output, State, ctx, no_update
 
+from ..ui import common as filter_shell
 from ..ui.views import pd_performance as layout
 from ....shared.ui import controls
 from ....shared.theme import APP_THEME_ID
@@ -40,8 +41,6 @@ def register_callbacks(app) -> None:
     @app.callback(
         Output(controls.MONITORING_POINT_ID, "options"),
         Output(controls.MONITORING_POINT_ID, "value"),
-        Output(controls.MONITORING_POINT_TOGGLE_ID, "children"),
-        Output(controls.MONITORING_POINT_MENU_ID, "children"),
         Input(controls.REPORTING_CYCLE_ID, "value"),
         State(controls.MONITORING_POINT_ID, "value"),
     )
@@ -52,21 +51,8 @@ def register_callbacks(app) -> None:
         else:
             quarters = list(allowed)
         options = [{"label": q, "value": q} for q in quarters]
-        value = current_mp if current_mp in quarters else quarters[0] if quarters else ""
-        menu_children = [
-            html.Button(
-                [
-                    html.Span(opt["label"], className="single-select-option-label"),
-                    html.Span("✓", className="single-select-option-check", **{"aria-hidden": "true"}),
-                ],
-                id={"type": controls.SINGLE_SELECT_OPTION_ID, "filter": "monitoring-point", "value": opt["value"]},
-                type="button",
-                n_clicks=0,
-                className="single-select-option is-selected" if opt["value"] == value else "single-select-option",
-            )
-            for opt in options
-        ]
-        return options, value, value, menu_children
+        value = filter_shell.resolve_monitoring_point_value(quarters, current_mp)
+        return options, value
 
     # -----------------------------------------------------------------
     # Portfolio segment <-> specific models mutual exclusivity
@@ -122,7 +108,6 @@ def register_callbacks(app) -> None:
     # -----------------------------------------------------------------
     @app.callback(
         Output(controls.MONITORING_POINT_ID, "value", allow_duplicate=True),
-        Output(controls.MONITORING_POINT_TOGGLE_ID, "children", allow_duplicate=True),
         Output(controls.MONITORING_POINT_MENU_ID, "className", allow_duplicate=True),
         Input({"type": controls.SINGLE_SELECT_OPTION_ID, "filter": "monitoring-point", "value": ALL}, "n_clicks"),
         prevent_initial_call=True,
@@ -130,9 +115,22 @@ def register_callbacks(app) -> None:
     def select_monitoring_point(_clicks):
         triggered = ctx.triggered_id
         if not triggered:
-            return no_update, no_update, no_update
+            return no_update, no_update
         value = triggered["value"]
-        return value, value, "checkbox-dropdown-menu single-select-menu"
+        return value, "checkbox-dropdown-menu single-select-menu"
+
+    @app.callback(
+        Output(controls.MONITORING_POINT_TOGGLE_ID, "children"),
+        Output(controls.MONITORING_POINT_MENU_ID, "children"),
+        Input(controls.MONITORING_POINT_ID, "value"),
+        Input(controls.MONITORING_POINT_ID, "options"),
+    )
+    def sync_monitoring_point_shell(value, options):
+        return filter_shell.build_single_select_shell(
+            options=options,
+            value=value,
+            filter_key="monitoring-point",
+        )
 
     @app.callback(
         Output(controls.PORTFOLIO_SEGMENT_ID, "value"),

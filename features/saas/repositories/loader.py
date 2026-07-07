@@ -145,8 +145,7 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
         model_name = _normalize_model_name(row.get(config.DUMMY_MEV_MODEL_NAME_COLUMN))
         segment = str(row.get("Segment") or "").strip()
         transformed_mev_name = str(row.get("US Mnemonic") or "").strip()
-        # Source column is misspelled "Model controbution" in the workbook.
-        contribution = row.get("Model controbution", row.get("Model contribution"))
+        contribution = row.get("Model contribution")
         if model_name and transformed_mev_name and contribution is not None:
             try:
                 model_mev_contribution_map.setdefault(model_name, {})[transformed_mev_name] = float(contribution)
