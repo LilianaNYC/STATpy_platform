@@ -128,9 +128,13 @@ def compare_against_toggle_label(selected_values, selected_run_for: str | None) 
 
 def model_names_for_filters(segment: str | None) -> list[str]:
     base_models = list(SAAS_PAGE_DATA.get("model_names", []))
-    model_segments = SAAS_PAGE_DATA.get("model_segments", {})
+    model_segments_map = SAAS_PAGE_DATA.get("model_segments_map", {})
     if is_segment_active(segment):
-        base_models = [model_name for model_name in base_models if model_segments.get(model_name) == segment]
+        # A model can belong to more than one segment, so membership in the
+        # full per-model list is required -- comparing against a single
+        # "primary" segment would wrongly exclude a model from every segment
+        # filter except whichever one happened to be seen first.
+        base_models = [model_name for model_name in base_models if segment in (model_segments_map.get(model_name) or [])]
     return base_models
 
 

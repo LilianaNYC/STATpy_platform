@@ -217,7 +217,7 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
     model_segments_map: dict[str, list[str]] = {}
     for row in model_characteristic_df.to_dict(orient="records"):
         model_name = _normalize_model_name(row.get("Model Name"))
-        descriptive_name = str(row.get("Model descriptive name") or "").strip()
+        descriptive_name = str(row.get("Model Descriptive Name") or "").strip()
         if model_name and descriptive_name and model_name not in model_descriptive_name_map:
             model_descriptive_name_map[model_name] = descriptive_name
         segment = str(row.get("Segment Name") or "").strip()
@@ -367,8 +367,17 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
     #     mev_time_series["MEV Name"] = mev_time_series["MEV Name"].astype(str).str.replace(r'^"+|"+$', "", regex=True)
 
     #     payload["model_names"] = model_names["Model Name"].unique().tolist()  # ok
-    #     payload["model_segments"] = model_names.groupby("Model Name")["Segment Name"].apply(list).to_dict()  # ok
-    #     payload["model_segments_map"] = model_names.groupby("Model Name")["Segment Name"].apply(list).to_dict()  # ok # same as model_segments
+    #     # model_segments_map holds every distinct segment per model (order of
+    #     # first appearance); model_segments holds just the first one -- callers
+    #     # like selectors.py compare model_segments.get(model_name) == segment,
+    #     # so it must stay a single string, not the same list as _map.
+    #     model_segments_map = model_names.groupby("Model Name")["Segment Name"].apply(
+    #         lambda values: list(dict.fromkeys(values.dropna()))
+    #     ).to_dict()
+    #     payload["model_segments_map"] = model_segments_map
+    #     payload["model_segments"] = {
+    #         model_name: segments[0] for model_name, segments in model_segments_map.items() if segments
+    #     }
     #     payload["model_development_dates"] = model_names.groupby("Run For").apply(
     #         lambda g: g.set_index("Model Name")["Development Date"].to_dict()
     #     ).to_dict()  # ok
@@ -402,8 +411,6 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
     #         for model_name, mevs in payload["model_mev_map"].items()
     #     }
     #     mev_time_series = _attribute_mev_rows_to_models(mev_time_series, model_mev_sets_map)
-
     #     payload["mev_time_series"] = mev_time_series  # ok
-    #     # breakpoint()
-    #     print(payload)
+
     #     return payload

@@ -184,7 +184,7 @@ def load_pd_mev_catalog() -> dict[str, Any]:
         date_val = row.get("Development date", "")
         if date_val:
             dev_dates[model_key] = _date_to_quarter_label(str(date_val))
-        desc = row.get("Model descriptive name", "")
+        desc = row.get("Model Descriptive Name", "")
         if desc:
             descriptive_names[model_key] = str(desc).strip()
         model_type = str(row.get("Model Type", "")).strip().upper()
