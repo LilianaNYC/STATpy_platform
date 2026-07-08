@@ -122,8 +122,8 @@ def monitoring_marker_legend_item(
 
 
 _MONITORING_SCENARIO_COLORS = {
-    "light": {"baseline": "#16a34a", "intsevere": "#dc2626", "_default": "#0f172a"},
-    "dark": {"baseline": "#86efac", "intsevere": "#fb7185", "_default": "#d8e1ee"},
+    "light": {"baseline": "#16a34a", "intsevere": "#dc2626", "_default": "#1e3a8a"},
+    "dark": {"baseline": "#86efac", "intsevere": "#fb7185", "_default": "#93c5fd"},
 }
 
 
