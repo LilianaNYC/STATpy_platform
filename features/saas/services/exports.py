@@ -88,7 +88,7 @@ def _model_descriptive_label(model_name: str) -> str:
 SAAS_METRIC_COLUMNS: list[tuple[str, str, str]] = [
     # --- Identifiers ---
     ("model", "Model", "Model name (as used in the GMIS system)."),
-    ("model_descriptive", "Model Descriptive Name", "Model descriptive name (from the model_characteristic sheet)."),
+    ("model_descriptive", "Model Descriptive Name", "Model descriptive name (from the model_names sheet)."),
     ("mev_type", "MEV Type", "Whether the MEV is a Raw or a Transformed variable."),
     ("mev", "MEV", "MEV name, shown using the MEV Label mode selected on the dashboard."),
     ("model_contribution", "Model Contribution", "The MEV's contribution to the model, shown as a percentage. Blank for raw MEVs."),

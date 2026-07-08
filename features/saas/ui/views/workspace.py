@@ -351,7 +351,7 @@ def _build_inline_segmented_filter(
 
 
 def model_descriptive_label(model_name: str) -> str:
-    """Model's descriptive name (from the model_characteristic sheet), falling
+    """Model's descriptive name (from the model_names sheet), falling
     back to the raw Model Name when no descriptive name is available."""
     descriptive_map = SAAS_PAGE_DATA.get("model_descriptive_name_map", {})
     return descriptive_map.get(model_name) or model_name

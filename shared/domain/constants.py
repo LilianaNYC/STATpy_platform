@@ -21,10 +21,10 @@ LGD_THRESHOLDS_SHEET_NAME = "LGD_Thresholds"
 EAD_THRESHOLDS_SHEET_NAME = "EAD_Thresholds"
 LOSS_THRESHOLDS_SHEET_NAME = "Loss_Thresholds"
 
-DUMMY_MEV_TRANSFORMED_DESCRIPTION_SHEET_NAME = "transformed_mevs_description"
-DUMMY_MEV_RAW_DESCRIPTION_SHEET_NAME = "raw_mevs_description"
-DUMMY_MEV_TIME_SERIES_SHEET_NAME = "mev_data"
-DUMMY_MEV_MODEL_CHARACTERISTIC_SHEET_NAME = "model_characteristic"
+DUMMY_MEV_TRANSFORMED_DESCRIPTION_SHEET_NAME = "mev_transformed"
+DUMMY_MEV_RAW_DESCRIPTION_SHEET_NAME = "mev_raw"
+DUMMY_MEV_TIME_SERIES_SHEET_NAME = "scenario"
+DUMMY_MEV_MODEL_CHARACTERISTIC_SHEET_NAME = "model_names"
 DUMMY_MEV_MODEL_NAME_COLUMN = "Model Name"
 
 # ---------------------------------------------------------------------------
