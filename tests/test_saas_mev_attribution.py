@@ -1,9 +1,9 @@
 """Unit tests for deriving MEV time-series model attribution.
 
-``mev_data``'s own ``Model Name`` column is unreliable -- it stays in the
+``scenario``'s own ``Model Name`` column is unreliable -- it stays in the
 workbook, but ``features/saas/repositories/loader.py`` intentionally never
 reads it, deriving each row's owning model(s) from ``model_mev_map`` (built
-from ``transformed_mevs_description``) instead, exploding rows whose MEV is
+from ``mev_transformed``) instead, exploding rows whose MEV is
 shared across more than one model.
 """
 

@@ -168,7 +168,7 @@ def load_pd_mev_catalog() -> dict[str, Any]:
         log.warning("MEV workbook not found: %s", path)
         return {}
 
-    # -- model_characteristic: development dates, segments, descriptive names
+    # -- model_names: development dates, segments, descriptive names
     mc_df = pd.read_excel(
         xls,
         sheet_name=config.DUMMY_MEV_MODEL_CHARACTERISTIC_SHEET_NAME,
@@ -184,14 +184,14 @@ def load_pd_mev_catalog() -> dict[str, Any]:
         date_val = row.get("Development date", "")
         if date_val:
             dev_dates[model_key] = _date_to_quarter_label(str(date_val))
-        desc = row.get("Model descriptive name", "")
+        desc = row.get("Model Descriptive Name", "")
         if desc:
             descriptive_names[model_key] = str(desc).strip()
         model_type = str(row.get("Model Type", "")).strip().upper()
         if model_type:
             model_types[model_key] = model_type
 
-    # -- transformed_mevs_description: model→segment and model→MEV mapping
+    # -- mev_transformed: model→segment and model→MEV mapping
     desc_df = pd.read_excel(
         xls,
         sheet_name=config.DUMMY_MEV_TRANSFORMED_DESCRIPTION_SHEET_NAME,
@@ -225,7 +225,7 @@ def load_pd_mev_catalog() -> dict[str, Any]:
             except (TypeError, ValueError):
                 pass
 
-    # -- mev_data (all scenarios): time series per model+MEV+scenario
+    # -- scenario (all scenarios): time series per model+MEV+scenario
     ts_df = pd.read_excel(
         xls,
         sheet_name=config.DUMMY_MEV_TIME_SERIES_SHEET_NAME,

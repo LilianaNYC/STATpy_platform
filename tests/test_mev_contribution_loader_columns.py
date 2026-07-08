@@ -52,7 +52,7 @@ def test_saas_loader_reads_model_contribution_column(monkeypatch):
             {
                 "Model Name": "Model A",
                 "Run For": "2025Q4",
-                "Model descriptive name": "Model A",
+                "Model Descriptive Name": "Model A",
                 "Development date": "2025-03-31",
             }
         ]
@@ -84,7 +84,7 @@ def test_monitoring_loader_reads_model_contribution_column(monkeypatch):
             {
                 "Model Name": "Model A",
                 "Development date": "2025-03-31",
-                "Model descriptive name": "Model A",
+                "Model Descriptive Name": "Model A",
                 "Model Type": "PD",
             }
         ]
@@ -173,7 +173,7 @@ def test_saas_loader_ignores_legacy_model_controbution_column(monkeypatch):
             {
                 "Model Name": "Model A",
                 "Run For": "2025Q4",
-                "Model descriptive name": "Model A",
+                "Model Descriptive Name": "Model A",
                 "Development date": "2025-03-31",
             }
         ]

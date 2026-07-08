@@ -67,11 +67,11 @@ def _attribute_mev_rows_to_models(
 ) -> pd.DataFrame:
     """Derive each row's owning model(s) and explode rows shared across models.
 
-    ``mev_data``'s own ``Model Name`` column is unreliable and intentionally
+    ``scenario``'s own ``Model Name`` column is unreliable and intentionally
     *not* read here -- the column may still exist in the workbook (kept for
     other purposes outside the app), but per-row model attribution is always
     derived from ``model_mev_map`` (built from the reliable
-    ``transformed_mevs_description`` sheet) instead. A MEV can belong to more
+    ``mev_transformed`` sheet) instead. A MEV can belong to more
     than one model, so a row whose MEV is shared is duplicated once per
     owning model; a row whose MEV isn't claimed by any model is dropped.
     """
@@ -136,14 +136,11 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
     time_series_df = time_series_df.where(pd.notna(time_series_df), None)
     model_characteristic_df = model_characteristic_df.where(pd.notna(model_characteristic_df), None)
 
-    model_segments: dict[str, str] = {}
-    model_segments_map: dict[str, list[str]] = {}
     model_mev_map: dict[str, dict[str, set[str]]] = {}
     model_mev_family_map: dict[str, dict[str, list[str]]] = {}
     model_mev_contribution_map: dict[str, dict[str, float]] = {}
     for row in transformed_df.to_dict(orient="records"):
         model_name = _normalize_model_name(row.get(config.DUMMY_MEV_MODEL_NAME_COLUMN))
-        segment = str(row.get("Segment") or "").strip()
         transformed_mev_name = str(row.get("US Mnemonic") or "").strip()
         contribution = row.get("Model contribution")
         if model_name and transformed_mev_name and contribution is not None:
@@ -156,14 +153,6 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
             for item in str(row.get("SAAS_raw_mnemonic") or "").split(",")
             if item.strip()
         ]
-        if model_name and segment and model_name not in model_segments:
-            model_segments[model_name] = segment
-        if model_name and segment:
-            # A model can belong to several segments - keep every distinct one,
-            # in order of first appearance.
-            segments_for_model = model_segments_map.setdefault(model_name, [])
-            if segment not in segments_for_model:
-                segments_for_model.append(segment)
         if model_name:
             model_mev_map.setdefault(
                 model_name,
@@ -224,11 +213,25 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
         _normalize_model_name
     )
     model_descriptive_name_map: dict[str, str] = {}
+    model_segments: dict[str, str] = {}
+    model_segments_map: dict[str, list[str]] = {}
     for row in model_characteristic_df.to_dict(orient="records"):
         model_name = _normalize_model_name(row.get("Model Name"))
-        descriptive_name = str(row.get("Model descriptive name") or "").strip()
+        descriptive_name = str(row.get("Model Descriptive Name") or "").strip()
         if model_name and descriptive_name and model_name not in model_descriptive_name_map:
             model_descriptive_name_map[model_name] = descriptive_name
+        segment = str(row.get("Segment Name") or "").strip()
+        if model_name and segment:
+            if model_name not in model_segments:
+                model_segments[model_name] = segment
+            # A model can belong to several segments - keep every distinct one,
+            # in order of first appearance.
+            segments_for_model = model_segments_map.setdefault(model_name, [])
+            if segment not in segments_for_model:
+                segments_for_model.append(segment)
+    segment_values = _ordered_unique_strings(
+        model_characteristic_df.get("Segment Name", pd.Series(dtype=object)).tolist()
+    )
     model_characteristic_df["Development date"] = pd.to_datetime(
         model_characteristic_df.get("Development date"),
         dayfirst=False,
@@ -250,9 +253,6 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
         transformed_df.get(config.DUMMY_MEV_MODEL_NAME_COLUMN, pd.Series(dtype=object)).tolist()
     )
 
-    segment_values = _ordered_unique_strings(
-        transformed_df.get("Segment", pd.Series(dtype=object)).tolist()
-    )
     run_for_values = _ordered_unique_strings(
         time_series_df.get("Run For", pd.Series(dtype=object)).tolist()
     )
@@ -294,3 +294,123 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
         "model_mev_contribution_map": model_mev_contribution_map,
         "mev_time_series": time_series_df,
     }
+
+
+    # def load_saas_mev_workbook_data_v2() -> dict[str, Any]:
+    #     """Load the SAAS workbook data used by the top filters and MEV chart."""
+    #     empty_time_series = pd.DataFrame(
+    #         columns=["Date", "Quarter", "Run For", "Scenario", "MEV Name", "MEV Value", "Model Name"]
+    #     )
+    #     payload = {
+    #         "model_names": [],
+    #         "model_segments": {},
+    #         "model_segments_map": {},
+    #         "model_development_dates": {},
+    #         "run_for_quarter_zero_dates": {},
+    #         "model_mev_family_map": {},
+    #         "segment_values": [],
+    #         "run_for_values": [],
+    #         "mev_label_map": {},
+    #         "mev_group_label_map": {},
+    #         "mev_description_map": {},
+    #         "model_descriptive_name_map": {},
+    #         "model_mev_contribution_map": {},
+    #         "mev_time_series": empty_time_series,
+    #     }
+
+    #     query_trans = "SELECT * FROM [dbo].[mev_transformed]"
+    #     query_raw = "SELECT * FROM [dbo].[mev_raw]"
+    #     query_model_names = "SELECT * FROM [dbo].[model_names]"
+    #     query_run_details = "SELECT * FROM [dbo].[run_details]"
+    #     query_mev_time_series = "SELECT * FROM [input].[scenario]"
+
+    #     try:
+    #         mev_trans = get_sql_data("STAT_Config", query_trans)
+    #         print(f"Loaded [dbo].[mev_transformed] from STAT_Config. Rows: {len(mev_trans)}")
+    #     except Exception as error:
+    #         print(f"Failed to load [dbo].[mev_transformed] from STAT_Config: {error}")
+
+    #     try:
+    #         mev_raw = get_sql_data("STAT_Config", query_raw)
+    #         print(f"Loaded [dbo].[mev_raw] from STAT_Config. Rows: {len(mev_raw)}")
+    #     except Exception as error:
+    #         print(f"Failed to load [dbo].[mev_raw] from STAT_Config: {error}")
+
+    #     try:
+    #         model_names = get_sql_data("STAT_Config", query_model_names)
+    #         model_names = model_names[["Run For", "Segment Name", "Model Name", "Development Date"]].drop_duplicates()
+    #         print(f"Loaded [dbo].[model_names] from STAT_Config. Rows: {len(model_names)}")
+    #     except Exception as error:
+    #         print(f"Failed to load [dbo].[model_names] from STAT_Config: {error}")
+
+    #     try:
+    #         run_details = get_sql_data("STAT_Config", query_run_details)
+    #         run_details = run_details[run_details["Status"] == "Y"][["Run For"]].drop_duplicates()
+    #         print(f"Loaded [dbo].[run_details] from STAT_Config. Rows: {len(run_details)}")
+    #         print(run_details)
+    #     except Exception as error:
+    #         print(f"Failed to load [dbo].[run_details] from STAT_Config: {error}")
+
+    #     mev_time_series = pd.DataFrame()
+    #     for run_for in run_details["Run For"]:
+    #         try:
+    #             db_name = f"STAT_Inputs_{run_for.replace(' ', '_')}_BHC"
+    #             time_series = get_sql_data(db_name, query_mev_time_series)
+    #             mev_time_series = pd.concat([mev_time_series, time_series], ignore_index=True)
+    #         except Exception as error:
+    #             print(f"Failed to load [input].[scenario] from {db_name}: {error}")
+
+    #     mev_trans["Model Name"] = mev_trans["Model Name"].str.upper()
+    #     model_names["Model Name"] = model_names["Model Name"].str.upper()
+    #     model_names["Development Date"] = pd.to_datetime(model_names["Development Date"], errors="coerce")
+    #     mev_time_series["Date"] = pd.to_datetime(mev_time_series["Date"], errors="coerce")
+    #     mev_time_series["MEV Name"] = mev_time_series["MEV Name"].astype(str).str.replace(r'^"+|"+$', "", regex=True)
+
+    #     payload["model_names"] = model_names["Model Name"].unique().tolist()  # ok
+    #     # model_segments_map holds every distinct segment per model (order of
+    #     # first appearance); model_segments holds just the first one -- callers
+    #     # like selectors.py compare model_segments.get(model_name) == segment,
+    #     # so it must stay a single string, not the same list as _map.
+    #     model_segments_map = model_names.groupby("Model Name")["Segment Name"].apply(
+    #         lambda values: list(dict.fromkeys(values.dropna()))
+    #     ).to_dict()
+    #     payload["model_segments_map"] = model_segments_map
+    #     payload["model_segments"] = {
+    #         model_name: segments[0] for model_name, segments in model_segments_map.items() if segments
+    #     }
+    #     payload["model_development_dates"] = model_names.groupby("Run For").apply(
+    #         lambda g: g.set_index("Model Name")["Development Date"].to_dict()
+    #     ).to_dict()  # ok
+    #     payload["run_for_quarter_zero_dates"] = run_for_to_year_end(run_details["Run For"].tolist())
+    #     payload["model_mev_family_map"] = mev_trans.groupby("Model Name").apply(
+    #         lambda g: g.set_index("US Mnemonic")["SAAS_raw_mnemonic"]
+    #         .apply(lambda s: [x.strip() for x in str(s).split(",") if x.strip()])
+    #         .to_dict()
+    #     ).to_dict()  # ok
+
+    #     payload["model_mev_map"] = mev_trans.groupby("Model Name").apply(
+    #         lambda g: {
+    #             "transformed": g["US Mnemonic"].drop_duplicates().tolist(),
+    #             "raw": pd.unique(g["SAAS_raw_mnemonic"].astype(str).str.split(",").explode().str.strip()).tolist(),
+    #         }
+    #     ).to_dict()  # ok
+
+    #     payload["segment_values"] = model_names["Segment Name"].dropna().unique().tolist()  # ok
+    #     payload["run_for_values"] = run_details["Run For"].tolist()  # ok
+    #     payload["transformed_mev_names"] = set(mev_trans["US Mnemonic"])  # ok
+    #     payload["raw_mev_names"] = set(mev_raw["US Mnemonic"])  # ok
+    #     payload["mev_label_map"] = mev_trans.drop_duplicates("US Mnemonic").set_index("US Mnemonic")["Long Name"].to_dict()  # ok
+    #     payload["mev_group_label_map"] = mev_raw.drop_duplicates("US Mnemonic").set_index("US Mnemonic")["Group Mnemonic"].to_dict()  # ok
+    #     payload["mev_description_map"] = mev_trans.drop_duplicates("US Mnemonic").set_index("US Mnemonic")["Description"].to_dict()  # ok
+    #     payload["model_descriptive_name_map"] = {m: m for m in model_names["Model Name"].dropna().unique()}
+    #     payload["model_mev_contribution_map"] = {}
+
+    #     mev_time_series = mev_time_series.drop(columns=["Model Name"], errors="ignore")
+    #     model_mev_sets_map = {
+    #         model_name: {"transformed": set(mevs["transformed"]), "raw": set(mevs["raw"])}
+    #         for model_name, mevs in payload["model_mev_map"].items()
+    #     }
+    #     mev_time_series = _attribute_mev_rows_to_models(mev_time_series, model_mev_sets_map)
+    #     payload["mev_time_series"] = mev_time_series  # ok
+
+    #     return payload
