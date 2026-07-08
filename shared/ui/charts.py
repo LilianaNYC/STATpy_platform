@@ -381,6 +381,13 @@ def _format_projection_quarter_label(quarter_value) -> str:
     return f"Q{numeric_value:g}"
 
 
+def _format_saas_hover_date(date_value) -> str:
+    try:
+        return f"{date_value.strftime('%b')} {date_value.day}, {date_value.year}"
+    except (AttributeError, ValueError):
+        return str(date_value)
+
+
 def _saas_quarter_for_date(records, target_date):
     target = _coerce_saas_date(target_date)
     if target is None:
@@ -1978,6 +1985,9 @@ def build_saas_mev_time_series_figure(
     }
     fig = go.Figure()
     all_axis_values = []
+    # x -> (hover header text, sample y): feeds the hidden trace that renders the
+    # unified-hover title as "Sep 30, 2027 (Q7)" in the projection region.
+    unified_hover_headers: dict = {}
 
     def _is_historical_point(point):
         date_value, quarter_value, _ = point
@@ -2015,9 +2025,9 @@ def build_saas_mev_time_series_figure(
             # run_for_dash stays per-cycle: the primary cycle is solid and each
             # Compare To cycle keeps its own distinct dash pattern.
             if normalized_theme == "dark":
-                color = "#86efac" if scenario == "baseline" else "#fb7185" if scenario == "intsevere" else "#d8e1ee"
+                color = "#86efac" if scenario == "baseline" else "#fb7185" if scenario == "intsevere" else "#93c5fd"
             else:
-                color = "#16a34a" if scenario == "baseline" else "#dc2626" if scenario == "intsevere" else "#0f172a"
+                color = "#16a34a" if scenario == "baseline" else "#dc2626" if scenario == "intsevere" else "#1e3a8a"
 
         mev_label = mev_label_map.get(mev_name) or mev_name
         model_label = model_label_map.get(model_name) or model_name
@@ -2081,6 +2091,29 @@ def build_saas_mev_time_series_figure(
             else:
                 segment_x_values = segment_dates
             all_axis_values.extend(value for value in segment_x_values if value is not None)
+            if not is_projection_only:
+                for x_value, quarter_value, y_value in zip(
+                    segment_x_values, segment_quarters, (point[2] for point in segment_points)
+                ):
+                    if x_value is None:
+                        continue
+                    quarter_suffix = (
+                        f" ({_format_projection_quarter_label(quarter_value)})"
+                        if quarter_aligned and quarter_value is not None
+                        else ""
+                    )
+                    existing = unified_hover_headers.get(x_value)
+                    # Projection (Qn) labels win over plain history labels at the jump-off
+                    # date; track the max y so the header trace sorts first in the
+                    # unified hover box (rows are ordered by y, ties by trace order).
+                    if quarter_suffix or existing is None:
+                        label = f"{_format_saas_hover_date(x_value)}{quarter_suffix}"
+                    else:
+                        label = existing[0]
+                    unified_hover_headers[x_value] = (
+                        label,
+                        y_value if existing is None else max(existing[1], y_value),
+                    )
             fig.add_trace(
                 go.Scatter(
                     x=segment_x_values,
@@ -2160,6 +2193,28 @@ def build_saas_mev_time_series_figure(
                 showlegend=True,
                 mode=trace_mode,
             )
+
+    # Plotly's unified-hover title cannot include the projection quarter, so blank
+    # it (hoverformat=" ") and emit the "Sep 30, 2027 (Q7)" title as the first row
+    # via an invisible trace pinned ahead of the data traces.
+    show_quarter_hover_headers = any("(Q" in label for label, _ in unified_hover_headers.values())
+    if show_quarter_hover_headers:
+        header_xs = sorted(unified_hover_headers)
+        fig.add_trace(
+            go.Scatter(
+                x=header_xs,
+                y=[unified_hover_headers[x][1] for x in header_xs],
+                mode="lines",
+                line=dict(color="rgba(0,0,0,0)", width=0),
+                opacity=0,
+                showlegend=False,
+                name="",
+                legendrank=-1000,
+                customdata=[unified_hover_headers[x][0] for x in header_xs],
+                hovertemplate="<b>%{customdata}</b><extra></extra>",
+            )
+        )
+        fig.data = fig.data[-1:] + fig.data[:-1]
 
     legend_y = -0.38 if ultra_compact_legend else -0.22 if compact_legend else -0.21
     bottom_margin = 198 if ultra_compact_legend else 136 if compact_legend else 130
@@ -2410,6 +2465,7 @@ def build_saas_mev_time_series_figure(
         xaxis=dict(
             title=dict(text=x_axis_title, font=dict(size=12, color=palette["axis_title"])),
             type="linear" if is_projection_only else "date",
+            hoverformat=" " if show_quarter_hover_headers else None,
             tickmode="array",
             tickvals=tickvals,
             ticktext=ticktext,
