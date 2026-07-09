@@ -24,7 +24,17 @@ COMPARE_AGAINST_NONE_VALUE = "none"
 SEGMENT_NAME_ID = "saas-segment-name"
 SEGMENT_TOGGLE_ID = "saas-segment-toggle"
 SEGMENT_MENU_ID = "saas-segment-menu"
-SEGMENT_FILTER_KEY = "saas-segment"
+SEGMENT_PREV_STORE_ID = "saas-segment-prev-store"
+
+REGION_ID = "saas-region"
+REGION_TOGGLE_ID = "saas-region-toggle"
+REGION_MENU_ID = "saas-region-menu"
+REGION_FILTER_KEY = "saas-region"
+
+MODEL_GROUP_ID = "saas-model-group"
+MODEL_GROUP_TOGGLE_ID = "saas-model-group-toggle"
+MODEL_GROUP_MENU_ID = "saas-model-group-menu"
+MODEL_GROUP_FILTER_KEY = "saas-model-group"
 
 MODEL_NAME_ID = "saas-model-name"
 MODEL_NAME_SELECT_ALL_ID = "saas-model-name-select-all"
@@ -32,6 +42,7 @@ MODEL_NAME_TOGGLE_ID = "saas-model-name-toggle"
 MODEL_NAME_MENU_ID = "saas-model-name-menu"
 MODEL_NAME_SEARCH_ID = "saas-model-name-search"
 
+SUBNAV_MODELS_LABEL_ID = "saas-subnav-models-label"
 MEV_MODEL_PANELS_ID = "saas-mev-model-panels"
 FILTER_HELP_ID = "saas-filter-help"
 APPLY_FILTERS_ID = "saas-apply-filters"
@@ -81,7 +92,11 @@ HISTORICAL_STATS_FILTER_KEY = "saas-historical-stats"
 HISTORICAL_STATS_ID = "saas-historical-stats"
 
 SEGMENT_ALL_VALUE = "all"
-DEFAULT_SEGMENT = SEGMENT_ALL_VALUE
+DEFAULT_SEGMENT_VALUES = [SEGMENT_ALL_VALUE]
+REGION_ALL_VALUE = "all"
+DEFAULT_REGION = REGION_ALL_VALUE
+MODEL_GROUP_ALL_VALUE = "all"
+DEFAULT_MODEL_GROUP = MODEL_GROUP_ALL_VALUE
 SUBNAV_VIEW_OPTIONS = [
     {"label": "History", "value": "history"},
     {"label": "Projection", "value": "projection"},
@@ -159,6 +174,24 @@ def _build_segment_options() -> list[dict]:
     ]
 
 
+def _build_region_options() -> list[dict]:
+    values = SAAS_PAGE_DATA.get("region_values") or []
+    return [{"label": "All", "value": REGION_ALL_VALUE}] + [
+        {"label": value, "value": value}
+        for value in values
+        if value
+    ]
+
+
+def _build_model_group_options() -> list[dict]:
+    values = SAAS_PAGE_DATA.get("model_group_values") or []
+    return [{"label": "All", "value": MODEL_GROUP_ALL_VALUE}] + [
+        {"label": value, "value": value}
+        for value in values
+        if value
+    ]
+
+
 RUN_FOR_OPTIONS = _build_run_for_options()
 DEFAULT_RUN_FOR_VALUE = RUN_FOR_OPTIONS[0]["value"] if RUN_FOR_OPTIONS else ""
 COMPARE_AGAINST_OPTIONS = [{"label": "None", "value": COMPARE_AGAINST_NONE_VALUE}] + [
@@ -168,6 +201,8 @@ COMPARE_AGAINST_OPTIONS = [{"label": "None", "value": COMPARE_AGAINST_NONE_VALUE
 ]
 DEFAULT_COMPARE_AGAINST_VALUES = [COMPARE_AGAINST_NONE_VALUE]
 SEGMENT_NAME_OPTIONS = _build_segment_options()
+REGION_OPTIONS = _build_region_options()
+MODEL_GROUP_OPTIONS = _build_model_group_options()
 
 
 def _build_excel_scenario_options() -> list[dict]:
@@ -435,7 +470,7 @@ def _build_section_subnav() -> html.Div:
             html.Div(
                 className="monitoring-section-subnav-group saas-subnav-group",
                 children=[
-                    html.Div("Models in Scope", className="monitoring-section-subnav-label"),
+                    html.Div("Models in Scope", id=SUBNAV_MODELS_LABEL_ID, className="monitoring-section-subnav-label"),
                     html.Div(id=SUBNAV_MODELS_ID, className="saas-subnav-models"),
                 ],
             ),
@@ -455,33 +490,31 @@ def _build_top_bar() -> html.Div:
                         className="monitoring-controls saas-top-filter-row saas-primary-filter-row",
                         children=[
                             _build_single_select_filter(
-                                "Reporting Cycle",
-                                value_id=RUN_FOR_ID,
-                                toggle_id=RUN_FOR_TOGGLE_ID,
-                                menu_id=RUN_FOR_MENU_ID,
-                                filter_key=RUN_FOR_FILTER_KEY,
-                                options=RUN_FOR_OPTIONS,
-                                value=DEFAULT_RUN_FOR_VALUE,
-                                min_width="260px",
-                            ),
-                            _build_checklist_filter(
-                                "Compare To",
-                                toggle_id=COMPARE_AGAINST_TOGGLE_ID,
-                                menu_id=COMPARE_AGAINST_MENU_ID,
-                                checklist_id=COMPARE_AGAINST_ID,
-                                options=COMPARE_AGAINST_OPTIONS,
-                                value=DEFAULT_COMPARE_AGAINST_VALUES,
-                                button_label="None",
-                                min_width="280px",
+                                "Region",
+                                value_id=REGION_ID,
+                                toggle_id=REGION_TOGGLE_ID,
+                                menu_id=REGION_MENU_ID,
+                                filter_key=REGION_FILTER_KEY,
+                                options=REGION_OPTIONS,
+                                value=DEFAULT_REGION,
                             ),
                             _build_single_select_filter(
+                                "Model Group",
+                                value_id=MODEL_GROUP_ID,
+                                toggle_id=MODEL_GROUP_TOGGLE_ID,
+                                menu_id=MODEL_GROUP_MENU_ID,
+                                filter_key=MODEL_GROUP_FILTER_KEY,
+                                options=MODEL_GROUP_OPTIONS,
+                                value=DEFAULT_MODEL_GROUP,
+                            ),
+                            _build_checklist_filter(
                                 "Segment",
-                                value_id=SEGMENT_NAME_ID,
                                 toggle_id=SEGMENT_TOGGLE_ID,
                                 menu_id=SEGMENT_MENU_ID,
-                                filter_key=SEGMENT_FILTER_KEY,
+                                checklist_id=SEGMENT_NAME_ID,
                                 options=SEGMENT_NAME_OPTIONS,
-                                value=DEFAULT_SEGMENT,
+                                value=DEFAULT_SEGMENT_VALUES,
+                                button_label="All",
                             ),
                             _build_checklist_filter(
                                 "Specific Models",
@@ -493,6 +526,16 @@ def _build_top_bar() -> html.Div:
                                 button_label="Select models",
                                 min_width="360px",
                                 wrapper_class_name="monitoring-filter monitoring-model-filter",
+                            ),
+                            _build_single_select_filter(
+                                "Model Use Case / Cycle",
+                                value_id=RUN_FOR_ID,
+                                toggle_id=RUN_FOR_TOGGLE_ID,
+                                menu_id=RUN_FOR_MENU_ID,
+                                filter_key=RUN_FOR_FILTER_KEY,
+                                options=RUN_FOR_OPTIONS,
+                                value=DEFAULT_RUN_FOR_VALUE,
+                                min_width="260px",
                             ),
                             html.Div(
                                 className="monitoring-filter saas-top-filter-action",
@@ -522,6 +565,16 @@ def _build_top_bar() -> html.Div:
                     html.Div(
                         className="monitoring-controls saas-top-filter-row saas-secondary-filter-row",
                         children=[
+                            _build_checklist_filter(
+                                "Compare To",
+                                toggle_id=COMPARE_AGAINST_TOGGLE_ID,
+                                menu_id=COMPARE_AGAINST_MENU_ID,
+                                checklist_id=COMPARE_AGAINST_ID,
+                                options=COMPARE_AGAINST_OPTIONS,
+                                value=DEFAULT_COMPARE_AGAINST_VALUES,
+                                button_label="None",
+                                min_width="280px",
+                            ),
                             _build_single_select_filter(
                                 "Snapshot Period",
                                 value_id=SUBNAV_VIEW_ID,
@@ -626,7 +679,7 @@ def _build_top_bar() -> html.Div:
                                 disabled=True,
                             ),
                             html.Div(
-                                "Select a Compare To reporting cycle to enable the comparison exports.",
+                                "Select a Compare To model use case / cycle to enable the comparison exports.",
                                 id=DOWNLOAD_COMPARE_HELP_ID,
                                 className="saas-download-compare-note",
                             ),
@@ -693,7 +746,7 @@ def _build_recon_modal() -> html.Div:
             children=[
                 html.Div("Historical Reconciliation report", className="saas-modal-title"),
                 html.P(
-                    "Reconciles each MEV's historical values across the primary Reporting Cycle and the "
+                    "Reconciles each MEV's historical values across the primary Model Use Case / Cycle and the "
                     "Compare To cycle(s), over the overlapping historical dates. "
                     "Select at least one Compare To cycle before exporting. The relative threshold defaults "
                     "to 3.0% and can be changed in the Summary tab (cell B1).",
@@ -741,7 +794,7 @@ def _build_projection_modal() -> html.Div:
             children=[
                 html.Div("Projection Comparison report", className="saas-modal-title"),
                 html.P(
-                    "Compares each MEV's projection across the primary Reporting Cycle and the Compare To "
+                    "Compares each MEV's projection across the primary Model Use Case / Cycle and the Compare To "
                     "cycle(s), aligned by quarter offset (Q0, Q1, ...). Projections are expected to differ - "
                     "the Summary characterises the divergence. Select at least one Compare To cycle before exporting.",
                     className="saas-modal-subtitle",
@@ -809,7 +862,7 @@ def build_apply_prompt() -> html.Div:
                     html.Div(
                         className="saas-getting-started-highlights",
                         children=[
-                            html.Span("1. Choose Reporting Cycle, scope, and view options.", className="saas-getting-started-highlight"),
+                            html.Span("1. Choose Model Use Case / Cycle, scope, and view options.", className="saas-getting-started-highlight"),
                             html.Span("2. Click Apply filters to load charts and unlock Export.", className="saas-getting-started-highlight"),
                             html.Span("3. Use Compare To only when you want cycle-to-cycle comparisons.", className="saas-getting-started-highlight"),
                         ],
@@ -824,12 +877,12 @@ def build_apply_prompt() -> html.Div:
                 className="saas-getting-started-steps",
                 children=[
                     html.Li([
-                        html.Strong("Pick a Reporting Cycle. "),
+                        html.Strong("Pick a Model Use Case / Cycle. "),
                         "Choose the cycle to review (e.g. CCAR 2026). This sets the primary “Projection starts” point for every chart.",
                     ]),
                     html.Li([
                         html.Strong("(Optional) Compare To. "),
-                        "Add one or more reporting cycles to overlay against the primary cycle for benchmarking. "
+                        "Add one or more model use case / cycles to overlay against the primary cycle for benchmarking. "
                         "Compare To also powers the Historical Reconciliation and Projection Comparison exports.",
                     ]),
                     html.Li([
@@ -841,7 +894,7 @@ def build_apply_prompt() -> html.Div:
                         "Adjust Snapshot Period (History, Projection, or History & Projection), Reference Lines "
                         "(None, Min-Max, or Monitoring), and the MEV Label convention.",
                         html.Span(
-                            "Note: the Monitoring reference lines describe a single reporting cycle, so they "
+                            "Note: the Monitoring reference lines describe a single model use case / cycle, so they "
                             "can't be combined with Compare To. To use Monitoring, set Compare To back to "
                             "“None”; to compare cycles, choose None or Min-Max reference lines instead.",
                             className="saas-getting-started-note",
@@ -873,7 +926,7 @@ def build_apply_prompt() -> html.Div:
                                 ]),
                                 html.Li([
                                     html.Strong("Historical Reconciliation (Excel) — "),
-                                    "checks that history agrees across reporting cycles over the overlapping dates "
+                                    "checks that history agrees across model use case / cycles over the overlapping dates "
                                     "(it should be the same or very close). Requires Compare To.",
                                 ]),
                                 html.Li([
@@ -884,7 +937,7 @@ def build_apply_prompt() -> html.Div:
                             ],
                         ),
                         html.Span(
-                            "Note: Export uses the last applied top-bar filters. If you change Reporting Cycle, Compare To, Segment, Specific Models, Snapshot Period, Reference Lines, or MEV Label, click Apply filters again before exporting. The two comparison exports also need at least one Compare To cycle, and each Excel starts with a README tab explaining its columns.",
+                            "Note: Export uses the last applied top-bar filters. If you change Model Use Case / Cycle, Compare To, Segment, Specific Models, Snapshot Period, Reference Lines, or MEV Label, click Apply filters again before exporting. The two comparison exports also need at least one Compare To cycle, and each Excel starts with a README tab explaining its columns.",
                             className="saas-getting-started-note",
                         ),
                     ]),
@@ -907,7 +960,7 @@ def _build_chart_canvas() -> html.Section:
                 className="pd-performance-note",
                 children=[
                     html.Strong("Executive summary: "),
-                    "The Scenario Analysis as a Service (SAAS) dashboard is a self-service tool for reviewing the macro-economic variables (MEVs) that drive credit risk models under stress scenarios, across reporting cycles. By bringing each MEV's history and forward projections together, it helps users understand the drivers behind the models and sense-check the scenario projections.",
+                    "The Scenario Analysis as a Service (SAAS) dashboard is a self-service tool for reviewing the macro-economic variables (MEVs) that drive credit risk models under stress scenarios, across model use case / cycles. By bringing each MEV's history and forward projections together, it helps users understand the drivers behind the models and sense-check the scenario projections.",
                 ],
             ),
             html.Div(
@@ -923,6 +976,7 @@ def page_layout() -> list:
     """Top bar + SAAS MEV chart canvas."""
     return [
         dcc.Store(id=COMPARE_AGAINST_PREV_STORE_ID, data=list(DEFAULT_COMPARE_AGAINST_VALUES)),
+        dcc.Store(id=SEGMENT_PREV_STORE_ID, data=list(DEFAULT_SEGMENT_VALUES)),
         dcc.Store(id=APPLIED_FILTERS_STORE_ID),
         dcc.Download(id=DOWNLOAD_DATA_ID),
         dcc.Download(id=EXCEL_DOWNLOAD_DATA_ID),

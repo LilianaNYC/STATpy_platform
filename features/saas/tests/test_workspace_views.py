@@ -67,12 +67,13 @@ def test_model_panel_id_creates_stable_anchor():
 
 
 def test_build_subnav_models_uses_model_panel_anchor(monkeypatch):
-    monkeypatch.setattr(views.selectors, "effective_model_names", lambda _segment, _selected: ["Model A"])
+    monkeypatch.setattr(views.selectors, "effective_model_names", lambda _segment, _selected, **_kwargs: ["Model A"])
     monkeypatch.setattr(views.selectors, "model_descriptive_label", lambda model_name: f"Label {model_name}")
 
-    subnav_children = views.build_subnav_models(None, None)
+    label, subnav_children = views.build_subnav_models(None, None)
     button = subnav_children[0].children[0]
 
+    assert label == "Models in Scope"
     assert button.children == "Label Model A"
     assert button.__dict__["data-saas-scroll-target"] == "saas-model-panel-model-a"
 

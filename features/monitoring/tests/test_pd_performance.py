@@ -258,7 +258,7 @@ def test_pd_mev_range_heading_explains_reporting_cycle_basis():
 
     assert any(
         "MEV Range charts" in label
-        and "selected Reporting Cycle value" in label
+        and "selected Model Use Case / Cycle value" in label
         and "does not move the MEV scenario Q0 date" in label
         for label in aria_labels
     )

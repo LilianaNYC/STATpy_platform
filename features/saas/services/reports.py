@@ -139,11 +139,13 @@ def build_report_figures(
     reference_lines,
     mev_label_mode,
     *,
+    region=None,
+    model_group=None,
     figure_builder,
 ) -> list[tuple[str, object]]:
     selected_run_fors = selectors.normalize_selected_run_fors(run_for)
     scoped_run_fors = selectors.scoped_run_for_values(run_for, compare_against)
-    effective_models = selectors.effective_model_names(segment, selected_models)
+    effective_models = selectors.effective_model_names(segment, selected_models, region=region, model_group=model_group)
 
     if not selected_run_fors or not effective_models:
         return []

@@ -364,7 +364,7 @@ def render_loss_performance_content(
         "EAD to estimate portfolio-level credit losses. It tracks Mean Error % — the gap between predicted and "
         "actual loss — against the agreed RAG thresholds, and breaks that comparison out by Net Charge-Offs (NCO) "
         "and the Allowance for Credit Losses (ACL) so reviewers can judge whether the loss estimate remains "
-        "defensible across reporting cycles.",
+        "defensible across model use case / cycles.",
         theme,
     )
 
@@ -408,7 +408,7 @@ def build_loss_apply_prompt() -> html.Section:
                     "LGD, and EAD to estimate portfolio-level credit losses. It tracks Mean Error % — the gap "
                     "between predicted and actual loss — against the agreed RAG thresholds, and breaks that "
                     "comparison out by Net Charge-Offs (NCO) and the Allowance for Credit Losses (ACL) so "
-                    "reviewers can judge whether the loss estimate remains defensible across reporting cycles.",
+                    "reviewers can judge whether the loss estimate remains defensible across model use case / cycles.",
                 ],
             ),
             html.Div(
@@ -430,7 +430,7 @@ def build_loss_apply_prompt() -> html.Section:
                                     html.Div(
                                         className="saas-getting-started-highlights",
                                         children=[
-                                            html.Span("1. Choose Reporting Cycle and Monitoring Point.", className="saas-getting-started-highlight"),
+                                            html.Span("1. Choose Model Use Case / Cycle and Monitoring Point.", className="saas-getting-started-highlight"),
                                             html.Span("2. Pick a Segment or a Specific Model — not both.", className="saas-getting-started-highlight"),
                                             html.Span("3. Click Apply filters to load the dashboard.", className="saas-getting-started-highlight"),
                                         ],
@@ -445,14 +445,14 @@ def build_loss_apply_prompt() -> html.Section:
                                 className="saas-getting-started-steps",
                                 children=[
                                     html.Li([
-                                        html.Strong("Pick a Reporting Cycle. "),
+                                        html.Strong("Pick a Model Use Case / Cycle. "),
                                         "Choose the cycle to review (e.g. CCAR 2026). This sets which monitoring points and "
                                         "precomputed metrics are available.",
                                     ]),
                                     html.Li([
                                         html.Strong("Set the Monitoring Point. "),
                                         "Pick the as-of quarter for the snapshot. The available quarters follow the selected "
-                                        "reporting cycle, and trends are shown up to this point.",
+                                        "model use case / cycle, and trends are shown up to this point.",
                                     ]),
                                     html.Li([
                                         html.Strong("Choose your population. "),
@@ -547,7 +547,7 @@ def page_layout(data: dict) -> list:
                             className="monitoring-controls",
                             children=[
                                 _build_filter(
-                                    "Reporting Cycle",
+                                    "Model Use Case / Cycle",
                                     shared_filters.build_single_select_dropdown(
                                         value_id=REPORTING_CYCLE_ID,
                                         toggle_id=REPORTING_CYCLE_TOGGLE_ID,

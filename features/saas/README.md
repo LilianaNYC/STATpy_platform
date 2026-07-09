@@ -5,7 +5,7 @@ series and projections per model.
 
 ## Purpose
 Let users explore MEV time series, scenario comparisons, monitoring bands and
-projections for SAAS models, across reporting cycles, with Excel/report exports.
+projections for SAAS models, across model use case / cycles, with Excel/report exports.
 
 ## Routes
 | Page      | Path     | Status |

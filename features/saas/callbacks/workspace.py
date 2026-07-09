@@ -17,6 +17,8 @@ from ..ui.views import figures, workspace as layout, components as views
 from ..domain import metrics, records, selectors
 
 _is_segment_active = selectors.is_segment_active
+_active_segment_values = selectors.active_segment_values
+_segment_toggle_label = selectors.segment_toggle_label
 _normalize_selected_run_fors = selectors.normalize_selected_run_fors
 _normalize_compare_against_values = selectors.normalize_compare_against_values
 _scoped_run_for_values = selectors.scoped_run_for_values
@@ -84,7 +86,25 @@ def _register_menu_callbacks(app) -> None:
     )
     def toggle_segment_menu(_n_clicks, current_class, is_disabled):
         if is_disabled:
-            return "checkbox-dropdown-menu single-select-menu"
+            return "checkbox-dropdown-menu"
+        return _toggle_menu_class(current_class, base_class="checkbox-dropdown-menu")
+
+    @app.callback(
+        Output(layout.REGION_MENU_ID, "className"),
+        Input(layout.REGION_TOGGLE_ID, "n_clicks"),
+        State(layout.REGION_MENU_ID, "className"),
+        prevent_initial_call=True,
+    )
+    def toggle_region_menu(_n_clicks, current_class):
+        return _toggle_menu_class(current_class, base_class="checkbox-dropdown-menu single-select-menu")
+
+    @app.callback(
+        Output(layout.MODEL_GROUP_MENU_ID, "className"),
+        Input(layout.MODEL_GROUP_TOGGLE_ID, "n_clicks"),
+        State(layout.MODEL_GROUP_MENU_ID, "className"),
+        prevent_initial_call=True,
+    )
+    def toggle_model_group_menu(_n_clicks, current_class):
         return _toggle_menu_class(current_class, base_class="checkbox-dropdown-menu single-select-menu")
 
     @app.callback(
@@ -168,12 +188,24 @@ def _register_single_select_callbacks(app) -> None:
         return triggered["value"], "checkbox-dropdown-menu single-select-menu"
 
     @app.callback(
-        Output(layout.SEGMENT_NAME_ID, "value", allow_duplicate=True),
-        Output(layout.SEGMENT_MENU_ID, "className", allow_duplicate=True),
-        Input({"type": shared_filters.SINGLE_SELECT_OPTION_ID, "filter": layout.SEGMENT_FILTER_KEY, "value": ALL}, "n_clicks"),
+        Output(layout.REGION_ID, "value", allow_duplicate=True),
+        Output(layout.REGION_MENU_ID, "className", allow_duplicate=True),
+        Input({"type": shared_filters.SINGLE_SELECT_OPTION_ID, "filter": layout.REGION_FILTER_KEY, "value": ALL}, "n_clicks"),
         prevent_initial_call=True,
     )
-    def select_segment(_clicks):
+    def select_region(_clicks):
+        triggered = ctx.triggered_id
+        if not triggered:
+            return no_update, no_update
+        return triggered["value"], "checkbox-dropdown-menu single-select-menu"
+
+    @app.callback(
+        Output(layout.MODEL_GROUP_ID, "value", allow_duplicate=True),
+        Output(layout.MODEL_GROUP_MENU_ID, "className", allow_duplicate=True),
+        Input({"type": shared_filters.SINGLE_SELECT_OPTION_ID, "filter": layout.MODEL_GROUP_FILTER_KEY, "value": ALL}, "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def select_model_group(_clicks):
         triggered = ctx.triggered_id
         if not triggered:
             return no_update, no_update
@@ -230,7 +262,8 @@ def _register_single_select_callbacks(app) -> None:
 def _register_shell_callbacks(
     app,
     run_for_labels,
-    segment_labels,
+    region_labels,
+    model_group_labels,
     subnav_view_labels,
     reference_line_labels,
     mev_label_mode_labels,
@@ -259,12 +292,29 @@ def _register_shell_callbacks(
 
     @app.callback(
         Output(layout.SEGMENT_TOGGLE_ID, "children"),
-        Output({"type": shared_filters.SINGLE_SELECT_OPTION_ID, "filter": layout.SEGMENT_FILTER_KEY, "value": ALL}, "className"),
         Input(layout.SEGMENT_NAME_ID, "value"),
-        State({"type": shared_filters.SINGLE_SELECT_OPTION_ID, "filter": layout.SEGMENT_FILTER_KEY, "value": ALL}, "id"),
     )
-    def sync_segment_shell(value, option_ids):
-        label = segment_labels.get(value, value or "Select")
+    def sync_segment_toggle(segment_values):
+        return _segment_toggle_label(segment_values)
+
+    @app.callback(
+        Output(layout.REGION_TOGGLE_ID, "children"),
+        Output({"type": shared_filters.SINGLE_SELECT_OPTION_ID, "filter": layout.REGION_FILTER_KEY, "value": ALL}, "className"),
+        Input(layout.REGION_ID, "value"),
+        State({"type": shared_filters.SINGLE_SELECT_OPTION_ID, "filter": layout.REGION_FILTER_KEY, "value": ALL}, "id"),
+    )
+    def sync_region_shell(value, option_ids):
+        label = region_labels.get(value, value or "Select")
+        return label, _single_select_option_classes(value, option_ids)
+
+    @app.callback(
+        Output(layout.MODEL_GROUP_TOGGLE_ID, "children"),
+        Output({"type": shared_filters.SINGLE_SELECT_OPTION_ID, "filter": layout.MODEL_GROUP_FILTER_KEY, "value": ALL}, "className"),
+        Input(layout.MODEL_GROUP_ID, "value"),
+        State({"type": shared_filters.SINGLE_SELECT_OPTION_ID, "filter": layout.MODEL_GROUP_FILTER_KEY, "value": ALL}, "id"),
+    )
+    def sync_model_group_shell(value, option_ids):
+        label = model_group_labels.get(value, value or "Select")
         return label, _single_select_option_classes(value, option_ids)
 
     @app.callback(
@@ -511,6 +561,8 @@ def _register_export_callbacks(
     subnav_view_labels,
     reference_line_labels,
     mev_label_mode_labels,
+    region_labels,
+    model_group_labels,
 ) -> None:
     @app.callback(
         Output(layout.DOWNLOAD_DATA_ID, "data"),
@@ -525,6 +577,8 @@ def _register_export_callbacks(
         run_for = applied.get("run_for")
         compare_against = applied.get("compare_against")
         segment = applied.get("segment")
+        region = applied.get("region")
+        model_group = applied.get("model_group")
         selected_models = applied.get("selected_models")
         snapshot_period = applied.get("snapshot_period")
         reference_lines = applied.get("reference_lines")
@@ -532,20 +586,23 @@ def _register_export_callbacks(
         sections = reports.build_report_figures(
             run_for, compare_against, segment, selected_models,
             snapshot_period, reference_lines, mev_label_mode,
+            region=region, model_group=model_group,
             figure_builder=figures.build_model_figure,
         )
 
-        effective_models = _effective_model_names(segment, selected_models)
+        effective_models = _effective_model_names(segment, selected_models, region=region, model_group=model_group)
         if _is_segment_active(segment):
-            scope_label = f"Segment: {layout.format_segment_label(segment)}"
+            scope_label = f"Segment: {', '.join(layout.format_segment_label(v) for v in _active_segment_values(segment))}"
         elif effective_models:
             scope_label = f"Models: {', '.join(effective_models)}"
         else:
             scope_label = "Models: None selected"
 
         meta_lines = [
-            f"Reporting Cycle: {_run_for_meta_label(run_for)}",
+            f"Model Use Case / Cycle: {_run_for_meta_label(run_for)}",
             f"Compare To: {_compare_against_toggle_label(compare_against, _primary_run_for_value(run_for))}",
+            f"Region: {region_labels.get(region or layout.DEFAULT_REGION, region)}",
+            f"Model Group: {model_group_labels.get(model_group or layout.DEFAULT_MODEL_GROUP, model_group)}",
             scope_label,
             f"Snapshot Period: {subnav_view_labels.get(_normalize_snapshot_period(snapshot_period), snapshot_period)}",
             f"Reference Lines: {reference_line_labels.get(reference_lines or layout.DEFAULT_REFERENCE_LINES, reference_lines)}",
@@ -582,17 +639,20 @@ def _register_export_callbacks(
             raise PreventUpdate
         run_for = applied.get("run_for")
         segment = applied.get("segment")
+        region = applied.get("region")
+        model_group = applied.get("model_group")
         selected_models = applied.get("selected_models")
         mev_label_mode = applied.get("mev_label_mode")
         metric_rows, chart_specs, primary_run_for, baseline_available = _compute_saas_metrics(
             run_for, segment, selected_models, mev_label_mode, scenario,
+            region=region, model_group=model_group,
         )
         scenario_value = str(scenario or "").strip().lower()
         scenario_label = SAAS_SCENARIO_LABEL_MAP.get(scenario_value, scenario_value.replace("_", " ").title() or "—")
         columns = exports.active_metric_columns(baseline_available, scenario_label, scenario_value)
-        effective_models = _effective_model_names(segment, selected_models)
+        effective_models = _effective_model_names(segment, selected_models, region=region, model_group=model_group)
         if _is_segment_active(segment):
-            scope_label = f"Segment: {layout.format_segment_label(segment)}"
+            scope_label = f"Segment: {', '.join(layout.format_segment_label(v) for v in _active_segment_values(segment))}"
         elif effective_models:
             scope_label = f"Models: {', '.join(effective_models)}"
         else:
@@ -600,14 +660,16 @@ def _register_export_callbacks(
 
         meta_lines = [
             f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-            f"Reporting Cycle: {primary_run_for or '—'}",
+            f"Model Use Case / Cycle: {primary_run_for or '—'}",
             f"Scenario: {scenario_label}",
+            f"Region: {region_labels.get(region or layout.DEFAULT_REGION, region)}",
+            f"Model Group: {model_group_labels.get(model_group or layout.DEFAULT_MODEL_GROUP, model_group)}",
             scope_label,
             f"MEV Label: {mev_label_mode_labels.get(_normalize_mev_label_mode(mev_label_mode), mev_label_mode)}",
             f"All Metrics and Charts in this workbook are computed from the selected scenario ({scenario_label}): "
             "the History lines/columns use that scenario's history (Quarter <= 0) and the projection "
             "lines/columns use that scenario's projection (Quarter > 0).",
-            "Scope: primary Reporting Cycle only, using the full history + projection regardless of the on-screen "
+            "Scope: primary Model Use Case / Cycle only, using the full history + projection regardless of the on-screen "
             "Snapshot Period. Standard deviation is population (ddof=0).",
             "Exception: the 'Is Baseline Min/Max ...' columns always use the Baseline scenario's projection "
             "(shown only when Baseline is available and is not the selected scenario).",
@@ -644,19 +706,22 @@ def _register_export_callbacks(
         run_for = applied.get("run_for")
         compare_against = applied.get("compare_against")
         segment = applied.get("segment")
+        region = applied.get("region")
+        model_group = applied.get("model_group")
         selected_models = applied.get("selected_models")
         mev_label_mode = applied.get("mev_label_mode")
         recon = _compute_saas_reconciliation(
             run_for, compare_against, segment, selected_models, mev_label_mode, scenario,
+            region=region, model_group=model_group,
         )
         scenario_value = str(scenario or "").strip().lower()
         scenario_label = SAAS_SCENARIO_LABEL_MAP.get(scenario_value, scenario_value.replace("_", " ").title() or "—")
         threshold_fraction = 0.03  # default 3.0%; the user can change cell B1 in the Summary tab
         primary = recon.get("primary")
         compare_cycles = recon.get("compare_cycles", [])
-        effective_models = _effective_model_names(segment, selected_models)
+        effective_models = _effective_model_names(segment, selected_models, region=region, model_group=model_group)
         if _is_segment_active(segment):
-            scope_label = f"Segment: {layout.format_segment_label(segment)}"
+            scope_label = f"Segment: {', '.join(layout.format_segment_label(v) for v in _active_segment_values(segment))}"
         elif effective_models:
             scope_label = f"Models: {', '.join(effective_models)}"
         else:
@@ -664,18 +729,20 @@ def _register_export_callbacks(
 
         meta_lines = [
             f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-            f"Primary Reporting Cycle: {primary or '—'}",
+            f"Primary Model Use Case / Cycle: {primary or '—'}",
             f"Compare To: {', '.join(compare_cycles) if compare_cycles else 'None selected'}",
             f"Scenario: {scenario_label}",
+            f"Region: {region_labels.get(region or layout.DEFAULT_REGION, region)}",
+            f"Model Group: {model_group_labels.get(model_group or layout.DEFAULT_MODEL_GROUP, model_group)}",
             scope_label,
             f"MEV Label: {mev_label_mode_labels.get(_normalize_mev_label_mode(mev_label_mode), mev_label_mode)}",
             f"Relative threshold: {threshold_fraction * 100:g}% by default - editable in the Summary tab (cell B1).",
             "Each MEV is reconciled over the historical dates (Quarter <= 0) that overlap across all selected "
-            "reporting cycles. Diff = compare cycle minus primary cycle; % is relative to the primary cycle value.",
+            "model use case / cycles. Diff = compare cycle minus primary cycle; % is relative to the primary cycle value.",
         ]
         if not compare_cycles:
             meta_lines.append(
-                "WARNING: No 'Compare To' cycle is selected. Select at least one Compare To reporting cycle, "
+                "WARNING: No 'Compare To' cycle is selected. Select at least one Compare To model use case / cycle, "
                 "then export again to produce the reconciliation."
             )
 
@@ -711,6 +778,8 @@ def _register_export_callbacks(
         run_for = applied.get("run_for")
         compare_against = applied.get("compare_against")
         segment = applied.get("segment")
+        region = applied.get("region")
+        model_group = applied.get("model_group")
         selected_models = applied.get("selected_models")
         mev_label_mode = applied.get("mev_label_mode")
         try:
@@ -719,14 +788,15 @@ def _register_export_callbacks(
             max_quarter = 20
         comparison = _compute_saas_projection_comparison(
             run_for, compare_against, segment, selected_models, mev_label_mode, scenario, max_quarter,
+            region=region, model_group=model_group,
         )
         scenario_value = str(scenario or "").strip().lower()
         scenario_label = SAAS_SCENARIO_LABEL_MAP.get(scenario_value, scenario_value.replace("_", " ").title() or "—")
         primary = comparison.get("primary")
         compare_cycles = comparison.get("compare_cycles", [])
-        effective_models = _effective_model_names(segment, selected_models)
+        effective_models = _effective_model_names(segment, selected_models, region=region, model_group=model_group)
         if _is_segment_active(segment):
-            scope_label = f"Segment: {layout.format_segment_label(segment)}"
+            scope_label = f"Segment: {', '.join(layout.format_segment_label(v) for v in _active_segment_values(segment))}"
         elif effective_models:
             scope_label = f"Models: {', '.join(effective_models)}"
         else:
@@ -734,19 +804,21 @@ def _register_export_callbacks(
 
         meta_lines = [
             f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-            f"Primary Reporting Cycle: {primary or '—'}",
+            f"Primary Model Use Case / Cycle: {primary or '—'}",
             f"Compare To: {', '.join(compare_cycles) if compare_cycles else 'None selected'}",
             f"Scenario: {scenario_label}",
+            f"Region: {region_labels.get(region or layout.DEFAULT_REGION, region)}",
+            f"Model Group: {model_group_labels.get(model_group or layout.DEFAULT_MODEL_GROUP, model_group)}",
             scope_label,
             f"MEV Label: {mev_label_mode_labels.get(_normalize_mev_label_mode(mev_label_mode), mev_label_mode)}",
             f"Projection horizon: up to Q{max_quarter}.",
-            "Each MEV's projection is compared across the selected reporting cycles, aligned by quarter offset "
+            "Each MEV's projection is compared across the selected model use case / cycles, aligned by quarter offset "
             "(Q0 = the as-of/jump-off point, Q1.. = projected quarters), over the common horizon. "
             "Diff = compare cycle minus primary cycle; % is relative to the primary cycle value.",
         ]
         if not compare_cycles:
             meta_lines.append(
-                "WARNING: No 'Compare To' cycle is selected. Select at least one Compare To reporting cycle, "
+                "WARNING: No 'Compare To' cycle is selected. Select at least one Compare To model use case / cycle, "
                 "then export again to produce the projection comparison."
             )
 
@@ -757,6 +829,29 @@ def _register_export_callbacks(
 
 
 def _register_filter_callbacks(app) -> None:
+    @app.callback(
+        Output(layout.SEGMENT_NAME_ID, "value", allow_duplicate=True),
+        Output(layout.SEGMENT_PREV_STORE_ID, "data"),
+        Input(layout.SEGMENT_NAME_ID, "value"),
+        State(layout.SEGMENT_PREV_STORE_ID, "data"),
+        prevent_initial_call=True,
+    )
+    def sync_segment_selection(segment_values, prev_values):
+        option_values = {option["value"] for option in layout.SEGMENT_NAME_OPTIONS}
+        raw_values = [value for value in _normalize_multi_values(segment_values) if value in option_values]
+        prev_values = [value for value in _normalize_multi_values(prev_values) if value in option_values]
+
+        # "All" is mutually exclusive with specific segments: checking it
+        # clears the segments, and checking a segment drops "All".
+        added = [value for value in raw_values if value not in prev_values]
+        if layout.SEGMENT_ALL_VALUE in added:
+            result = [layout.SEGMENT_ALL_VALUE]
+        else:
+            specific_values = [value for value in raw_values if value != layout.SEGMENT_ALL_VALUE]
+            result = specific_values if specific_values else [layout.SEGMENT_ALL_VALUE]
+
+        return result, result
+
     @app.callback(
         Output(layout.MODEL_NAME_ID, "value", allow_duplicate=True),
         Output(layout.MODEL_NAME_SELECT_ALL_ID, "value"),
@@ -778,7 +873,7 @@ def _register_filter_callbacks(app) -> None:
         return no_update, select_all
 
     @app.callback(
-        Output(layout.SEGMENT_NAME_ID, "disabled"),
+        Output(layout.SEGMENT_NAME_ID, "options"),
         Output(layout.SEGMENT_TOGGLE_ID, "disabled"),
         Output(layout.MODEL_NAME_SELECT_ALL_ID, "options"),
         Output(layout.MODEL_NAME_ID, "options"),
@@ -787,12 +882,14 @@ def _register_filter_callbacks(app) -> None:
         Output(layout.MODEL_NAME_TOGGLE_ID, "disabled"),
         Output(layout.FILTER_HELP_ID, "children"),
         Input(layout.SEGMENT_NAME_ID, "value"),
+        Input(layout.REGION_ID, "value"),
+        Input(layout.MODEL_GROUP_ID, "value"),
         Input(layout.MODEL_NAME_ID, "value"),
         Input(layout.MODEL_NAME_SEARCH_ID, "value"),
     )
-    def sync_saas_filter_controls(segment, selected_models, model_search):
+    def sync_saas_filter_controls(segment, region, model_group, selected_models, model_search):
         segment_active = _is_segment_active(segment)
-        all_options = _model_options_for_filters(None)
+        all_options = _model_options_for_filters(None, region=region, model_group=model_group)
         all_option_values = [option["value"] for option in all_options]
         current_values = _normalize_selected_models(selected_models)
 
@@ -800,13 +897,17 @@ def _register_filter_callbacks(app) -> None:
         current_values = [value for value in current_values if value in option_values]
         has_specific_model_selection = 0 < len(current_values) < len(all_option_values)
         select_all_options = [{"label": "All", "value": "all", "disabled": segment_active}]
+        segment_options = [
+            {"label": option["label"], "value": option["value"], "disabled": has_specific_model_selection}
+            for option in layout.SEGMENT_NAME_OPTIONS
+        ]
 
         if segment_active:
-            model_options = _model_options_for_filters(None, disabled=True)
+            model_options = _model_options_for_filters(None, region=region, model_group=model_group, disabled=True)
             toggle_label = "Disabled while Segment is selected"
             help_text = "Segment filtering is active. Reset Segment to All to select specific models."
         else:
-            model_options = _model_options_for_filters(None, disabled=False)
+            model_options = _model_options_for_filters(None, region=region, model_group=model_group, disabled=False)
             toggle_label = _model_toggle_label(current_values, all_options, False)
             if has_specific_model_selection:
                 help_text = "Specific Models filtering is active. Clear the model selection to use the Segment filter."
@@ -824,7 +925,7 @@ def _register_filter_callbacks(app) -> None:
             ]
 
         return (
-            has_specific_model_selection,
+            segment_options,
             has_specific_model_selection,
             select_all_options,
             model_options,
@@ -919,6 +1020,8 @@ def _register_render_callbacks(app) -> None:
         State(layout.RUN_FOR_ID, "value"),
         State(layout.COMPARE_AGAINST_ID, "value"),
         State(layout.SEGMENT_NAME_ID, "value"),
+        State(layout.REGION_ID, "value"),
+        State(layout.MODEL_GROUP_ID, "value"),
         State(layout.MODEL_NAME_ID, "value"),
         State(layout.SUBNAV_VIEW_ID, "value"),
         State(layout.REFERENCE_LINES_ID, "value"),
@@ -931,6 +1034,8 @@ def _register_render_callbacks(app) -> None:
         run_for,
         compare_against,
         segment,
+        region,
+        model_group,
         selected_models,
         snapshot_period,
         reference_lines,
@@ -942,6 +1047,8 @@ def _register_render_callbacks(app) -> None:
             "run_for": run_for,
             "compare_against": compare_against,
             "segment": segment,
+            "region": region,
+            "model_group": model_group,
             "selected_models": selected_models,
             "snapshot_period": snapshot_period,
             "reference_lines": reference_lines,
@@ -950,13 +1057,19 @@ def _register_render_callbacks(app) -> None:
         }
 
     @app.callback(
+        Output(layout.SUBNAV_MODELS_LABEL_ID, "children"),
         Output(layout.SUBNAV_MODELS_ID, "children"),
         Input(layout.APPLIED_FILTERS_STORE_ID, "data"),
         prevent_initial_call=True,
     )
     def render_saas_subnav_models(applied):
         applied = applied or {}
-        return views.build_subnav_models(applied.get("segment"), applied.get("selected_models"))
+        return views.build_subnav_models(
+            applied.get("segment"),
+            applied.get("selected_models"),
+            region=applied.get("region"),
+            model_group=applied.get("model_group"),
+        )
 
     @app.callback(
         Output(layout.MEV_MODEL_PANELS_ID, "children"),
@@ -970,6 +1083,8 @@ def _register_render_callbacks(app) -> None:
         run_for = applied.get("run_for")
         compare_against = applied.get("compare_against")
         segment = applied.get("segment")
+        region = applied.get("region")
+        model_group = applied.get("model_group")
         selected_models = applied.get("selected_models")
         snapshot_period = applied.get("snapshot_period")
         reference_lines = applied.get("reference_lines")
@@ -978,7 +1093,7 @@ def _register_render_callbacks(app) -> None:
         theme_value = _normalize_theme_value(theme_value)
         selected_run_fors = _normalize_selected_run_fors(run_for)
         scoped_run_fors = _scoped_run_for_values(run_for, compare_against)
-        effective_models = _effective_model_names(segment, selected_models)
+        effective_models = _effective_model_names(segment, selected_models, region=region, model_group=model_group)
         show_historical_statistics = (
             _normalize_snapshot_period(snapshot_period) == "history"
             and _show_historical_statistics(show_historical_statistics_values)
@@ -986,14 +1101,14 @@ def _register_render_callbacks(app) -> None:
 
         if not selected_run_fors:
             return _build_empty_state(
-                "Choose Reporting Cycle value",
-                "Select one Reporting Cycle value to render the SAAS workbook charts.",
+                "Choose Model Use Case / Cycle value",
+                "Select one Model Use Case / Cycle value to render the SAAS workbook charts.",
             )
 
         if not effective_models:
             return _build_empty_state(
                 "No models match the current filters",
-                "Adjust Segment or Specific Models to bring one or more SAAS models into scope.",
+                "Adjust Region, Model Group, Segment, or Specific Models to bring one or more SAAS models into scope.",
             )
 
         time_series_df = SAAS_PAGE_DATA.get("mev_time_series")
@@ -1028,7 +1143,7 @@ def _register_render_callbacks(app) -> None:
 
         return panels or _build_empty_state(
             "No MEV charts match the current filters",
-            "Adjust the Reporting Cycle, Segment, or Specific Models filters to broaden the SAAS workbook selection.",
+            "Adjust the Model Use Case / Cycle, Segment, or Specific Models filters to broaden the SAAS workbook selection.",
         )
 
     @app.callback(
@@ -1146,7 +1261,8 @@ def _register_render_callbacks(app) -> None:
 def _build_callback_label_maps():
     return {
         "run_for_labels": {option["value"]: option["label"] for option in layout.RUN_FOR_OPTIONS},
-        "segment_labels": {option["value"]: option["label"] for option in layout.SEGMENT_NAME_OPTIONS},
+        "region_labels": {option["value"]: option["label"] for option in layout.REGION_OPTIONS},
+        "model_group_labels": {option["value"]: option["label"] for option in layout.MODEL_GROUP_OPTIONS},
         "subnav_view_labels": {option["value"]: option["label"] for option in layout.SUBNAV_VIEW_OPTIONS},
         "reference_line_labels": {option["value"]: option["label"] for option in layout.REFERENCE_LINES_OPTIONS},
         "mev_label_mode_labels": {option["value"]: option["label"] for option in layout.MEV_LABEL_MODE_OPTIONS},
@@ -1162,7 +1278,8 @@ def register_callbacks(app) -> None:
     _register_single_select_callbacks(app)
 
     label_maps = _build_callback_label_maps()
-    segment_labels = label_maps["segment_labels"]
+    region_labels = label_maps["region_labels"]
+    model_group_labels = label_maps["model_group_labels"]
     subnav_view_labels = label_maps["subnav_view_labels"]
     reference_line_labels = label_maps["reference_line_labels"]
     mev_label_mode_labels = label_maps["mev_label_mode_labels"]
@@ -1171,7 +1288,8 @@ def register_callbacks(app) -> None:
     _register_shell_callbacks(
         app,
         run_for_labels,
-        segment_labels,
+        region_labels,
+        model_group_labels,
         subnav_view_labels,
         reference_line_labels,
         mev_label_mode_labels,
@@ -1185,5 +1303,7 @@ def register_callbacks(app) -> None:
         subnav_view_labels,
         reference_line_labels,
         mev_label_mode_labels,
+        region_labels,
+        model_group_labels,
     )
     _register_render_callbacks(app)

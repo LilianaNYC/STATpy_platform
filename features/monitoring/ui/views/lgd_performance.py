@@ -993,7 +993,7 @@ def render_lgd_performance_content(
         "The LGD Performance dashboard is the monitoring view for Loss Given Default (LGD) models across the "
         "wholesale portfolio. It tracks each model's calibration and discriminatory power against agreed RAG "
         "thresholds, and adds a post subjective review layer (PSI, scenario rank ordering, sensitivity, and MEV "
-        "range) so reviewers can judge whether model behaviour remains defensible across reporting cycles and "
+        "range) so reviewers can judge whether model behaviour remains defensible across model use case / cycles and "
         "stress scenarios.",
         theme,
     )
@@ -1069,7 +1069,7 @@ def page_layout(data: dict) -> list:
                             className="monitoring-controls",
                             children=[
                                 _build_filter(
-                                    "Reporting Cycle",
+                                    "Model Use Case / Cycle",
                                     shared_filters.build_single_select_dropdown(
                                         value_id=REPORTING_CYCLE_ID,
                                         toggle_id=REPORTING_CYCLE_TOGGLE_ID,

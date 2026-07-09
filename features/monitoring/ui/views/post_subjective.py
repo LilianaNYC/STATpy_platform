@@ -180,7 +180,7 @@ def build_getting_started_prompt(label: str, full_name: str) -> html.Section:
                     "across the wholesale portfolio. It tracks each model's calibration conservatism and "
                     "discriminatory power against agreed RAG thresholds, and adds a post subjective review layer "
                     "(population stability, scenario rank ordering, sensitivity, and MEV range) so reviewers can "
-                    "judge whether model behaviour remains defensible across reporting cycles and stress scenarios.",
+                    "judge whether model behaviour remains defensible across model use case / cycles and stress scenarios.",
                 ],
             ),
             html.Div(
@@ -202,7 +202,7 @@ def build_getting_started_prompt(label: str, full_name: str) -> html.Section:
                                     html.Div(
                                         className="saas-getting-started-highlights",
                                         children=[
-                                            html.Span("1. Choose Reporting Cycle, Scenario, and Monitoring Point.", className="saas-getting-started-highlight"),
+                                            html.Span("1. Choose Model Use Case / Cycle, Scenario, and Monitoring Point.", className="saas-getting-started-highlight"),
                                             html.Span("2. Pick a Segment or a Specific Model — not both.", className="saas-getting-started-highlight"),
                                             html.Span("3. Click Apply filters to load the dashboard.", className="saas-getting-started-highlight"),
                                         ],
@@ -217,7 +217,7 @@ def build_getting_started_prompt(label: str, full_name: str) -> html.Section:
                                 className="saas-getting-started-steps",
                                 children=[
                                     html.Li([
-                                        html.Strong("Pick a Reporting Cycle. "),
+                                        html.Strong("Pick a Model Use Case / Cycle. "),
                                         "Choose the cycle to review (e.g. CCAR 2026). This sets which monitoring points and "
                                         "precomputed metrics are available for every section.",
                                     ]),
@@ -229,7 +229,7 @@ def build_getting_started_prompt(label: str, full_name: str) -> html.Section:
                                     html.Li([
                                         html.Strong("Set the Monitoring Point. "),
                                         "Pick the as-of quarter for the snapshot. The available quarters follow the selected "
-                                        "reporting cycle, and trends are shown up to this point.",
+                                        "model use case / cycle, and trends are shown up to this point.",
                                     ]),
                                     html.Li([
                                         html.Strong("Choose your population. "),
@@ -735,7 +735,7 @@ def build_scenario_ranking_section(
                 children=[
                     html.Div("No scenario projection data matches the current selection", className="pd-mev-chart-title"),
                     html.P(
-                        f"Select at least one available scenario, or choose a reporting cycle, segment, or model that exists in the {cfg.label}_Sensitivity_Projections sheet.",
+                        f"Select at least one available scenario, or choose a model use case / cycle, segment, or model that exists in the {cfg.label}_Sensitivity_Projections sheet.",
                         className="pd-section-subtitle",
                     ),
                 ],
@@ -870,7 +870,7 @@ def build_sensitivity_section(
                 children=[
                     html.Div("No sensitivity projection data matches the current filters", className="pd-mev-chart-title"),
                     html.P(
-                        f"Choose a reporting cycle, segment, or model that exists in the {cfg.label}_Sensitivity_Projections sheet.",
+                        f"Choose a model use case / cycle, segment, or model that exists in the {cfg.label}_Sensitivity_Projections sheet.",
                         className="pd-section-subtitle",
                     ),
                 ],

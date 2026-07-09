@@ -120,7 +120,7 @@ def build_recommendations(rules: dict, completeness: dict, drift: dict) -> list[
     critical_rules = [r for r in rules["by_rule"] if r["severity"] == "Critical" and not r["passed"]]
     if critical_rules:
         recs.append({
-            "text": f"Resolve {len(critical_rules)} critical rule failure(s) in {critical_rules[0]['column']} before next reporting cycle.",
+            "text": f"Resolve {len(critical_rules)} critical rule failure(s) in {critical_rules[0]['column']} before next model use case / cycle.",
             "priority": "Critical",
             "owner": "Data Quality Team",
             "eta": datetime.now().strftime("%Y-%m-%d"),
