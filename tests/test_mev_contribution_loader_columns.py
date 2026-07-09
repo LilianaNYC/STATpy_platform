@@ -21,7 +21,7 @@ def test_saas_loader_reads_model_contribution_column(monkeypatch):
                 "Long Name": "Transformed A",
                 "Description": "Example",
                 "SAAS_raw_mnemonic": "RAW_A",
-                "Model contribution": 0.42,
+                "Model Contribution": 0.42,
             }
         ]
     )
@@ -53,7 +53,7 @@ def test_saas_loader_reads_model_contribution_column(monkeypatch):
                 "Model Name": "Model A",
                 "Run For": "2025Q4",
                 "Model Descriptive Name": "Model A",
-                "Development date": "2025-03-31",
+                "Development Date": "2025-03-31",
             }
         ]
     )
@@ -83,7 +83,7 @@ def test_monitoring_loader_reads_model_contribution_column(monkeypatch):
         [
             {
                 "Model Name": "Model A",
-                "Development date": "2025-03-31",
+                "Development Date": "2025-03-31",
                 "Model Descriptive Name": "Model A",
                 "Model Type": "PD",
             }
@@ -97,7 +97,7 @@ def test_monitoring_loader_reads_model_contribution_column(monkeypatch):
                 "US Mnemonic": "TRANS_A",
                 "Long Name": "Transformed A",
                 "Description": "Example",
-                "Model contribution": 0.42,
+                "Model Contribution": 0.42,
             }
         ]
     )
@@ -174,7 +174,7 @@ def test_saas_loader_ignores_legacy_model_controbution_column(monkeypatch):
                 "Model Name": "Model A",
                 "Run For": "2025Q4",
                 "Model Descriptive Name": "Model A",
-                "Development date": "2025-03-31",
+                "Development Date": "2025-03-31",
             }
         ]
     )

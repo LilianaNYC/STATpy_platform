@@ -181,7 +181,7 @@ def load_pd_mev_catalog() -> dict[str, Any]:
         model_key = str(row.get("Model Name", "")).strip()
         if not model_key:
             continue
-        date_val = row.get("Development date", "")
+        date_val = row.get("Development Date", "")
         if date_val:
             dev_dates[model_key] = _date_to_quarter_label(str(date_val))
         desc = row.get("Model Descriptive Name", "")
@@ -208,7 +208,7 @@ def load_pd_mev_catalog() -> dict[str, Any]:
         mnemonic = str(row.get("US Mnemonic", "")).strip()
         long_name = str(row.get("Long Name", "")).strip()
         description = str(row.get("Description", "")).strip()
-        contribution = row.get("Model contribution")
+        contribution = row.get("Model Contribution")
         if model_key and segment:
             model_segments.setdefault(model_key, [])
             if segment not in model_segments[model_key]:

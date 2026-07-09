@@ -142,7 +142,7 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
     for row in transformed_df.to_dict(orient="records"):
         model_name = _normalize_model_name(row.get(config.DUMMY_MEV_MODEL_NAME_COLUMN))
         transformed_mev_name = str(row.get("US Mnemonic") or "").strip()
-        contribution = row.get("Model contribution")
+        contribution = row.get("Model Contribution")
         if model_name and transformed_mev_name and contribution is not None:
             try:
                 model_mev_contribution_map.setdefault(model_name, {})[transformed_mev_name] = float(contribution)
@@ -232,17 +232,17 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
     segment_values = _ordered_unique_strings(
         model_characteristic_df.get("Segment Name", pd.Series(dtype=object)).tolist()
     )
-    model_characteristic_df["Development date"] = pd.to_datetime(
-        model_characteristic_df.get("Development date"),
+    model_characteristic_df["Development Date"] = pd.to_datetime(
+        model_characteristic_df.get("Development Date"),
         dayfirst=False,
         errors="coerce",
     )
-    model_characteristic_df = model_characteristic_df.dropna(subset=["Development date"])
+    model_characteristic_df = model_characteristic_df.dropna(subset=["Development Date"])
     model_development_dates: dict[str, dict[str, Any]] = {}
     for row in model_characteristic_df.to_dict(orient="records"):
         run_for = str(row.get("Run For") or "").strip()
         model_name = _normalize_model_name(row.get("Model Name"))
-        development_date = row.get("Development date")
+        development_date = row.get("Development Date")
         if not run_for or not model_name or development_date is None:
             continue
         model_development_dates.setdefault(run_for, {})
