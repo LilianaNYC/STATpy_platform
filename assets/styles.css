@@ -134,7 +134,7 @@ body{background:#f8fafc;overflow:hidden}
 .monitoring-filter{display:flex;flex-direction:column;gap:5px;position:relative}
 .monitoring-filter>label{font-size:10px;color:var(--text-muted);font-weight:800;letter-spacing:.35px;text-transform:uppercase}
 .saas-top-filter-row{display:grid;column-gap:14px;row-gap:12px;align-items:end;justify-content:flex-start}
-.saas-primary-filter-row{grid-template-columns:repeat(3,minmax(140px,171px)) fit-content(280px) auto}
+.saas-primary-filter-row{grid-template-columns:repeat(3,minmax(140px,171px)) fit-content(280px) minmax(190px,260px) auto}
 .saas-secondary-filter-row{grid-template-columns:repeat(auto-fit,minmax(140px,171px));margin-top:14px;padding-top:12px;border-top:1px solid #e8eef6}
 .saas-top-filter-row .monitoring-filter{width:100%;min-width:0 !important;max-width:none !important}
 .saas-top-filter-row .monitoring-top-select,
@@ -223,7 +223,7 @@ body{background:#f8fafc;overflow:hidden}
 .single-select-option-check{color:var(--blue);font-size:12px;font-weight:700;opacity:0;flex-shrink:0}
 .single-select-option.is-selected .single-select-option-check{opacity:1}
 /* Application-wide: every dropdown value/option and checkbox-dropdown label uses
-   the same font as the Reporting Cycle dropdown (Inter, 12px, weight 500) - both
+   the same font as the Model Use Case / Cycle dropdown (Inter, 12px, weight 500) - both
    the custom checkbox dropdowns and the react-select (dcc.Dropdown) controls. */
 .checkbox-dropdown-toggle,
 .checkbox-dropdown-menu label,
@@ -277,6 +277,8 @@ body{background:#f8fafc;overflow:hidden}
 .saas-subnav-model-chip:hover,.saas-subnav-model-chip:focus{background:#eff6ff;border-color:#bfdbfe;color:var(--navy);outline:none;transform:translateY(-1px)}
 .saas-subnav-model-chip.active{background:var(--navy);border-color:var(--navy);color:#fff;box-shadow:0 6px 16px rgba(15,29,53,.14)}
 .saas-subnav-model-chip.active:hover,.saas-subnav-model-chip.active:focus{background:var(--navy);border-color:var(--navy);color:#fff;transform:none}
+.saas-subnav-segment-chip{cursor:default}
+.saas-subnav-segment-chip:hover,.saas-subnav-segment-chip:focus{background:rgba(255,255,255,.96);border-color:#dbe4f0;color:#475569;transform:none}
 .saas-model-panel-stack{margin-top:16px}
 .saas-secondary-filter-row{margin-top:8px}
 .saas-date-range-controls{display:flex;align-items:flex-end}
@@ -1403,6 +1405,13 @@ tr:last-child td{border-bottom:none}
   border-color:rgba(125,211,252,.62);
   color:var(--dark-text);
   box-shadow:0 0 0 3px rgba(125,211,252,.12);
+}
+.monitoring-shell.theme-dark .saas-subnav-segment-chip:hover,
+.monitoring-shell.theme-dark .saas-subnav-segment-chip:focus{
+  background:rgba(27,43,69,.82);
+  border-color:var(--dark-border);
+  color:var(--dark-text-soft);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.035);
 }
 .monitoring-shell.theme-dark .btn:disabled,
 .monitoring-shell.theme-dark .pd-mev-filter-reset:disabled,

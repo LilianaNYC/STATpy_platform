@@ -492,7 +492,7 @@ def _build_pd_transition_matrix_section(
                 heading,
                 _build_placeholder_card(
                     "Transition Matrix",
-                    "No MM_P0 / MM_Pm margin data is available for the selected reporting cycle and population.",
+                    "No MM_P0 / MM_Pm margin data is available for the selected model use case / cycle and population.",
                     ["Transition view", "Distance metric", "Threshold guidance"],
                 ),
             ],
@@ -677,7 +677,7 @@ def _build_pd_scenario_ranking_section(
                 children=[
                     html.Div("No scenario projection data matches the current scenario selection", className="pd-mev-chart-title"),
                     html.P(
-                        "Select at least one available scenario, or choose a reporting cycle, segment, or specific model that exists in the PD_Sensitivity_Projections workbook sheet.",
+                        "Select at least one available scenario, or choose a model use case / cycle, segment, or specific model that exists in the PD_Sensitivity_Projections workbook sheet.",
                         className="pd-section-subtitle",
                     ),
                 ],
@@ -891,7 +891,7 @@ def _build_pd_sensitivity_section(data: dict, ctx: PdFilterContext, reporting_cy
                 children=[
                     html.Div("No sensitivity projection data matches the current filters", className="pd-mev-chart-title"),
                     html.P(
-                        "Choose a reporting cycle, segment, or specific model that exists in the PD_Sensitivity_Projections workbook sheet.",
+                        "Choose a model use case / cycle, segment, or specific model that exists in the PD_Sensitivity_Projections workbook sheet.",
                         className="pd-section-subtitle",
                     ),
                 ],
@@ -1903,7 +1903,7 @@ def _build_mev_range_section(data: dict, ctx: PdFilterContext, range_store: dict
                     "show_rag": False,
                     "tooltip": (
                         "MEV Range charts, scenario date, and post-scenario RAG are based on the selected "
-                        "Reporting Cycle value. The Monitoring Point controls the PD performance snapshot, "
+                        "Model Use Case / Cycle value. The Monitoring Point controls the PD performance snapshot, "
                         "but it does not move the MEV scenario Q0 date."
                     ),
                 },
@@ -2813,7 +2813,7 @@ def render_pd_performance_content(
             "population stability against agreed RAG thresholds, for both the ECL point-in-time and balance "
             "sheet horizons, and adds a post subjective review layer (transition migration, scenario rank "
             "ordering, sensitivity, and MEV range) so reviewers can judge whether model behaviour remains "
-            "defensible across reporting cycles and stress scenarios.",
+            "defensible across model use case / cycles and stress scenarios.",
         ],
     )
 
@@ -2878,7 +2878,7 @@ def build_pd_apply_prompt() -> html.Section:
                     "population stability against agreed RAG thresholds, for both the ECL point-in-time and balance "
                     "sheet horizons, and adds a post subjective review layer (transition migration, scenario rank "
                     "ordering, sensitivity, and MEV range) so reviewers can judge whether model behaviour remains "
-                    "defensible across reporting cycles and stress scenarios.",
+                    "defensible across model use case / cycles and stress scenarios.",
                 ],
             ),
             html.Div(
@@ -2900,7 +2900,7 @@ def build_pd_apply_prompt() -> html.Section:
                                     html.Div(
                                         className="saas-getting-started-highlights",
                                         children=[
-                                            html.Span("1. Choose Reporting Cycle, Scenario, and Monitoring Point.", className="saas-getting-started-highlight"),
+                                            html.Span("1. Choose Model Use Case / Cycle, Scenario, and Monitoring Point.", className="saas-getting-started-highlight"),
                                             html.Span("2. Pick a Segment or a Specific Model — not both.", className="saas-getting-started-highlight"),
                                             html.Span("3. Click Apply filters to load the dashboard.", className="saas-getting-started-highlight"),
                                         ],
@@ -2915,7 +2915,7 @@ def build_pd_apply_prompt() -> html.Section:
                                 className="saas-getting-started-steps",
                                 children=[
                                     html.Li([
-                                        html.Strong("Pick a Reporting Cycle. "),
+                                        html.Strong("Pick a Model Use Case / Cycle. "),
                                         "Choose the cycle to review (e.g. CCAR 2026). This sets which monitoring points and "
                                         "precomputed metrics are available for every section.",
                                     ]),
@@ -2927,7 +2927,7 @@ def build_pd_apply_prompt() -> html.Section:
                                     html.Li([
                                         html.Strong("Set the Monitoring Point. "),
                                         "Pick the as-of quarter for the snapshot. The available quarters follow the selected "
-                                        "reporting cycle, and trends are shown up to this point.",
+                                        "model use case / cycle, and trends are shown up to this point.",
                                     ]),
                                     html.Li([
                                         html.Strong("Choose your population. "),

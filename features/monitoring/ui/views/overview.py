@@ -1461,7 +1461,7 @@ def render_overview_content(
         "1.",
         "Models",
         "Cross-portfolio monitoring view combining PD, LGD, EAD, and Loss models into a single RAG posture.",
-        options={"note": f"Reporting cycle {reporting_cycle} · Monitoring point {monitoring_point or 'All'} · Model group {segment_model_group or 'All'}"},
+        options={"note": f"Model use case / cycle {reporting_cycle} · Monitoring point {monitoring_point or 'All'} · Model group {segment_model_group or 'All'}"},
     )
     chapter_1_sections = [
         _build_summary_section(current_rows, findings, monitoring_point or "All"),
@@ -1475,7 +1475,7 @@ def render_overview_content(
         "Segments",
         "Every model group's book of business sliced by portfolio segment instead of by model (PD pooled across "
         "both PD models).",
-        options={"note": f"Reporting cycle {reporting_cycle} · Monitoring point {monitoring_point or 'All'} · Model group {segment_model_group or 'All'}"},
+        options={"note": f"Model use case / cycle {reporting_cycle} · Monitoring point {monitoring_point or 'All'} · Model group {segment_model_group or 'All'}"},
     )
     chapter_2_sections = [
         _build_segment_summary_section(current_segment_rows, segment_findings, monitoring_point or "All"),
@@ -1549,7 +1549,7 @@ def build_overview_apply_prompt() -> html.Section:
                                     html.Div(
                                         className="saas-getting-started-highlights",
                                         children=[
-                                            html.Span("1. Choose Reporting Cycle and Monitoring Point.", className="saas-getting-started-highlight"),
+                                            html.Span("1. Choose Model Use Case / Cycle and Monitoring Point.", className="saas-getting-started-highlight"),
                                             html.Span("2. Click Apply filters to load the overview.", className="saas-getting-started-highlight"),
                                         ],
                                     ),
@@ -1563,7 +1563,7 @@ def build_overview_apply_prompt() -> html.Section:
                                 className="saas-getting-started-steps",
                                 children=[
                                     html.Li([
-                                        html.Strong("Pick a Reporting Cycle. "),
+                                        html.Strong("Pick a Model Use Case / Cycle. "),
                                         "LGD, EAD, and Loss keep a separate precomputed dataset per cycle (e.g. CCAR 2026); "
                                         "PD's data spans every cycle already.",
                                     ]),
@@ -1644,7 +1644,7 @@ def page_layout(data: dict) -> list:
                             className="monitoring-controls",
                             children=[
                                 _build_filter(
-                                    "Reporting Cycle",
+                                    "Model Use Case / Cycle",
                                     shared_filters.build_single_select_dropdown(
                                         value_id=REPORTING_CYCLE_ID,
                                         toggle_id=REPORTING_CYCLE_TOGGLE_ID,

@@ -97,10 +97,14 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
         "model_names": load_saas_model_names(),
         "model_segments": {},
         "model_segments_map": {},
+        "model_region_map": {},
+        "model_group_map": {},
         "model_development_dates": {},
         "run_for_quarter_zero_dates": {},
         "model_mev_family_map": {},
         "segment_values": [],
+        "region_values": [],
+        "model_group_values": [],
         "run_for_values": [],
         "mev_label_map": {},
         "mev_group_label_map": {},
@@ -215,6 +219,8 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
     model_descriptive_name_map: dict[str, str] = {}
     model_segments: dict[str, str] = {}
     model_segments_map: dict[str, list[str]] = {}
+    model_region_map: dict[str, list[str]] = {}
+    model_group_map: dict[str, list[str]] = {}
     for row in model_characteristic_df.to_dict(orient="records"):
         model_name = _normalize_model_name(row.get("Model Name"))
         descriptive_name = str(row.get("Model Descriptive Name") or "").strip()
@@ -229,8 +235,24 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
             segments_for_model = model_segments_map.setdefault(model_name, [])
             if segment not in segments_for_model:
                 segments_for_model.append(segment)
+        region = str(row.get("Region") or "").strip()
+        if model_name and region:
+            regions_for_model = model_region_map.setdefault(model_name, [])
+            if region not in regions_for_model:
+                regions_for_model.append(region)
+        model_group = str(row.get("Model Type") or "").strip()
+        if model_name and model_group:
+            groups_for_model = model_group_map.setdefault(model_name, [])
+            if model_group not in groups_for_model:
+                groups_for_model.append(model_group)
     segment_values = _ordered_unique_strings(
         model_characteristic_df.get("Segment Name", pd.Series(dtype=object)).tolist()
+    )
+    region_values = _ordered_unique_strings(
+        model_characteristic_df.get("Region", pd.Series(dtype=object)).tolist()
+    )
+    model_group_values = _ordered_unique_strings(
+        model_characteristic_df.get("Model Type", pd.Series(dtype=object)).tolist()
     )
     model_characteristic_df["Development Date"] = pd.to_datetime(
         model_characteristic_df.get("Development Date"),
@@ -273,6 +295,8 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
         "model_names": workbook_model_names or load_saas_model_names(),
         "model_segments": model_segments,
         "model_segments_map": model_segments_map,
+        "model_region_map": model_region_map,
+        "model_group_map": model_group_map,
         "model_development_dates": model_development_dates,
         "run_for_quarter_zero_dates": run_for_quarter_zero_dates,
         "model_mev_family_map": model_mev_family_map,
@@ -284,6 +308,8 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
             for model_name, values in model_mev_map.items()
         },
         "segment_values": segment_values,
+        "region_values": region_values,
+        "model_group_values": model_group_values,
         "run_for_values": run_for_values,
         "transformed_mev_names": transformed_mev_names,
         "raw_mev_names": raw_mev_names,

@@ -613,13 +613,32 @@ def model_panel_id(model_name: str) -> str:
     return f"saas-model-panel-{slug}"
 
 
-def build_subnav_models(segment: str | None, selected_models):
-    effective_models = selectors.effective_model_names(segment, selected_models)
+def build_subnav_models(segment: str | None, selected_models, *, region: str | None = None, model_group: str | None = None):
+    """Subnav chip list: segments in scope when the Segment filter drives the
+    selection, models in scope otherwise. Returns (label, children)."""
+    if selectors.is_segment_active(segment):
+        active_segments = selectors.active_segment_values(segment)
+        if not active_segments:
+            return "Segments in Scope", []
+        return "Segments in Scope", [
+            html.Div(
+                [
+                    html.Span(
+                        layout.format_segment_label(segment_value),
+                        className="saas-subnav-model-chip saas-subnav-segment-chip",
+                    )
+                    for segment_value in active_segments
+                ],
+                className="saas-subnav-model-list",
+            ),
+        ]
+
+    effective_models = selectors.effective_model_names(segment, selected_models, region=region, model_group=model_group)
 
     if not effective_models:
-        return []
+        return "Models in Scope", []
 
-    return [
+    return "Models in Scope", [
         html.Div(
             [
                 html.Button(

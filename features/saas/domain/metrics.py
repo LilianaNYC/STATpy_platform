@@ -226,12 +226,12 @@ def saas_baseline_projection_bounds(time_series_df, primary_run_for, effective_m
     return {key: (lo, hi) for key, (lo, hi) in bounds.items()}
 
 
-def compute_saas_metrics(run_for, segment, selected_models, mev_label_mode, scenario):
+def compute_saas_metrics(run_for, segment, selected_models, mev_label_mode, scenario, *, region=None, model_group=None):
     """Return (metric_rows, chart_specs, primary_run_for, baseline_available)."""
     time_series_df = SAAS_PAGE_DATA.get("mev_time_series")
     selected_run_fors = selectors.normalize_selected_run_fors(run_for)
     primary_run_for = selected_run_fors[0] if selected_run_fors else None
-    effective_models = selectors.effective_model_names(segment, selected_models)
+    effective_models = selectors.effective_model_names(segment, selected_models, region=region, model_group=model_group)
     scenario_value = str(scenario or "").strip().lower()
 
     if (
@@ -294,7 +294,7 @@ def compute_saas_metrics(run_for, segment, selected_models, mev_label_mode, scen
     return metric_rows, chart_specs, primary_run_for, baseline_available
 
 
-def compute_saas_reconciliation(run_for, compare_against, segment, selected_models, mev_label_mode, scenario):
+def compute_saas_reconciliation(run_for, compare_against, segment, selected_models, mev_label_mode, scenario, *, region=None, model_group=None):
     """Reconcile historical values across the primary cycle and comparison cycles."""
     time_series_df = SAAS_PAGE_DATA.get("mev_time_series")
     primary = selectors.primary_run_for_value(run_for)
@@ -302,7 +302,7 @@ def compute_saas_reconciliation(run_for, compare_against, segment, selected_mode
         value for value in selectors.normalize_compare_against_values(compare_against, primary)
         if value and value != selectors.COMPARE_AGAINST_NONE_VALUE
     ]
-    effective_models = selectors.effective_model_names(segment, selected_models)
+    effective_models = selectors.effective_model_names(segment, selected_models, region=region, model_group=model_group)
     scenario_value = str(scenario or "").strip().lower()
 
     base = {"primary": primary, "compare_cycles": compare_cycles, "cycles": [primary, *compare_cycles], "models": []}
@@ -377,7 +377,7 @@ def compute_saas_reconciliation(run_for, compare_against, segment, selected_mode
     return base
 
 
-def compute_saas_projection_comparison(run_for, compare_against, segment, selected_models, mev_label_mode, scenario, max_quarter=20):
+def compute_saas_projection_comparison(run_for, compare_against, segment, selected_models, mev_label_mode, scenario, max_quarter=20, *, region=None, model_group=None):
     """Compare projection paths across the primary cycle and comparison cycles."""
     time_series_df = SAAS_PAGE_DATA.get("mev_time_series")
     primary = selectors.primary_run_for_value(run_for)
@@ -385,7 +385,7 @@ def compute_saas_projection_comparison(run_for, compare_against, segment, select
         value for value in selectors.normalize_compare_against_values(compare_against, primary)
         if value and value != selectors.COMPARE_AGAINST_NONE_VALUE
     ]
-    effective_models = selectors.effective_model_names(segment, selected_models)
+    effective_models = selectors.effective_model_names(segment, selected_models, region=region, model_group=model_group)
     scenario_value = str(scenario or "").strip().lower()
 
     base = {"primary": primary, "compare_cycles": compare_cycles, "cycles": [primary, *compare_cycles], "models": []}

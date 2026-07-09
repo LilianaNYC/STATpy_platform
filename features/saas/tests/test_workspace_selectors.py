@@ -30,8 +30,8 @@ def test_run_for_and_compare_against_labels(monkeypatch):
         ],
     )
 
-    assert selectors.run_for_meta_label([]) == "No Reporting Cycle selected"
-    assert selectors.run_for_meta_label(["Cycle A", "Cycle B"]) == "All Reporting Cycle values"
+    assert selectors.run_for_meta_label([]) == "No Model Use Case / Cycle selected"
+    assert selectors.run_for_meta_label(["Cycle A", "Cycle B"]) == "All Model Use Case / Cycle values"
     assert selectors.run_for_meta_label(["Cycle A"]) == "Cycle A"
 
     assert selectors.build_compare_against_options("Cycle A") == [

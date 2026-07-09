@@ -9,6 +9,8 @@ from ....shared import theme
 from ..data_access import SAAS_PAGE_DATA
 
 SEGMENT_ALL_VALUE = "all"
+REGION_ALL_VALUE = "all"
+MODEL_GROUP_ALL_VALUE = "all"
 COMPARE_AGAINST_NONE_VALUE = "none"
 DEFAULT_SCENARIO_FILTER = "all"
 
@@ -45,8 +47,12 @@ RAW_MEV_NAMES = set(SAAS_PAGE_DATA.get("raw_mev_names") or set())
 TRANSFORMED_MEV_NAMES = set(SAAS_PAGE_DATA.get("transformed_mev_names") or set())
 
 
-def is_segment_active(segment: str | None) -> bool:
-    return bool(segment) and segment != SEGMENT_ALL_VALUE
+def is_region_active(region: str | None) -> bool:
+    return bool(region) and region != REGION_ALL_VALUE
+
+
+def is_model_group_active(model_group: str | None) -> bool:
+    return bool(model_group) and model_group != MODEL_GROUP_ALL_VALUE
 
 
 def model_descriptive_label(model_name: str) -> str:
@@ -61,6 +67,33 @@ def normalize_multi_values(value) -> list[str]:
     if isinstance(value, list):
         return [str(item).strip() for item in value if str(item).strip()]
     return []
+
+
+def normalize_selected_segments(value) -> list[str]:
+    selected_values = normalize_multi_values(value)
+    valid_values = {SEGMENT_ALL_VALUE} | {
+        segment for segment in (SAAS_PAGE_DATA.get("segment_values") or []) if segment
+    }
+    result = [item for item in selected_values if item in valid_values]
+    return result or [SEGMENT_ALL_VALUE]
+
+
+def active_segment_values(value) -> list[str]:
+    """The selected segments with the "All" sentinel filtered out."""
+    return [item for item in normalize_selected_segments(value) if item != SEGMENT_ALL_VALUE]
+
+
+def is_segment_active(segment) -> bool:
+    return bool(active_segment_values(segment))
+
+
+def segment_toggle_label(selected_segments) -> str:
+    active_segments = active_segment_values(selected_segments)
+    if not active_segments:
+        return "All"
+    if len(active_segments) == 1:
+        return active_segments[0]
+    return f"{len(active_segments)} segments selected"
 
 
 def normalize_selected_run_fors(value) -> list[str]:
@@ -97,10 +130,10 @@ def scoped_run_for_values(run_for, compare_against) -> list[str]:
 def run_for_meta_label(selected_run_fors) -> str:
     normalized_values = normalize_selected_run_fors(selected_run_fors)
     if not normalized_values:
-        return "No Reporting Cycle selected"
+        return "No Model Use Case / Cycle selected"
     all_values = [option["value"] for option in RUN_FOR_OPTIONS]
     if all_values and set(normalized_values) == set(all_values):
-        return "All Reporting Cycle values"
+        return "All Model Use Case / Cycle values"
     if len(normalized_values) == 1:
         return normalized_values[0]
     return ", ".join(normalized_values)
@@ -123,23 +156,45 @@ def compare_against_toggle_label(selected_values, selected_run_for: str | None) 
         return "None"
     if len(compare_values) == 1:
         return compare_values[0]
-    return f"{len(compare_values)} Reporting Cycle values selected"
+    return f"{len(compare_values)} Model Use Case / Cycle values selected"
 
 
-def model_names_for_filters(segment: str | None) -> list[str]:
+def model_names_for_filters(
+    segment: str | None,
+    *,
+    region: str | None = None,
+    model_group: str | None = None,
+) -> list[str]:
     base_models = list(SAAS_PAGE_DATA.get("model_names", []))
     model_segments_map = SAAS_PAGE_DATA.get("model_segments_map", {})
-    if is_segment_active(segment):
-        # A model can belong to more than one segment, so membership in the
-        # full per-model list is required -- comparing against a single
-        # "primary" segment would wrongly exclude a model from every segment
-        # filter except whichever one happened to be seen first.
-        base_models = [model_name for model_name in base_models if segment in (model_segments_map.get(model_name) or [])]
+    model_region_map = SAAS_PAGE_DATA.get("model_region_map", {})
+    model_group_map = SAAS_PAGE_DATA.get("model_group_map", {})
+    # A model can belong to more than one region/group/segment, so membership
+    # in the full per-model list is required -- comparing against a single
+    # "primary" value would wrongly exclude a model from every filter except
+    # whichever one happened to be seen first.
+    if is_region_active(region):
+        base_models = [model_name for model_name in base_models if region in (model_region_map.get(model_name) or [])]
+    if is_model_group_active(model_group):
+        base_models = [model_name for model_name in base_models if model_group in (model_group_map.get(model_name) or [])]
+    active_segments = active_segment_values(segment)
+    if active_segments:
+        segment_set = set(active_segments)
+        base_models = [
+            model_name for model_name in base_models
+            if segment_set & set(model_segments_map.get(model_name) or [])
+        ]
     return base_models
 
 
-def model_options_for_filters(segment: str | None, *, disabled: bool = False) -> list[dict]:
-    values = model_names_for_filters(segment)
+def model_options_for_filters(
+    segment: str | None,
+    *,
+    region: str | None = None,
+    model_group: str | None = None,
+    disabled: bool = False,
+) -> list[dict]:
+    values = model_names_for_filters(segment, region=region, model_group=model_group)
     seen: set[str] = set()
     options: list[dict] = []
     for value in values:
@@ -276,13 +331,22 @@ def normalize_theme_value(value: str | None) -> str:
     return theme.DEFAULT_THEME_VALUE
 
 
-def effective_model_names(segment: str | None, selected_models) -> list[str]:
+def effective_model_names(
+    segment: str | None,
+    selected_models,
+    *,
+    region: str | None = None,
+    model_group: str | None = None,
+) -> list[str]:
     selected_model_values = normalize_selected_models(selected_models)
-    all_model_values = [option["value"] for option in model_options_for_filters(None)]
+    all_model_values = [
+        option["value"]
+        for option in model_options_for_filters(None, region=region, model_group=model_group)
+    ]
     all_models_selected = bool(all_model_values) and set(selected_model_values) == set(all_model_values)
 
     if is_segment_active(segment):
-        return model_names_for_filters(segment)
+        return model_names_for_filters(segment, region=region, model_group=model_group)
     if selected_model_values and not all_models_selected:
         selected_value_set = set(selected_model_values)
         return [value for value in all_model_values if value in selected_value_set]

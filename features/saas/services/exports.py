@@ -711,7 +711,7 @@ def _write_recon_summary(ws, models, primary, compare_cycles, refs, threshold_fr
     if not wrote_any:
         ws.cell(
             row=header_row + 1, column=1,
-            value="No overlapping historical data. Select at least one Compare To reporting cycle, then export again.",
+            value="No overlapping historical data. Select at least one Compare To model use case / cycle, then export again.",
         )
 
     ws.freeze_panes = "E5"
@@ -873,7 +873,7 @@ def _write_recon_readme(ws, meta_lines, model_tabs, primary) -> None:
         ("Relative threshold (cell B1)", "Editable (default 3.0%). |%Diff| at or below this counts as a match. Change it to recompute Match?, # > tol and % > tol live."),
         ("Model / Model Descriptive Name", "Model name (GMIS) and its descriptive name."),
         ("MEV Type / MEV", "Whether the MEV is Raw or Transformed, and its label."),
-        ("Primary Cycle / Compare Cycle", "The two reporting cycles being reconciled (compare vs primary)."),
+        ("Primary Cycle / Compare Cycle", "The two model use case / cycles being reconciled (compare vs primary)."),
         ("Overlap N", "Number of historical quarters present in every selected cycle for that MEV."),
         ("Match?", "Yes if Max |%Diff| <= the relative threshold (cell B1); otherwise No."),
         ("# > tol / % > tol", "Count and share of overlapping dates whose |%Diff| exceeds the threshold."),
@@ -1079,7 +1079,7 @@ def _write_projection_summary(ws, models, primary, compare_cycles) -> None:
                 wrote_any = True
 
     if not wrote_any:
-        ws.cell(row=2, column=1, value="No overlapping projection data. Select at least one Compare To reporting cycle, then export again.")
+        ws.cell(row=2, column=1, value="No overlapping projection data. Select at least one Compare To model use case / cycle, then export again.")
 
     ws.freeze_panes = "E2"
     widths = {1: 18, 2: 24, 4: 28, 12: 16, 22: 48}
@@ -1112,7 +1112,7 @@ def _write_projection_readme(ws, meta_lines, model_tabs, primary) -> None:
     definitions = [
         ("Model / Model Descriptive Name", "Model name (GMIS) and its descriptive name."),
         ("MEV Type / MEV", "Whether the MEV is Raw or Transformed, and its label."),
-        ("Primary Cycle / Compare Cycle", "The two reporting cycles being compared (compare vs primary)."),
+        ("Primary Cycle / Compare Cycle", "The two model use case / cycles being compared (compare vs primary)."),
         ("Horizon N", "Number of quarter offsets (Q0..H) present in every selected cycle for that MEV."),
         ("Mean Diff (bias)", "Average signed difference (compare - primary); detects a systematic offset across the path."),
         ("Mean |Diff| / RMSE", "Average / root-mean-squared magnitude of the per-quarter difference."),

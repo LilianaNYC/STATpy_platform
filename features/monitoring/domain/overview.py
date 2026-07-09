@@ -77,7 +77,7 @@ RAG_COLUMN_DESCRIPTIONS = {
     "Overall RAG": "Calibration, Discrimination, and Balance Sheet roll into Overall",
     "Transition Matrix RAG": "Worst-case migration-margin (MM_Pm - MM_P0) breach across the projection horizon (PD only).",
     "PSI RAG": "Population Stability Index vs. the reference population (n/a for Loss).",
-    "Scenario Ranking RAG": "Whether projected values keep a consistent rank order across scenarios for the reporting cycle.",
+    "Scenario Ranking RAG": "Whether projected values keep a consistent rank order across scenarios for the model use case / cycle.",
     "Sensitivity Analysis RAG": "Whether the baseline-vs-shocked projection stays within the sensitivity threshold.",
     "MEV Range RAG": "Worst-case RAG across in-scope MEVs outside their development range for the scenario.",
 }

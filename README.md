@@ -199,7 +199,7 @@ snapshots the top-bar selections into `pd-applied-filters-store`; a single maste
 callback then re-runs the content render whenever the applied filters or any
 per-chart store changes. Section builders are pure functions of that state.
 
-- **Reporting Cycle / Scenario / Monitoring Point** drive which precomputed
+- **Model Use Case / Cycle / Scenario / Monitoring Point** drive which precomputed
   metrics and projection quarters are shown.
 - **Segment vs Specific Model** are mutually exclusive (single-select); leaving
   both at "All" reads the portfolio-level (`All Models`) metrics.
