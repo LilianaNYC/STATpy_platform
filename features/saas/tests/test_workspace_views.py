@@ -332,3 +332,43 @@ def test_build_historical_dispersion_summary_empty_state():
     )
 
     assert summary.className == "saas-historical-dispersion saas-historical-dispersion-empty"
+
+
+def _text_nodes(node) -> list[str]:
+    texts: list[str] = []
+    if isinstance(node, str):
+        return [node]
+    for child in _children_of(node):
+        texts.extend(_text_nodes(child))
+    return texts
+
+
+def test_model_attribute_lines_carry_full_per_model_attributes(monkeypatch):
+    monkeypatch.setitem(views.SAAS_PAGE_DATA, "model_segments_map", {"PD_model_d": ["Cyclical"]})
+    monkeypatch.setitem(views.SAAS_PAGE_DATA, "model_region_map", {"PD_model_d": ["US", "EU"]})
+    monkeypatch.setitem(views.SAAS_PAGE_DATA, "model_group_map", {"PD_model_d": ["PD"]})
+    monkeypatch.setitem(views.SAAS_PAGE_DATA, "model_portfolio_map", {"PD_model_d": ["C&I"]})
+    monkeypatch.setattr(views.selectors, "model_development_date", lambda *_args: datetime(2024, 3, 31))
+
+    texts = [line.children for line in views.model_attribute_lines("PD_model_d", ["Cycle A"])]
+
+    # Single value -> singular label; several distinct values -> pluralized.
+    assert "Regions: US, EU" in texts
+    assert "Model Group: PD" in texts
+    assert "Portfolio: C&I" in texts
+    assert any(text.startswith("Segment: ") for text in texts)
+    assert any(text.startswith("Development Date: ") for text in texts)
+
+
+def test_build_model_group_card_nests_children_under_one_parent_header():
+    members = [views.html.Div("child-a"), views.html.Div("child-b")]
+    card = views.build_model_group_card(1, "PD Model D", members)
+
+    texts = _text_nodes(card)
+    assert "PD Model D" in texts          # parent label rendered once
+    assert "1. Parent Model" in texts     # numbered parent kicker
+    assert "2 models" in texts            # member count shown for multi-child parents
+
+    member_container = card.children[-1]
+    assert member_container.className == "pd-mev-model-group-members"
+    assert member_container.children == members

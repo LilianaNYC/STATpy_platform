@@ -873,6 +873,63 @@ def group_cards_into_family_rows(
     return rows
 
 
+def model_attribute_lines(model_name: str, selected_run_fors: list[str]):
+    """Full per-model attribute rows shown inside a parent card's child block:
+    Segment(s), Region(s), Model Group(s), Portfolio(s) and the Development Date
+    for the primary Model Use Case / Cycle. A model can carry several distinct
+    values for each attribute (e.g. multi-segment models), so labels pluralize."""
+    lines = []
+
+    def _attribute_line(singular: str, values, formatter=lambda value: value):
+        cleaned = [formatter(value) for value in (values or []) if value]
+        if not cleaned:
+            return
+        label = singular if len(cleaned) == 1 else f"{singular}s"
+        lines.append(html.P(f"{label}: {', '.join(cleaned)}", className="pd-mev-model-attr"))
+
+    segments = SAAS_PAGE_DATA.get("model_segments_map", {}).get(model_name)
+    if not segments:
+        fallback = SAAS_PAGE_DATA.get("model_segments", {}).get(model_name)
+        segments = [fallback] if fallback else []
+    _attribute_line("Segment", segments, layout.format_segment_label)
+    _attribute_line("Region", SAAS_PAGE_DATA.get("model_region_map", {}).get(model_name))
+    _attribute_line("Model Group", SAAS_PAGE_DATA.get("model_group_map", {}).get(model_name))
+    _attribute_line("Portfolio", SAAS_PAGE_DATA.get("model_portfolio_map", {}).get(model_name))
+
+    primary_run_for = selected_run_fors[0] if selected_run_fors else None
+    development_date = selectors.model_development_date(model_name, primary_run_for)
+    if development_date is not None:
+        lines.append(
+            html.P(
+                f"Development Date: {format_monitoring_date(development_date)}",
+                className="pd-mev-model-attr",
+            )
+        )
+    return lines
+
+
+def build_model_group_card(group_index: int, parent_label: str, member_panels: list):
+    """One card per parent Descriptive Name, with every in-scope child model
+    panel nested inside. Two Model Names sharing a descriptive name (see
+    selectors.group_effective_models) render as sibling children of one card
+    instead of two visually-identical top-level panels."""
+    heading_children = [
+        html.Div(f"{group_index}. Parent Model", className="pd-content-kicker"),
+        html.H4(parent_label),
+    ]
+    if len(member_panels) > 1:
+        heading_children.append(
+            html.P(f"{len(member_panels)} models", className="pd-mev-model-group-count")
+        )
+    return html.Div(
+        className="section-card pd-mev-model-group",
+        children=[
+            html.Div(className="pd-mev-model-group-heading", children=heading_children),
+            html.Div(className="pd-mev-model-group-members", children=member_panels),
+        ],
+    )
+
+
 def build_model_panel(
     panel_index: int,
     model_name: str,
@@ -921,16 +978,8 @@ def build_model_panel(
         mev_label_mode=mev_label_mode,
     )
     date_periods = records.available_date_periods(visible_records)
-    # A model can belong to multiple segments - list every distinct one.
-    model_segments_map = SAAS_PAGE_DATA.get("model_segments_map", {})
-    model_segment_values = model_segments_map.get(model_name) or []
-    if model_segment_values:
-        segment_name = ", ".join(layout.format_segment_label(value) for value in model_segment_values)
-    else:
-        segment_name = layout.format_segment_label(SAAS_PAGE_DATA.get("model_segments", {}).get(model_name))
-    segment_field_label = "Segments" if len(model_segment_values) > 1 else "Segment"
-
     selected_run_fors = selectors.normalize_selected_run_fors(run_for)
+    attribute_lines = model_attribute_lines(model_name, selected_run_fors)
     chart_cards = build_model_chart_cards(
         model_name,
         visible_records,
@@ -950,7 +999,7 @@ def build_model_panel(
 
     return html.Div(
         id=model_panel_id(model_name),
-        className="section-card pd-mev-model-panel",
+        className="pd-mev-model-panel",
         children=[
             html.Div(
                 className="pd-mev-model-heading",
@@ -971,8 +1020,7 @@ def build_model_panel(
                                 ],
                                 className="pd-content-kicker",
                             ),
-                            html.H4(selectors.model_descriptive_label(model_name)),
-                            html.P(f"{segment_field_label}: {segment_name}"),
+                            *attribute_lines,
                         ],
                     ),
                     html.Div(

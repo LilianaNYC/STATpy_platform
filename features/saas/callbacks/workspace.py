@@ -41,6 +41,7 @@ _normalize_snapshot_period = selectors.normalize_snapshot_period
 _normalize_mev_label_mode = selectors.normalize_mev_label_mode
 _normalize_theme_value = selectors.normalize_theme_value
 _effective_model_names = selectors.effective_model_names
+_group_effective_models = selectors.group_effective_models
 _primary_run_for_value = selectors.primary_run_for_value
 _show_historical_statistics = selectors.show_historical_statistics
 _compute_saas_metrics = metrics.compute_saas_metrics
@@ -1243,23 +1244,31 @@ def _register_render_callbacks(app) -> None:
 
         records = filtered_df.to_dict(orient="records")
         panels = []
-        for panel_index, model_name in enumerate(effective_models, start=1):
-            model_records = [row for row in records if row.get("Model Name") == model_name]
-            panels.append(
-                views.build_model_panel(
-                    panel_index,
-                    model_name,
-                    model_records,
-                    selected_run_fors,
-                    compare_against,
-                    snapshot_period,
-                    mev_label_mode,
-                    reference_lines,
-                    figure_builder=figures.build_model_figure,
-                    show_historical_statistics=show_historical_statistics,
-                    theme_value=theme_value,
+        panel_index = 0
+        for group_index, (parent_label, member_models) in enumerate(
+            _group_effective_models(segment, selected_models, region=region, model_group=model_group, portfolio=portfolio),
+            start=1,
+        ):
+            member_panels = []
+            for model_name in member_models:
+                panel_index += 1
+                model_records = [row for row in records if row.get("Model Name") == model_name]
+                member_panels.append(
+                    views.build_model_panel(
+                        panel_index,
+                        model_name,
+                        model_records,
+                        selected_run_fors,
+                        compare_against,
+                        snapshot_period,
+                        mev_label_mode,
+                        reference_lines,
+                        figure_builder=figures.build_model_figure,
+                        show_historical_statistics=show_historical_statistics,
+                        theme_value=theme_value,
+                    )
                 )
-            )
+            panels.append(views.build_model_group_card(group_index, parent_label, member_panels))
 
         return panels or _build_empty_state(
             "No MEV charts match the current filters",

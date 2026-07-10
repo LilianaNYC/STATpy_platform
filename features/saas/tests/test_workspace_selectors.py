@@ -58,6 +58,35 @@ def test_model_toggle_label_uses_descriptive_name():
     assert selectors.model_toggle_label(["Model A", "Model C"], options, False) == "2 models selected"
 
 
+def test_models_in_group_reads_descriptive_groups(monkeypatch):
+    monkeypatch.setitem(
+        selectors.SAAS_PAGE_DATA,
+        "descriptive_groups",
+        {"PD Model D": ["PD_model_d", "PD_model_e"], "PD Model A": ["PD_model_a"]},
+    )
+    assert selectors.models_in_group("PD Model D") == ["PD_model_d", "PD_model_e"]
+    assert selectors.models_in_group("PD Model A") == ["PD_model_a"]
+    assert selectors.models_in_group("Unknown") == []
+
+
+def test_group_effective_models_groups_children_under_parent(monkeypatch):
+    # Two Model Names sharing a Descriptive Name collapse into one parent group
+    # (even when not adjacent in the effective list); a model that is its own
+    # parent stays a singleton. Parents keep first-appearance order.
+    monkeypatch.setattr(
+        selectors,
+        "effective_model_names",
+        lambda *args, **kwargs: ["PD_model_d", "PD_model_a", "PD_model_e"],
+    )
+    labels = {"PD_model_d": "PD Model D", "PD_model_e": "PD Model D", "PD_model_a": "PD Model A"}
+    monkeypatch.setattr(selectors, "model_descriptive_label", lambda name: labels[name])
+
+    assert selectors.group_effective_models(None, []) == [
+        ("PD Model D", ["PD_model_d", "PD_model_e"]),
+        ("PD Model A", ["PD_model_a"]),
+    ]
+
+
 def test_scenario_and_historical_stat_labels():
     assert selectors.format_scenario_label(selectors.DEFAULT_SCENARIO_FILTER) == "All"
     assert selectors.format_scenario_label("int_severe") == "Int Severe"

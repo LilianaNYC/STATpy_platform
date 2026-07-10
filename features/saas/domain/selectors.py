@@ -66,6 +66,13 @@ def model_descriptive_label(model_name: str) -> str:
     return descriptive_map.get(model_name) or model_name
 
 
+def models_in_group(parent_label: str) -> list[str]:
+    """Child Model Names under a parent Descriptive Name, or a singleton for a
+    model that is its own parent. Reads the canonical parent->children structure
+    built once in :func:`loader.load_saas_mev_workbook_data`."""
+    return list(SAAS_PAGE_DATA.get("descriptive_groups", {}).get(parent_label, []))
+
+
 def normalize_multi_values(value) -> list[str]:
     if isinstance(value, str):
         return [value] if value else []
@@ -487,6 +494,35 @@ def effective_model_names(
     if all_models_selected:
         return reachable_model_names
     return []
+
+
+def group_effective_models(
+    segment: str | None,
+    selected_models,
+    *,
+    region: str | None = None,
+    model_group: str | None = None,
+    portfolio: str | None = None,
+) -> list[tuple[str, list[str]]]:
+    """The in-scope models grouped under their parent Descriptive Name, in
+    first-appearance order. Each entry is ``(parent_label, [member Model Names])``.
+
+    Members are restricted to the models :func:`effective_model_names` keeps in
+    scope, so a parent surfaces only the children the current filters allow --
+    the UI renders one card per parent with every in-scope child inside it.
+    """
+    effective = effective_model_names(
+        segment, selected_models, region=region, model_group=model_group, portfolio=portfolio
+    )
+    groups: dict[str, list[str]] = {}
+    order: list[str] = []
+    for model_name in effective:
+        parent = model_descriptive_label(model_name)
+        if parent not in groups:
+            groups[parent] = []
+            order.append(parent)
+        groups[parent].append(model_name)
+    return [(parent, groups[parent]) for parent in order]
 
 
 def primary_run_for_value(run_for) -> str | None:
