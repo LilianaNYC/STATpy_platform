@@ -58,10 +58,20 @@
   // "Expand/Collapse all charts": the collapsed state keeps parent cards open
   // (so each child's segment summary stays visible) with the child chart panels
   // closed; the expanded state opens every child panel to reveal its charts.
+  // IMPORTANT: only write when the value actually changes. This function runs
+  // from mutation observers, and `textContent` assignment replaces the text
+  // node even when the string is identical -- an unconditional write re-fires
+  // the observer and locks the main thread in an infinite mutation loop.
   function setExpandButton(btn, expanded) {
-    btn.setAttribute("data-saas-expand-all", expanded ? "expanded" : "collapsed");
-    btn.setAttribute("aria-expanded", expanded ? "true" : "false");
-    btn.textContent = expanded ? "Collapse all charts" : "Expand all charts";
+    var state = expanded ? "expanded" : "collapsed";
+    if (btn.getAttribute("data-saas-expand-all") !== state) {
+      btn.setAttribute("data-saas-expand-all", state);
+      btn.setAttribute("aria-expanded", expanded ? "true" : "false");
+    }
+    var label = expanded ? "Collapse all charts" : "Expand all charts";
+    if (btn.textContent !== label) {
+      btn.textContent = label;
+    }
   }
 
   function applyExpandState(expanded) {
@@ -79,7 +89,11 @@
     if (!btn) return;
     var panels = document.querySelectorAll("#saas-mev-model-panels .pd-mev-model-panel");
     // Hide the control when there are no chart panels (e.g. the apply prompt).
-    btn.style.display = panels.length ? "" : "none";
+    // Change-only write: see setExpandButton.
+    var display = panels.length ? "" : "none";
+    if (btn.style.display !== display) {
+      btn.style.display = display;
+    }
     var anyOpen = Array.prototype.some.call(panels, function (panel) {
       return panel.open;
     });
@@ -154,9 +168,10 @@
 
   function bind() {
     // The expand/collapse-all button lives in the static page layout, so bind
-    // it (idempotently) and sync its state on every (re)bind.
+    // it (idempotently) and sync its state on every (re)bind. bind() fires from
+    // the #page-content MutationObserver, so the refresh is rAF-coalesced.
     bindExpandAll();
-    refreshExpandButton();
+    scheduleRefreshButton();
 
     var subnav = document.getElementById("saas-subnav");
     if (!subnav || subnav.dataset.saasSubnavBound) return;
