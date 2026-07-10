@@ -7,18 +7,68 @@
   // Parent and child cards are collapsible <details>. A chart first drawn while
   // its card is collapsed has zero width; when a card opens, nudge Plotly
   // (dcc.Graph responsive:true re-fits on window resize). `toggle` does not
-  // bubble, so listen in the capture phase to catch every card.
+  // bubble, so listen in the capture phase to catch every card. Also keep the
+  // "Expand/Collapse all charts" button label in sync as child panels toggle.
   document.addEventListener(
     "toggle",
     function (evt) {
       var el = evt.target;
-      if (!el || el.tagName !== "DETAILS" || !el.open) return;
-      window.requestAnimationFrame(function () {
-        window.dispatchEvent(new Event("resize"));
-      });
+      if (!el || el.tagName !== "DETAILS") return;
+      if (el.open) {
+        window.requestAnimationFrame(function () {
+          window.dispatchEvent(new Event("resize"));
+        });
+      }
+      if (el.classList.contains("pd-mev-model-panel")) {
+        refreshExpandButton();
+      }
     },
     true
   );
+
+  // "Expand/Collapse all charts": the collapsed state keeps parent cards open
+  // (so each child's segment summary stays visible) with the child chart panels
+  // closed; the expanded state opens every child panel to reveal its charts.
+  function setExpandButton(btn, expanded) {
+    btn.setAttribute("data-saas-expand-all", expanded ? "expanded" : "collapsed");
+    btn.setAttribute("aria-expanded", expanded ? "true" : "false");
+    btn.textContent = expanded ? "Collapse all charts" : "Expand all charts";
+  }
+
+  function applyExpandState(expanded) {
+    document.querySelectorAll("#saas-mev-model-panels .pd-mev-model-group").forEach(function (card) {
+      card.open = true;
+    });
+    document.querySelectorAll("#saas-mev-model-panels .pd-mev-model-panel").forEach(function (panel) {
+      panel.open = expanded;
+    });
+    window.requestAnimationFrame(function () {
+      window.dispatchEvent(new Event("resize"));
+    });
+  }
+
+  function refreshExpandButton() {
+    var btn = document.querySelector(".saas-expand-all-btn");
+    if (!btn) return;
+    var panels = document.querySelectorAll("#saas-mev-model-panels .pd-mev-model-panel");
+    // Hide the control when there are no chart panels (e.g. the apply prompt).
+    btn.style.display = panels.length ? "" : "none";
+    var anyOpen = Array.prototype.some.call(panels, function (panel) {
+      return panel.open;
+    });
+    setExpandButton(btn, anyOpen);
+  }
+
+  function bindExpandAll() {
+    var btn = document.querySelector(".saas-expand-all-btn");
+    if (!btn || btn.dataset.saasExpandBound) return;
+    btn.dataset.saasExpandBound = "true";
+    btn.addEventListener("click", function () {
+      var expanded = btn.getAttribute("data-saas-expand-all") !== "expanded";
+      applyExpandState(expanded);
+      setExpandButton(btn, expanded);
+    });
+  }
 
   function getScrollContainer() {
     return document.querySelector(".content");
@@ -76,6 +126,11 @@
   }
 
   function bind() {
+    // The expand/collapse-all button lives in the static page layout, so bind
+    // it (idempotently) and sync its state on every (re)bind.
+    bindExpandAll();
+    refreshExpandButton();
+
     var subnav = document.getElementById("saas-subnav");
     if (!subnav || subnav.dataset.saasSubnavBound) return;
     subnav.dataset.saasSubnavBound = "true";
@@ -86,7 +141,12 @@
 
     var panels = document.getElementById("saas-mev-model-panels");
     if (panels) {
-      new MutationObserver(onScroll).observe(panels, { childList: true, subtree: true });
+      // A filter re-render replaces the panels (collapsing every child); keep the
+      // active chip and the expand-all button label in sync when that happens.
+      new MutationObserver(function () {
+        onScroll();
+        refreshExpandButton();
+      }).observe(panels, { childList: true, subtree: true });
     }
 
     updateActiveChipFromScroll();
