@@ -3,6 +3,29 @@
    smooth-scrolls to that card. */
 (function () {
   var scrollFrame = null;
+  var resizeQueued = false;
+  var refreshQueued = false;
+
+  // Coalesce work to at most once per animation frame. Opening many cards at
+  // once (Expand all) fires a burst of `toggle` events and Plotly redraws; a
+  // separate resize / button-refresh per event would jam the main thread.
+  function scheduleResize() {
+    if (resizeQueued) return;
+    resizeQueued = true;
+    window.requestAnimationFrame(function () {
+      resizeQueued = false;
+      window.dispatchEvent(new Event("resize"));
+    });
+  }
+
+  function scheduleRefreshButton() {
+    if (refreshQueued) return;
+    refreshQueued = true;
+    window.requestAnimationFrame(function () {
+      refreshQueued = false;
+      refreshExpandButton();
+    });
+  }
 
   // Parent and child cards are collapsible <details>. A chart first drawn while
   // its card is collapsed has zero width; when a card opens, nudge Plotly
@@ -14,14 +37,8 @@
     function (evt) {
       var el = evt.target;
       if (!el || el.tagName !== "DETAILS") return;
-      if (el.open) {
-        window.requestAnimationFrame(function () {
-          window.dispatchEvent(new Event("resize"));
-        });
-      }
-      if (el.classList.contains("pd-mev-model-panel")) {
-        refreshExpandButton();
-      }
+      if (el.open) scheduleResize();
+      if (el.classList.contains("pd-mev-model-panel")) scheduleRefreshButton();
     },
     true
   );
@@ -42,9 +59,7 @@
     document.querySelectorAll("#saas-mev-model-panels .pd-mev-model-panel").forEach(function (panel) {
       panel.open = expanded;
     });
-    window.requestAnimationFrame(function () {
-      window.dispatchEvent(new Event("resize"));
-    });
+    scheduleResize();
   }
 
   function refreshExpandButton() {
@@ -141,12 +156,13 @@
 
     var panels = document.getElementById("saas-mev-model-panels");
     if (panels) {
-      // A filter re-render replaces the panels (collapsing every child); keep the
-      // active chip and the expand-all button label in sync when that happens.
-      new MutationObserver(function () {
-        onScroll();
-        refreshExpandButton();
-      }).observe(panels, { childList: true, subtree: true });
+      // Deep (subtree) mutations fire constantly while Plotly draws; keep the
+      // scroll-spy on them but throttle it (onScroll is rAF-guarded).
+      new MutationObserver(onScroll).observe(panels, { childList: true, subtree: true });
+      // A filter re-render only replaces the direct children (the parent cards),
+      // which collapses every panel -- refresh the button then, not on every
+      // deep Plotly mutation.
+      new MutationObserver(scheduleRefreshButton).observe(panels, { childList: true });
     }
 
     updateActiveChipFromScroll();
