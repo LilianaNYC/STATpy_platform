@@ -936,10 +936,11 @@ def partition_group_attributes(member_names: list[str]):
     shared iff every member carries the identical value list for it, in which
     case it renders once on the parent card and is suppressed on each child.
 
-    Singletons return ``([], frozenset())`` -- with one child there is nothing to
-    roll up, so the lone model keeps its attributes in its own block.
+    A singleton parent trivially shares every attribute, so they all roll up
+    into the header (the lone child then shows only its charts) -- giving a
+    singleton card the same header layout as a multi-child parent.
     """
-    if len(member_names) < 2:
+    if not member_names:
         return [], frozenset()
 
     per_member = {name: model_attributes(name) for name in member_names}

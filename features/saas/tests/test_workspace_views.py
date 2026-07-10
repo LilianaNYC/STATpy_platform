@@ -417,5 +417,9 @@ def test_partition_group_attributes_rolls_shared_up_and_leaves_differences(monke
     assert "Region: US" in [line.children for line in shared_lines]
     assert "Segment" not in shared_keys
 
-    # A singleton has nothing to roll up.
-    assert views.partition_group_attributes(["d"]) == ([], frozenset())
+    # A singleton trivially shares every attribute it has, so they all roll up
+    # into the header (giving singleton cards the same header as multi-child ones).
+    singleton_lines, singleton_keys = views.partition_group_attributes(["d"])
+    assert singleton_keys == frozenset({"Segment", "Region", "Model Group"})
+    assert "Segment: Cyclical" in [line.children for line in singleton_lines]
+    assert "Region: US" in [line.children for line in singleton_lines]
