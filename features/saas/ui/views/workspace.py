@@ -649,6 +649,29 @@ def _build_top_bar() -> html.Div:
                                 min_width="220px",
                                 wrapper_class_name="monitoring-filter saas-historical-stats-filter is-hidden",
                             ),
+                            html.Div(
+                                className="monitoring-filter saas-top-filter-action saas-expand-all-filter",
+                                children=[
+                                    html.Div(
+                                        className="pd-mev-filter-actions",
+                                        children=[
+                                            html.Button(
+                                                "Expand all charts",
+                                                type="button",
+                                                className="btn pd-mev-filter-reset saas-expand-all-btn",
+                                                title="Open or close every model's chart panel at once.",
+                                                # Hidden until charts are rendered; the client JS
+                                                # shows it once model panels exist.
+                                                style={"display": "none"},
+                                                **{
+                                                    "data-saas-expand-all": "collapsed",
+                                                    "aria-expanded": "false",
+                                                },
+                                            ),
+                                        ],
+                                    ),
+                                ],
+                            ),
                         ],
                     ),
                     _build_section_subnav(),
@@ -996,20 +1019,6 @@ def _build_chart_canvas() -> html.Section:
                 children=[
                     html.Strong("Executive summary: "),
                     "The Scenario Analysis as a Service (SAAS) dashboard is a self-service tool for reviewing the macro-economic variables (MEVs) that drive credit risk models under stress scenarios, across model use case / cycles. By bringing each MEV's history and forward projections together, it helps users understand the drivers behind the models and sense-check the scenario projections.",
-                ],
-            ),
-            html.Div(
-                className="saas-panels-toolbar",
-                children=[
-                    html.Button(
-                        "Expand all charts",
-                        type="button",
-                        className="saas-expand-all-btn",
-                        **{
-                            "data-saas-expand-all": "collapsed",
-                            "aria-expanded": "false",
-                        },
-                    ),
                 ],
             ),
             html.Div(
