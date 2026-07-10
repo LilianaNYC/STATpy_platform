@@ -387,9 +387,10 @@ def test_build_model_group_card_nests_children_under_one_collapsible_parent():
     shared = [views.html.P("Region: US", className="pd-mev-model-attr")]
     card = views.build_model_group_card(1, "PD Model D", members, shared_attribute_lines=shared)
 
-    # Collapsible <details>, collapsed on first render, anchored for the subnav.
+    # Collapsible <details>, open on first render so the child waterfall shows,
+    # anchored for the subnav.
     assert card.id == "saas-model-group-pd-model-d"
-    assert card.open is False
+    assert card.open is True
 
     texts = _text_nodes(card)
     assert "PD Model D" in texts          # parent label rendered once

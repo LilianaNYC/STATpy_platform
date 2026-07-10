@@ -992,7 +992,10 @@ def build_model_group_card(
     return html.Details(
         id=model_group_id(parent_label),
         className="section-card pd-mev-model-group",
-        open=False,
+        # Parent opens by default so the page loads showing the waterfall of
+        # child Model Names under each parent; each child stays collapsed until
+        # clicked so the charts start below the fold.
+        open=True,
         children=[
             html.Summary(summary_children, className="pd-mev-model-group-heading"),
             html.Div(className="pd-mev-model-group-members", children=member_panels),
