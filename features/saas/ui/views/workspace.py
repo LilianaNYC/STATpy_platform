@@ -36,6 +36,11 @@ MODEL_GROUP_TOGGLE_ID = "saas-model-group-toggle"
 MODEL_GROUP_MENU_ID = "saas-model-group-menu"
 MODEL_GROUP_FILTER_KEY = "saas-model-group"
 
+PORTFOLIO_ID = "saas-portfolio"
+PORTFOLIO_TOGGLE_ID = "saas-portfolio-toggle"
+PORTFOLIO_MENU_ID = "saas-portfolio-menu"
+PORTFOLIO_FILTER_KEY = "saas-portfolio"
+
 MODEL_NAME_ID = "saas-model-name"
 MODEL_NAME_SELECT_ALL_ID = "saas-model-name-select-all"
 MODEL_NAME_TOGGLE_ID = "saas-model-name-toggle"
@@ -97,6 +102,8 @@ REGION_ALL_VALUE = "all"
 DEFAULT_REGION = REGION_ALL_VALUE
 MODEL_GROUP_ALL_VALUE = "all"
 DEFAULT_MODEL_GROUP = MODEL_GROUP_ALL_VALUE
+PORTFOLIO_ALL_VALUE = "all"
+DEFAULT_PORTFOLIO = PORTFOLIO_ALL_VALUE
 SUBNAV_VIEW_OPTIONS = [
     {"label": "History", "value": "history"},
     {"label": "Projection", "value": "projection"},
@@ -192,6 +199,15 @@ def _build_model_group_options() -> list[dict]:
     ]
 
 
+def _build_portfolio_options() -> list[dict]:
+    values = SAAS_PAGE_DATA.get("portfolio_values") or []
+    return [{"label": "All", "value": PORTFOLIO_ALL_VALUE}] + [
+        {"label": value, "value": value}
+        for value in values
+        if value
+    ]
+
+
 RUN_FOR_OPTIONS = _build_run_for_options()
 DEFAULT_RUN_FOR_VALUE = RUN_FOR_OPTIONS[0]["value"] if RUN_FOR_OPTIONS else ""
 COMPARE_AGAINST_OPTIONS = [{"label": "None", "value": COMPARE_AGAINST_NONE_VALUE}] + [
@@ -203,6 +219,7 @@ DEFAULT_COMPARE_AGAINST_VALUES = [COMPARE_AGAINST_NONE_VALUE]
 SEGMENT_NAME_OPTIONS = _build_segment_options()
 REGION_OPTIONS = _build_region_options()
 MODEL_GROUP_OPTIONS = _build_model_group_options()
+PORTFOLIO_OPTIONS = _build_portfolio_options()
 
 
 def _build_excel_scenario_options() -> list[dict]:
@@ -393,14 +410,19 @@ def model_descriptive_label(model_name: str) -> str:
 
 
 def _build_model_name_options() -> list[dict]:
+    """Deduplicated by Model Descriptive Name -- see
+    ``selectors.model_options_for_filters`` for why."""
     values = SAAS_PAGE_DATA.get("model_names", [])
     seen: set[str] = set()
     options: list[dict] = []
     for value in values:
-        if not value or value in seen:
+        if not value:
             continue
-        seen.add(value)
-        options.append({"label": model_descriptive_label(value), "value": value})
+        label = model_descriptive_label(value)
+        if label in seen:
+            continue
+        seen.add(label)
+        options.append({"label": label, "value": label})
     return options
 
 
@@ -507,14 +529,14 @@ def _build_top_bar() -> html.Div:
                                 options=MODEL_GROUP_OPTIONS,
                                 value=DEFAULT_MODEL_GROUP,
                             ),
-                            _build_checklist_filter(
-                                "Segment",
-                                toggle_id=SEGMENT_TOGGLE_ID,
-                                menu_id=SEGMENT_MENU_ID,
-                                checklist_id=SEGMENT_NAME_ID,
-                                options=SEGMENT_NAME_OPTIONS,
-                                value=DEFAULT_SEGMENT_VALUES,
-                                button_label="All",
+                            _build_single_select_filter(
+                                "Portfolio",
+                                value_id=PORTFOLIO_ID,
+                                toggle_id=PORTFOLIO_TOGGLE_ID,
+                                menu_id=PORTFOLIO_MENU_ID,
+                                filter_key=PORTFOLIO_FILTER_KEY,
+                                options=PORTFOLIO_OPTIONS,
+                                value=DEFAULT_PORTFOLIO,
                             ),
                             _build_checklist_filter(
                                 "Specific Models",
@@ -526,6 +548,15 @@ def _build_top_bar() -> html.Div:
                                 button_label="Select models",
                                 min_width="360px",
                                 wrapper_class_name="monitoring-filter monitoring-model-filter",
+                            ),
+                            _build_checklist_filter(
+                                "Segment",
+                                toggle_id=SEGMENT_TOGGLE_ID,
+                                menu_id=SEGMENT_MENU_ID,
+                                checklist_id=SEGMENT_NAME_ID,
+                                options=SEGMENT_NAME_OPTIONS,
+                                value=DEFAULT_SEGMENT_VALUES,
+                                button_label="All",
                             ),
                             _build_single_select_filter(
                                 "Model Use Case / Cycle",
@@ -887,7 +918,8 @@ def build_apply_prompt() -> html.Div:
                     ]),
                     html.Li([
                         html.Strong("Choose your model scope. "),
-                        "Select a Segment or a set of Specific Models — these two filters cannot be combined.",
+                        "Select a Segment or a set of Specific Models. Both stay available to pick from, but if a "
+                        "Segment is active it takes priority over any Specific Models selection.",
                     ]),
                     html.Li([
                         html.Strong("Set the view options. "),

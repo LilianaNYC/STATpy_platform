@@ -134,7 +134,7 @@ body{background:#f8fafc;overflow:hidden}
 .monitoring-filter{display:flex;flex-direction:column;gap:5px;position:relative}
 .monitoring-filter>label{font-size:10px;color:var(--text-muted);font-weight:800;letter-spacing:.35px;text-transform:uppercase}
 .saas-top-filter-row{display:grid;column-gap:14px;row-gap:12px;align-items:end;justify-content:flex-start}
-.saas-primary-filter-row{grid-template-columns:repeat(3,minmax(140px,171px)) fit-content(280px) minmax(190px,260px) auto}
+.saas-primary-filter-row{grid-template-columns:repeat(3,minmax(140px,171px)) minmax(110px,280px) minmax(140px,171px) minmax(190px,260px) minmax(100px,140px)}
 .saas-secondary-filter-row{grid-template-columns:repeat(auto-fit,minmax(140px,171px));margin-top:14px;padding-top:12px;border-top:1px solid #e8eef6}
 .saas-top-filter-row .monitoring-filter{width:100%;min-width:0 !important;max-width:none !important}
 .saas-top-filter-row .monitoring-top-select,
