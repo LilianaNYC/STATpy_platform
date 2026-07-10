@@ -437,9 +437,9 @@ tr:last-child td{border-bottom:none}
 .pd-mev-model-group-shared .pd-mev-model-attr{margin:0}
 /* Lazy-loaded charts show this until the panel's charts are built on first open. */
 .saas-chart-placeholder{padding:24px 8px;text-align:center;color:var(--text-muted);font-style:italic}
-/* Expand/collapse-all-charts control lives in the secondary filter row (before
-   the toggleable Historical Statistics filter so it never shifts cells) and
-   inherits the pd-mev-filter-reset pill style. */
+/* Expand/collapse-all-charts control sits in the top bar beside Export, outside
+   the filter grids so toggling filters can never move or wrap it. */
+.saas-expand-all-top{flex-shrink:0;white-space:nowrap}
 /* Members are indented under the parent with a guide rail to read as a
    waterfall of children beneath their parent Descriptive Name. */
 .pd-mev-model-group-members{display:flex;flex-direction:column;gap:12px;margin-left:10px;padding-left:14px;border-left:2px solid #e8eef6}
