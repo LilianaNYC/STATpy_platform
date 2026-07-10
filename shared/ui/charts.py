@@ -2444,8 +2444,10 @@ def build_saas_mev_time_series_figure(
                 text=legend_title_text,
                 font=dict(size=10.5, color=palette["legend_title"]),
             ),
-            x=0,
-            xanchor="left",
+            # The bottom legend only shows for reference_lines none/min_max
+            # (monitoring hides it); center it under the plot.
+            x=0.5,
+            xanchor="center",
             y=legend_y,
             yanchor="top",
             entrywidthmode="pixels",
