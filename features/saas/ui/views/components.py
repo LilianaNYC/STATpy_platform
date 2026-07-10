@@ -992,7 +992,7 @@ def build_model_group_card(
     return html.Details(
         id=model_group_id(parent_label),
         className="section-card pd-mev-model-group",
-        open=True,
+        open=False,
         children=[
             html.Summary(summary_children, className="pd-mev-model-group-heading"),
             html.Div(className="pd-mev-model-group-members", children=member_panels),
@@ -1068,12 +1068,18 @@ def build_model_panel(
         theme_value=theme_value,
     )
 
-    return html.Div(
+    # Collapsible child panel: the summary is the model's identity (so a
+    # collapsed parent card shows a waterfall of just its child Model Names),
+    # and the body -- filter controls plus charts -- lives below the fold.
+    # Charts stay in the DOM while collapsed, so their MATCH callbacks keep
+    # working; a global 'toggle' handler resizes Plotly when a panel opens.
+    return html.Details(
         id=model_panel_id(model_name),
         className="pd-mev-model-panel",
+        open=False,
         children=[
-            html.Div(
-                className="pd-mev-model-heading",
+            html.Summary(
+                className="pd-mev-model-heading-summary",
                 children=[
                     html.Div(
                         className="pd-mev-model-copy",
@@ -1094,6 +1100,11 @@ def build_model_panel(
                             *attribute_lines,
                         ],
                     ),
+                ],
+            ),
+            html.Div(
+                className="pd-mev-model-body",
+                children=[
                     html.Div(
                         className="pd-mev-model-heading-actions",
                         children=[
@@ -1151,16 +1162,16 @@ def build_model_panel(
                             ),
                         ],
                     ),
+                    html.Div(
+                        "Tip: drag on a chart to zoom in; double-click the chart to return to the original view.",
+                        className="pd-mev-chart-meta saas-zoom-note",
+                    ),
+                    html.Div(
+                        id={"type": layout.MODEL_MEV_GRID_TYPE, "model": model_name},
+                        className="pd-mev-chart-grid",
+                        children=chart_cards,
+                    ),
                 ],
-            ),
-            html.Div(
-                "Tip: drag on a chart to zoom in; double-click the chart to return to the original view.",
-                className="pd-mev-chart-meta saas-zoom-note",
-            ),
-            html.Div(
-                id={"type": layout.MODEL_MEV_GRID_TYPE, "model": model_name},
-                className="pd-mev-chart-grid",
-                children=chart_cards,
             ),
         ],
     )

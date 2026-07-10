@@ -4,6 +4,22 @@
 (function () {
   var scrollFrame = null;
 
+  // Parent and child cards are collapsible <details>. A chart first drawn while
+  // its card is collapsed has zero width; when a card opens, nudge Plotly
+  // (dcc.Graph responsive:true re-fits on window resize). `toggle` does not
+  // bubble, so listen in the capture phase to catch every card.
+  document.addEventListener(
+    "toggle",
+    function (evt) {
+      var el = evt.target;
+      if (!el || el.tagName !== "DETAILS" || !el.open) return;
+      window.requestAnimationFrame(function () {
+        window.dispatchEvent(new Event("resize"));
+      });
+    },
+    true
+  );
+
   function getScrollContainer() {
     return document.querySelector(".content");
   }

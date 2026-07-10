@@ -234,6 +234,16 @@ def test_build_model_panel_defaults_family_picker_to_all(monkeypatch):
     assert family_picker is not None
     assert family_picker.value == views.records.FAMILY_ALL_VALUE
 
+    # Child panel is a collapsible <details>, collapsed on first render; the
+    # charts live in its body so they stay in the DOM (MATCH callbacks keep
+    # firing) while hidden.
+    assert type(panel).__name__ == "Details"
+    assert panel.open is False
+    body = panel.children[-1]
+    assert body.className == "pd-mev-model-body"
+    grid = _find_component_by_id(panel, {"type": page.MODEL_MEV_GRID_TYPE, "model": "Model A"})
+    assert grid is not None
+
 
 def test_build_model_chart_cards_returns_empty_mev_card_without_figure_builder():
     def fail_if_called(*_args, **_kwargs):
@@ -377,9 +387,9 @@ def test_build_model_group_card_nests_children_under_one_collapsible_parent():
     shared = [views.html.P("Region: US", className="pd-mev-model-attr")]
     card = views.build_model_group_card(1, "PD Model D", members, shared_attribute_lines=shared)
 
-    # Collapsible <details>, open by default, anchored for the subnav.
+    # Collapsible <details>, collapsed on first render, anchored for the subnav.
     assert card.id == "saas-model-group-pd-model-d"
-    assert card.open is True
+    assert card.open is False
 
     texts = _text_nodes(card)
     assert "PD Model D" in texts          # parent label rendered once
