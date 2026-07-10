@@ -437,10 +437,6 @@ tr:last-child td{border-bottom:none}
 .pd-mev-model-group-shared .pd-mev-model-attr{margin:0}
 /* Lazy-loaded charts show this until the panel's charts are built on first open. */
 .saas-chart-placeholder{padding:24px 8px;text-align:center;color:var(--text-muted);font-style:italic}
-/* Expand/collapse-all-charts control above the model panel stack. */
-.saas-panels-toolbar{display:flex;justify-content:flex-end;margin-bottom:12px}
-.saas-expand-all-btn{min-height:32px;padding:6px 14px;border-radius:999px;border:1px solid var(--border);background:rgba(255,255,255,.98);color:var(--text);font-size:12px;font-weight:700;cursor:pointer;transition:background .15s,border-color .15s,color .15s,transform .15s}
-.saas-expand-all-btn:hover,.saas-expand-all-btn:focus{background:rgba(37,99,235,.08);border-color:rgba(59,130,246,.22);color:var(--navy);outline:none;transform:translateY(-1px)}
 /* Members are indented under the parent with a guide rail to read as a
    waterfall of children beneath their parent Descriptive Name. */
 .pd-mev-model-group-members{display:flex;flex-direction:column;gap:12px;margin-left:10px;padding-left:14px;border-left:2px solid #e8eef6}
