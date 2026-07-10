@@ -90,6 +90,22 @@ def test_build_subnav_models_emits_one_chip_per_parent(monkeypatch):
     assert buttons[0].__dict__["data-saas-scroll-target"] == "saas-model-group-pd-model-d"
 
 
+def test_build_subnav_models_stays_on_models_when_a_segment_is_active(monkeypatch):
+    # A Segment selection narrows the in-scope models (applied inside
+    # group_effective_models); the section stays "Models in Scope" rather than
+    # switching to a segment list.
+    monkeypatch.setattr(
+        views.selectors,
+        "group_effective_models",
+        lambda _segment, _selected, **_kwargs: [("PD Model A", ["PD_model_a"])],
+    )
+
+    label, subnav_children = views.build_subnav_models(["Cyclical"], None)
+
+    assert label == "Models in Scope"
+    assert [button.children for button in subnav_children[0].children] == ["PD Model A"]
+
+
 def test_scenario_dropdown_uses_single_select_ids():
     dropdown = views.build_model_scenario_dropdown(
         "Model A",
