@@ -522,6 +522,9 @@ tr:last-child td{border-bottom:none}
 .pd-mev-model-copy p{margin-top:6px;color:var(--text-muted);font-size:12px;line-height:1.6}
 .pd-mev-model-badges{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}
 .pd-mev-model-heading-actions{display:flex;align-items:flex-end;flex-wrap:wrap;gap:10px}
+/* Push the date-range (pd-range-controls) group to the right of each chart's
+   controls row, away from the MEV View / Scenario / MEV pickers. */
+.pd-mev-model-heading-actions .saas-date-range-controls{margin-left:auto}
 .pd-mev-model-badge{display:inline-flex;align-items:center;justify-content:center;min-height:30px;padding:6px 12px;border:1px solid var(--border);border-radius:999px;background:rgba(255,255,255,.92);color:var(--text);font-size:10px;font-weight:800;letter-spacing:.35px;text-transform:uppercase}
 .pd-mev-model-meta{display:flex;align-items:flex-end;gap:20px}
 .pd-mev-model-meta-item{display:flex;flex-direction:column;align-items:flex-end;gap:2px}
