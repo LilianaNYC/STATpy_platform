@@ -135,7 +135,10 @@ body{background:#f8fafc;overflow:hidden}
 .monitoring-filter{display:flex;flex-direction:column;gap:5px;position:relative}
 .monitoring-filter>label{font-size:10px;color:var(--text-muted);font-weight:800;letter-spacing:.35px;text-transform:uppercase}
 .saas-top-filter-row{display:grid;column-gap:14px;row-gap:12px;align-items:end;justify-content:flex-start}
-.saas-primary-filter-row{grid-template-columns:repeat(3,minmax(140px,171px)) minmax(110px,280px) minmax(140px,171px) minmax(190px,260px) minmax(100px,140px)}
+/* Uniform columns: every filter (and the Apply cell) gets the same width; the
+   identical minmax means the grid sizes all seven tracks equally at any
+   viewport, shrinking and growing in lockstep. */
+.saas-primary-filter-row{grid-template-columns:repeat(7,minmax(120px,171px))}
 /* Narrower columns than the primary row (160px max, not 171px): auto-fit counts
    tracks from the max, and this row must hold six items on one line -- the five
    display filters plus the expand-all button -- when Snapshot = History un-hides
