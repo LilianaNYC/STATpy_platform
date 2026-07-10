@@ -389,6 +389,7 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
 #         "mev_group_label_map": {},
 #         "mev_description_map": {},
 #         "model_descriptive_name_map": {},
+#         "descriptive_groups": {},                  # NEW
 #         "model_mev_contribution_map": {},
 #         "mev_time_series": empty_time_series,
 #     }
@@ -571,6 +572,20 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
 #             portfolios_for_model = model_portfolio_map.setdefault(model_name, [])  # NEW
 #             if portfolio not in portfolios_for_model:                          # NEW
 #                 portfolios_for_model.append(portfolio)                         # NEW
+#     # Parent (Model Descriptive Name) -> ordered child Model Names. Model Name  # NEW
+#     # is the only unique id, so a model with no descriptive name is its own      # NEW
+#     # singleton parent -- the single place the "fall back to Model Name" rule    # NEW
+#     # is applied (mirrors selectors.model_descriptive_label). Built before the   # NEW
+#     # Development Date dropna so models without a dev date are still grouped.     # NEW
+#     descriptive_groups: dict[str, list[str]] = {}                              # NEW
+#     for row in model_characteristic_df.to_dict(orient="records"):              # NEW
+#         model_name = row.get("Model Name")                                     # NEW
+#         if not model_name:                                                     # NEW
+#             continue                                                           # NEW
+#         parent = model_descriptive_name_map.get(model_name) or model_name      # NEW
+#         members = descriptive_groups.setdefault(parent, [])                    # NEW
+#         if model_name not in members:                                          # NEW
+#             members.append(model_name)                                         # NEW
 #     segment_values = _ordered_unique_strings(
 #         model_characteristic_df.get("Segment Name", pd.Series(dtype=object)).tolist()
 #     )
@@ -648,6 +663,7 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
 #         "mev_group_label_map": mev_group_label_map,
 #         "mev_description_map": mev_description_map,
 #         "model_descriptive_name_map": model_descriptive_name_map,
+#         "descriptive_groups": descriptive_groups,          # NEW
 #         "model_mev_contribution_map": model_mev_contribution_map,
 #         "mev_time_series": time_series_df,
 #     }
