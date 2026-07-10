@@ -999,6 +999,20 @@ def _build_chart_canvas() -> html.Section:
                 ],
             ),
             html.Div(
+                className="saas-panels-toolbar",
+                children=[
+                    html.Button(
+                        "Expand all charts",
+                        type="button",
+                        className="saas-expand-all-btn",
+                        **{
+                            "data-saas-expand-all": "collapsed",
+                            "aria-expanded": "false",
+                        },
+                    ),
+                ],
+            ),
+            html.Div(
                 id=MEV_MODEL_PANELS_ID,
                 className="saas-model-panel-stack",
                 children=build_apply_prompt(),
