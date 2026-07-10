@@ -545,6 +545,9 @@ tr:last-child td{border-bottom:none}
 .pd-mev-model-meta-value{font-size:20px;font-weight:800;color:var(--text);line-height:1}
 .pd-mev-model-meta-value-scenario{color:#dc2626}
 .monitoring-shell.theme-dark .pd-mev-model-meta-value-scenario{color:#fb7185}
+/* Breathing room between a panel's filter controls and its chart cards (the
+   per-panel zoom tip used to provide this gap before it moved above the stack). */
+.pd-mev-model-body .pd-mev-chart-grid{margin-top:16px}
 .pd-mev-chart-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
 .pd-mev-chart-family-row{grid-column:1 / -1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
 .pd-mev-chart-card{display:flex;flex-direction:column;gap:14px;padding:18px 18px 14px;border:1px solid #d9e3f0;border-radius:16px;background:linear-gradient(180deg,#ffffff 0%,#f8fbff 100%);box-shadow:0 14px 30px rgba(15,23,42,.05)}
