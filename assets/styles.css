@@ -135,7 +135,11 @@ body{background:#f8fafc;overflow:hidden}
 .monitoring-filter>label{font-size:10px;color:var(--text-muted);font-weight:800;letter-spacing:.35px;text-transform:uppercase}
 .saas-top-filter-row{display:grid;column-gap:14px;row-gap:12px;align-items:end;justify-content:flex-start}
 .saas-primary-filter-row{grid-template-columns:repeat(3,minmax(140px,171px)) minmax(110px,280px) minmax(140px,171px) minmax(190px,260px) minmax(100px,140px)}
-.saas-secondary-filter-row{grid-template-columns:repeat(auto-fit,minmax(140px,171px));margin-top:14px;padding-top:12px;border-top:1px solid #e8eef6}
+/* Narrower columns than the primary row (155px max, not 171px): auto-fit counts
+   tracks from the max, and this row must hold six items on one line -- the five
+   display filters plus the expand-all button -- when Snapshot = History un-hides
+   Historical Statistics. */
+.saas-secondary-filter-row{grid-template-columns:repeat(auto-fit,minmax(140px,155px));margin-top:14px;padding-top:12px;border-top:1px solid #e8eef6}
 .saas-top-filter-row .monitoring-filter{width:100%;min-width:0 !important;max-width:none !important}
 .saas-top-filter-row .monitoring-top-select,
 .saas-top-filter-row .single-select-dropdown,
@@ -437,9 +441,10 @@ tr:last-child td{border-bottom:none}
 .pd-mev-model-group-shared .pd-mev-model-attr{margin:0}
 /* Lazy-loaded charts show this until the panel's charts are built on first open. */
 .saas-chart-placeholder{padding:24px 8px;text-align:center;color:var(--text-muted);font-style:italic}
-/* Expand/collapse-all-charts control sits in the top bar beside Export, outside
-   the filter grids so toggling filters can never move or wrap it. */
-.saas-expand-all-top{flex-shrink:0;white-space:nowrap}
+/* Expand/collapse-all-charts control lives in the secondary filter row (before
+   the toggleable Historical Statistics filter so it never shifts cells) and
+   inherits the pd-mev-filter-reset pill style. */
+.saas-expand-all-filter .saas-expand-all-btn{white-space:nowrap;padding-left:10px;padding-right:10px}
 /* Members are indented under the parent with a guide rail to read as a
    waterfall of children beneath their parent Descriptive Name. */
 .pd-mev-model-group-members{display:flex;flex-direction:column;gap:12px;margin-left:10px;padding-left:14px;border-left:2px solid #e8eef6}

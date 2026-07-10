@@ -639,6 +639,34 @@ def _build_top_bar() -> html.Div:
                                 value=DEFAULT_MEV_LABEL_MODE,
                                 min_width="220px",
                             ),
+                            # Keep the expand-all button BEFORE the (toggleable)
+                            # Historical Statistics filter so un-hiding it when
+                            # Snapshot Period = History never displaces the button.
+                            # The row's column max is sized so all six items fit
+                            # on one row at typical widths (see styles.css).
+                            html.Div(
+                                className="monitoring-filter saas-top-filter-action saas-expand-all-filter",
+                                children=[
+                                    html.Div(
+                                        className="pd-mev-filter-actions",
+                                        children=[
+                                            html.Button(
+                                                "Expand all charts",
+                                                type="button",
+                                                className="btn pd-mev-filter-reset saas-expand-all-btn",
+                                                title="Open or close every model's chart panel at once.",
+                                                # Hidden until charts are rendered; the client JS
+                                                # shows it once model panels exist.
+                                                style={"display": "none"},
+                                                **{
+                                                    "data-saas-expand-all": "collapsed",
+                                                    "aria-expanded": "false",
+                                                },
+                                            ),
+                                        ],
+                                    ),
+                                ],
+                            ),
                             _build_inline_segmented_filter(
                                 "Historical Statistics",
                                 filter_id=HISTORICAL_STATS_FILTER_ID,
@@ -653,21 +681,6 @@ def _build_top_bar() -> html.Div:
                     ),
                     _build_section_subnav(),
                 ],
-            ),
-            # Lives beside Export (the other whole-page chart action), outside the
-            # filter grids so no filter appearing/disappearing can ever move it.
-            html.Button(
-                "Expand all charts",
-                type="button",
-                className="btn pd-mev-filter-reset saas-expand-all-btn saas-expand-all-top",
-                title="Open or close every model's chart panel at once.",
-                # Hidden until charts are rendered; the client JS shows it
-                # once model panels exist.
-                style={"display": "none"},
-                **{
-                    "data-saas-expand-all": "collapsed",
-                    "aria-expanded": "false",
-                },
             ),
             html.Details(
                 id=EXPORT_ACTIONS_ID,
