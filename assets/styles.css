@@ -153,7 +153,11 @@ body{background:#f8fafc;overflow:hidden}
 .saas-top-filter-row .checkbox-dropdown-toggle,
 .saas-top-filter-row .checkbox-dropdown-menu{min-width:100%;max-width:none}
 .saas-top-filter-row .pd-mev-filter-actions{width:100%;min-width:0;justify-content:flex-start}
-.saas-primary-filter-row .monitoring-model-filter .checkbox-dropdown-menu{width:max-content;min-width:100%}
+/* 190px floor: the "Type to search models…" placeholder needs ~183px of menu
+   (134px text + input/menu padding and borders, browser-measured) to render
+   unclipped; max-content alone sizes the menu to the checklist labels, which
+   can be narrower. */
+.saas-primary-filter-row .monitoring-model-filter .checkbox-dropdown-menu{width:max-content;min-width:190px}
 .saas-top-filter-action{justify-content:flex-end;padding-top:19px}
 .saas-top-filter-reset{width:100%;min-height:32px;justify-content:center}
 .saas-top-filter-action .pd-mev-filter-actions{width:100%;gap:8px}
@@ -249,6 +253,10 @@ body{background:#f8fafc;overflow:hidden}
 .VirtualizedSelectOption{font-family:'Inter','Segoe UI',sans-serif;font-size:12px;font-weight:500}
 .checkbox-dropdown-menu input[type="checkbox"]{width:16px;height:16px;accent-color:var(--blue);cursor:pointer}
 .pd-models-search{display:block;width:100%;box-sizing:border-box;margin:2px 0 6px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--text);font-family:inherit;font-size:11.5px}
+/* dcc.Input renders a wrapper (styled above) around an inner input that keeps
+   the browser's default fixed width -- stretch it to fill the wrapper so the
+   placeholder isn't clipped. */
+.pd-models-search input{width:100%;min-width:0;box-sizing:border-box;border:none;background:transparent;font:inherit;color:inherit;outline:none;padding:0}
 .pd-models-search::placeholder{color:var(--text-muted)}
 .pd-models-search:focus{outline:none;border-color:var(--blue)}
 .checkbox-dropdown-menu input[type="checkbox"]:disabled{cursor:not-allowed;opacity:.5}
