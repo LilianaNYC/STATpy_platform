@@ -881,10 +881,10 @@ def group_cards_into_family_rows(
 # Per-model attribute rows, in the order they render. A model can carry several
 # distinct values for one attribute (e.g. multi-segment models), so labels
 # pluralize when there is more than one value.
-_ATTRIBUTE_ORDER = ("Segment", "Region", "Model Group", "Portfolio", "Development Date")
+_ATTRIBUTE_ORDER = ("Segment", "Region", "Model Group", "Portfolio")
 
 
-def model_attributes(model_name: str, selected_run_fors: list[str]) -> dict[str, list[str]]:
+def model_attributes(model_name: str) -> dict[str, list[str]]:
     """Ordered ``attribute -> display values`` for a model. Attributes with no
     value are omitted. Keys follow :data:`_ATTRIBUTE_ORDER`; segment values are
     already run through :func:`layout.format_segment_label`."""
@@ -907,11 +907,6 @@ def model_attributes(model_name: str, selected_run_fors: list[str]) -> dict[str,
         if values:
             attributes[key] = values
 
-    primary_run_for = selected_run_fors[0] if selected_run_fors else None
-    development_date = selectors.model_development_date(model_name, primary_run_for)
-    if development_date is not None:
-        attributes["Development Date"] = [format_monitoring_date(development_date)]
-
     return attributes
 
 
@@ -930,12 +925,12 @@ def render_attribute_lines(attributes: dict[str, list[str]], *, skip=()) -> list
     ]
 
 
-def model_attribute_lines(model_name: str, selected_run_fors: list[str], *, skip=()) -> list:
+def model_attribute_lines(model_name: str, *, skip=()) -> list:
     """Full per-model attribute rows shown inside a parent card's child block."""
-    return render_attribute_lines(model_attributes(model_name, selected_run_fors), skip=skip)
+    return render_attribute_lines(model_attributes(model_name), skip=skip)
 
 
-def partition_group_attributes(member_names: list[str], selected_run_fors: list[str]):
+def partition_group_attributes(member_names: list[str]):
     """Split a parent's attributes into the ones shared by every child and the
     ones that differ. Returns ``(shared_lines, shared_keys)``: an attribute is
     shared iff every member carries the identical value list for it, in which
@@ -947,7 +942,7 @@ def partition_group_attributes(member_names: list[str], selected_run_fors: list[
     if len(member_names) < 2:
         return [], frozenset()
 
-    per_member = {name: model_attributes(name, selected_run_fors) for name in member_names}
+    per_member = {name: model_attributes(name) for name in member_names}
     shared_lines: list = []
     shared_keys: set[str] = set()
     for key in _ATTRIBUTE_ORDER:
@@ -1053,7 +1048,7 @@ def build_model_panel(
     )
     date_periods = records.available_date_periods(visible_records)
     selected_run_fors = selectors.normalize_selected_run_fors(run_for)
-    attribute_lines = model_attribute_lines(model_name, selected_run_fors, skip=suppress_attributes)
+    attribute_lines = model_attribute_lines(model_name, skip=suppress_attributes)
     chart_cards = build_model_chart_cards(
         model_name,
         visible_records,

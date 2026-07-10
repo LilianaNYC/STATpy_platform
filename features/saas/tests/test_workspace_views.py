@@ -370,16 +370,16 @@ def test_model_attribute_lines_carry_full_per_model_attributes(monkeypatch):
     monkeypatch.setitem(views.SAAS_PAGE_DATA, "model_region_map", {"PD_model_d": ["US", "EU"]})
     monkeypatch.setitem(views.SAAS_PAGE_DATA, "model_group_map", {"PD_model_d": ["PD"]})
     monkeypatch.setitem(views.SAAS_PAGE_DATA, "model_portfolio_map", {"PD_model_d": ["C&I"]})
-    monkeypatch.setattr(views.selectors, "model_development_date", lambda *_args: datetime(2024, 3, 31))
 
-    texts = [line.children for line in views.model_attribute_lines("PD_model_d", ["Cycle A"])]
+    texts = [line.children for line in views.model_attribute_lines("PD_model_d")]
 
     # Single value -> singular label; several distinct values -> pluralized.
     assert "Regions: US, EU" in texts
     assert "Model Group: PD" in texts
     assert "Portfolio: C&I" in texts
     assert any(text.startswith("Segment: ") for text in texts)
-    assert any(text.startswith("Development Date: ") for text in texts)
+    # Development Date is intentionally not shown on the cards.
+    assert not any(text.startswith("Development Date") for text in texts)
 
 
 def test_build_model_group_card_nests_children_under_one_collapsible_parent():
@@ -410,13 +410,12 @@ def test_partition_group_attributes_rolls_shared_up_and_leaves_differences(monke
     monkeypatch.setitem(views.SAAS_PAGE_DATA, "model_region_map", {"d": ["US"], "e": ["US"]})
     monkeypatch.setitem(views.SAAS_PAGE_DATA, "model_group_map", {"d": ["PD"], "e": ["PD"]})
     monkeypatch.setitem(views.SAAS_PAGE_DATA, "model_portfolio_map", {})
-    monkeypatch.setattr(views.selectors, "model_development_date", lambda *_args: None)
 
-    shared_lines, shared_keys = views.partition_group_attributes(["d", "e"], ["Cycle A"])
+    shared_lines, shared_keys = views.partition_group_attributes(["d", "e"])
 
     assert shared_keys == frozenset({"Region", "Model Group"})
     assert "Region: US" in [line.children for line in shared_lines]
     assert "Segment" not in shared_keys
 
     # A singleton has nothing to roll up.
-    assert views.partition_group_attributes(["d"], ["Cycle A"]) == ([], frozenset())
+    assert views.partition_group_attributes(["d"]) == ([], frozenset())

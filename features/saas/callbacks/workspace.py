@@ -1249,9 +1249,7 @@ def _register_render_callbacks(app) -> None:
             _group_effective_models(segment, selected_models, region=region, model_group=model_group, portfolio=portfolio),
             start=1,
         ):
-            shared_attribute_lines, shared_attribute_keys = views.partition_group_attributes(
-                member_models, selected_run_fors
-            )
+            shared_attribute_lines, shared_attribute_keys = views.partition_group_attributes(member_models)
             member_panels = []
             for model_name in member_models:
                 panel_index += 1
