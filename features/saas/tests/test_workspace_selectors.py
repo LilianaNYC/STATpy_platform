@@ -42,22 +42,20 @@ def test_run_for_and_compare_against_labels(monkeypatch):
     assert selectors.compare_against_toggle_label(["Cycle B"], "Cycle A") == "Cycle B"
 
 
-def test_model_toggle_label_uses_descriptive_name(monkeypatch):
-    monkeypatch.setitem(
-        selectors.SAAS_PAGE_DATA,
-        "model_descriptive_name_map",
-        {"model-a": "Model A"},
-    )
+def test_model_toggle_label_uses_descriptive_name():
+    # Specific-Models options are keyed by Descriptive Name (the "parent"
+    # of one or more Model Names, see model_options_for_filters), so the
+    # selection values passed in here already are descriptive names.
     options = [
-        {"label": "Model A", "value": "model-a"},
-        {"label": "Model B", "value": "model-b"},
+        {"label": "Model A", "value": "Model A"},
+        {"label": "Model B", "value": "Model B"},
     ]
 
-    assert selectors.model_toggle_label(["model-a"], options, True) == "Disabled while Segment is selected"
+    assert selectors.model_toggle_label(["Model A"], options, True) == "Disabled while Segment is selected"
     assert selectors.model_toggle_label([], options, False) == "Select models"
-    assert selectors.model_toggle_label(["model-a", "model-b"], options, False) == "All"
-    assert selectors.model_toggle_label(["model-a"], options, False) == "Model A"
-    assert selectors.model_toggle_label(["model-a", "model-c"], options, False) == "2 models selected"
+    assert selectors.model_toggle_label(["Model A", "Model B"], options, False) == "All"
+    assert selectors.model_toggle_label(["Model A"], options, False) == "Model A"
+    assert selectors.model_toggle_label(["Model A", "Model C"], options, False) == "2 models selected"
 
 
 def test_scenario_and_historical_stat_labels():

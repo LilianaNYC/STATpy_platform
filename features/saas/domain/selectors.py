@@ -11,6 +11,7 @@ from ..data_access import SAAS_PAGE_DATA
 SEGMENT_ALL_VALUE = "all"
 REGION_ALL_VALUE = "all"
 MODEL_GROUP_ALL_VALUE = "all"
+PORTFOLIO_ALL_VALUE = "all"
 COMPARE_AGAINST_NONE_VALUE = "none"
 DEFAULT_SCENARIO_FILTER = "all"
 
@@ -53,6 +54,10 @@ def is_region_active(region: str | None) -> bool:
 
 def is_model_group_active(model_group: str | None) -> bool:
     return bool(model_group) and model_group != MODEL_GROUP_ALL_VALUE
+
+
+def is_portfolio_active(portfolio: str | None) -> bool:
+    return bool(portfolio) and portfolio != PORTFOLIO_ALL_VALUE
 
 
 def model_descriptive_label(model_name: str) -> str:
@@ -159,16 +164,123 @@ def compare_against_toggle_label(selected_values, selected_run_for: str | None) 
     return f"{len(compare_values)} Model Use Case / Cycle values selected"
 
 
+def _options_with_all(values: list[str], all_value: str) -> list[dict]:
+    return [{"label": "All", "value": all_value}] + [
+        {"label": value, "value": value} for value in values if value
+    ]
+
+
+def model_group_values_for_filters(*, region: str | None = None) -> list[str]:
+    """Model Group values reachable given the Region filter (cascade step 1)."""
+    all_values = list(SAAS_PAGE_DATA.get("model_group_values") or [])
+    if not is_region_active(region):
+        return all_values
+    model_region_map = SAAS_PAGE_DATA.get("model_region_map", {})
+    model_group_map = SAAS_PAGE_DATA.get("model_group_map", {})
+    reachable = {
+        group
+        for model_name, groups in model_group_map.items()
+        if region in (model_region_map.get(model_name) or [])
+        for group in groups
+    }
+    return [value for value in all_values if value in reachable]
+
+
+def portfolio_values_for_filters(*, region: str | None = None, model_group: str | None = None) -> list[str]:
+    """Portfolio values reachable given Region + Model Group (cascade step 2)."""
+    all_values = list(SAAS_PAGE_DATA.get("portfolio_values") or [])
+    if not is_region_active(region) and not is_model_group_active(model_group):
+        return all_values
+    model_region_map = SAAS_PAGE_DATA.get("model_region_map", {})
+    model_group_map = SAAS_PAGE_DATA.get("model_group_map", {})
+    model_portfolio_map = SAAS_PAGE_DATA.get("model_portfolio_map", {})
+    reachable: set[str] = set()
+    for model_name, portfolios in model_portfolio_map.items():
+        if is_region_active(region) and region not in (model_region_map.get(model_name) or []):
+            continue
+        if is_model_group_active(model_group) and model_group not in (model_group_map.get(model_name) or []):
+            continue
+        reachable.update(portfolios)
+    return [value for value in all_values if value in reachable]
+
+
+def segment_values_for_filters(
+    *,
+    region: str | None = None,
+    model_group: str | None = None,
+    portfolio: str | None = None,
+    model_names: list[str] | None = None,
+) -> list[str]:
+    """Segment values reachable given Region + Model Group + Portfolio, and
+    optionally restricted to a specific set of (raw) Model Names.
+
+    Segment narrows off the same three upstream filters as Specific Models
+    (see :func:`model_names_for_filters`); it isn't chained after Specific
+    Models in the sense of being disabled by it, but when ``model_names`` is
+    passed (the current Specific Models selection, expanded via
+    :func:`effective_model_names`) the result only covers segments those
+    particular models actually have.
+    """
+    all_values = list(SAAS_PAGE_DATA.get("segment_values") or [])
+    if (
+        model_names is None
+        and not is_region_active(region)
+        and not is_model_group_active(model_group)
+        and not is_portfolio_active(portfolio)
+    ):
+        return all_values
+    model_region_map = SAAS_PAGE_DATA.get("model_region_map", {})
+    model_group_map = SAAS_PAGE_DATA.get("model_group_map", {})
+    model_portfolio_map = SAAS_PAGE_DATA.get("model_portfolio_map", {})
+    model_segments_map = SAAS_PAGE_DATA.get("model_segments_map", {})
+    candidate_models = model_names if model_names is not None else list(model_segments_map.keys())
+    reachable: set[str] = set()
+    for model_name in candidate_models:
+        if is_region_active(region) and region not in (model_region_map.get(model_name) or []):
+            continue
+        if is_model_group_active(model_group) and model_group not in (model_group_map.get(model_name) or []):
+            continue
+        if is_portfolio_active(portfolio) and portfolio not in (model_portfolio_map.get(model_name) or []):
+            continue
+        reachable.update(model_segments_map.get(model_name) or [])
+    return [value for value in all_values if value in reachable]
+
+
+def model_group_options_for_filters(*, region: str | None = None) -> list[dict]:
+    return _options_with_all(model_group_values_for_filters(region=region), MODEL_GROUP_ALL_VALUE)
+
+
+def portfolio_options_for_filters(*, region: str | None = None, model_group: str | None = None) -> list[dict]:
+    return _options_with_all(
+        portfolio_values_for_filters(region=region, model_group=model_group), PORTFOLIO_ALL_VALUE
+    )
+
+
+def segment_options_for_filters(
+    *,
+    region: str | None = None,
+    model_group: str | None = None,
+    portfolio: str | None = None,
+    model_names: list[str] | None = None,
+) -> list[dict]:
+    return _options_with_all(
+        segment_values_for_filters(region=region, model_group=model_group, portfolio=portfolio, model_names=model_names),
+        SEGMENT_ALL_VALUE,
+    )
+
+
 def model_names_for_filters(
     segment: str | None,
     *,
     region: str | None = None,
     model_group: str | None = None,
+    portfolio: str | None = None,
 ) -> list[str]:
     base_models = list(SAAS_PAGE_DATA.get("model_names", []))
     model_segments_map = SAAS_PAGE_DATA.get("model_segments_map", {})
     model_region_map = SAAS_PAGE_DATA.get("model_region_map", {})
     model_group_map = SAAS_PAGE_DATA.get("model_group_map", {})
+    model_portfolio_map = SAAS_PAGE_DATA.get("model_portfolio_map", {})
     # A model can belong to more than one region/group/segment, so membership
     # in the full per-model list is required -- comparing against a single
     # "primary" value would wrongly exclude a model from every filter except
@@ -177,6 +289,8 @@ def model_names_for_filters(
         base_models = [model_name for model_name in base_models if region in (model_region_map.get(model_name) or [])]
     if is_model_group_active(model_group):
         base_models = [model_name for model_name in base_models if model_group in (model_group_map.get(model_name) or [])]
+    if is_portfolio_active(portfolio):
+        base_models = [model_name for model_name in base_models if portfolio in (model_portfolio_map.get(model_name) or [])]
     active_segments = active_segment_values(segment)
     if active_segments:
         segment_set = set(active_segments)
@@ -192,16 +306,28 @@ def model_options_for_filters(
     *,
     region: str | None = None,
     model_group: str | None = None,
+    portfolio: str | None = None,
     disabled: bool = False,
 ) -> list[dict]:
-    values = model_names_for_filters(segment, region=region, model_group=model_group)
+    """Specific-Models options, deduplicated by Model Descriptive Name.
+
+    A Descriptive Name is the "parent" of one or more Model Names (see
+    :func:`effective_model_names`, which expands a selected parent back out
+    to its member Model Names) -- so two Model Names sharing a Descriptive
+    Name surface as a single selectable option here instead of a
+    visually-duplicate pair.
+    """
+    values = model_names_for_filters(segment, region=region, model_group=model_group, portfolio=portfolio)
     seen: set[str] = set()
     options: list[dict] = []
     for value in values:
-        if not value or value in seen:
+        if not value:
             continue
-        seen.add(value)
-        option = {"label": model_descriptive_label(value), "value": value}
+        label = model_descriptive_label(value)
+        if label in seen:
+            continue
+        seen.add(label)
+        option = {"label": label, "value": label}
         if disabled:
             option["disabled"] = True
         options.append(option)
@@ -218,7 +344,7 @@ def model_toggle_label(selected_models: list[str], all_options: list[dict], segm
     if all_values and set(selected_model_values) == set(all_values):
         return "All"
     if len(selected_model_values) == 1:
-        return model_descriptive_label(selected_model_values[0])
+        return selected_model_values[0]
     return f"{len(selected_model_values)} models selected"
 
 
@@ -337,21 +463,29 @@ def effective_model_names(
     *,
     region: str | None = None,
     model_group: str | None = None,
+    portfolio: str | None = None,
 ) -> list[str]:
-    selected_model_values = normalize_selected_models(selected_models)
-    all_model_values = [
-        option["value"]
-        for option in model_options_for_filters(None, region=region, model_group=model_group)
-    ]
-    all_models_selected = bool(all_model_values) and set(selected_model_values) == set(all_model_values)
+    """Resolve the Specific-Models selection (Descriptive Names) to the
+    underlying Model Names that actually key every SAAS data structure.
+
+    A selected Descriptive Name is a "parent" that can cover more than one
+    Model Name (see :func:`model_options_for_filters`); each one expands to
+    every reachable Model Name sharing that Descriptive Name.
+    """
+    selected_descriptive_names = set(normalize_selected_models(selected_models))
+    reachable_model_names = model_names_for_filters(None, region=region, model_group=model_group, portfolio=portfolio)
+    all_descriptive_names = {model_descriptive_label(name) for name in reachable_model_names}
+    all_models_selected = bool(all_descriptive_names) and selected_descriptive_names == all_descriptive_names
 
     if is_segment_active(segment):
-        return model_names_for_filters(segment, region=region, model_group=model_group)
-    if selected_model_values and not all_models_selected:
-        selected_value_set = set(selected_model_values)
-        return [value for value in all_model_values if value in selected_value_set]
+        return model_names_for_filters(segment, region=region, model_group=model_group, portfolio=portfolio)
+    if selected_descriptive_names and not all_models_selected:
+        return [
+            model_name for model_name in reachable_model_names
+            if model_descriptive_label(model_name) in selected_descriptive_names
+        ]
     if all_models_selected:
-        return all_model_values
+        return reachable_model_names
     return []
 
 

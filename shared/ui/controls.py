@@ -98,6 +98,32 @@ def resolve_monitoring_point_value(options: list[str] | None, value: str | None)
 # ---------------------------------------------------------------------------
 
 
+def build_single_select_option_buttons(
+    options: list[dict],
+    value: str | None,
+    filter_key: str,
+) -> list[html.Button]:
+    """The clickable option-button list inside a single-select menu.
+
+    Factored out of :func:`build_single_select_dropdown` so a callback can
+    rebuild just the menu's ``children`` (e.g. to narrow a cascading filter's
+    options) without duplicating the button markup.
+    """
+    return [
+        html.Button(
+            [
+                html.Span(option["label"], className="single-select-option-label"),
+                html.Span("✓", className="single-select-option-check", **{"aria-hidden": "true"}),
+            ],
+            id={"type": SINGLE_SELECT_OPTION_ID, "filter": filter_key, "value": option["value"]},
+            type="button",
+            n_clicks=0,
+            className="single-select-option is-selected" if option["value"] == value else "single-select-option",
+        )
+        for option in options
+    ]
+
+
 def build_single_select_dropdown(
     *,
     value_id: str,
@@ -139,19 +165,7 @@ def build_single_select_dropdown(
             html.Div(
                 id=menu_id,
                 className="checkbox-dropdown-menu single-select-menu",
-                children=[
-                    html.Button(
-                        [
-                            html.Span(option["label"], className="single-select-option-label"),
-                            html.Span("✓", className="single-select-option-check", **{"aria-hidden": "true"}),
-                        ],
-                        id={"type": SINGLE_SELECT_OPTION_ID, "filter": filter_key, "value": option["value"]},
-                        type="button",
-                        n_clicks=0,
-                        className="single-select-option is-selected" if option["value"] == value else "single-select-option",
-                    )
-                    for option in options
-                ],
+                children=build_single_select_option_buttons(options, value, filter_key),
             ),
         ],
     )
@@ -227,20 +241,6 @@ def build_global_filters(data: dict, extra_controls=None) -> html.Div:
         html.Div(
             className="monitoring-filter",
             children=[
-                html.Label("Segment", htmlFor=PORTFOLIO_SEGMENT_TOGGLE_ID),
-                build_single_select_dropdown(
-                    value_id=PORTFOLIO_SEGMENT_ID,
-                    toggle_id=PORTFOLIO_SEGMENT_TOGGLE_ID,
-                    menu_id=PORTFOLIO_SEGMENT_MENU_ID,
-                    filter_key="portfolio-segment",
-                    options=segment_options,
-                    value="all",
-                ),
-            ],
-        ),
-        html.Div(
-            className="monitoring-filter",
-            children=[
                 html.Label("Specific Models", htmlFor=MODELS_TOGGLE_ID),
                 build_single_select_dropdown(
                     value_id=MODELS_ID,
@@ -248,6 +248,20 @@ def build_global_filters(data: dict, extra_controls=None) -> html.Div:
                     menu_id=MODELS_MENU_ID,
                     filter_key="specific-models",
                     options=[{"label": "All models", "value": "all"}] + [{"label": name, "value": name} for name in model_names],
+                    value="all",
+                ),
+            ],
+        ),
+        html.Div(
+            className="monitoring-filter",
+            children=[
+                html.Label("Segment", htmlFor=PORTFOLIO_SEGMENT_TOGGLE_ID),
+                build_single_select_dropdown(
+                    value_id=PORTFOLIO_SEGMENT_ID,
+                    toggle_id=PORTFOLIO_SEGMENT_TOGGLE_ID,
+                    menu_id=PORTFOLIO_SEGMENT_MENU_ID,
+                    filter_key="portfolio-segment",
+                    options=segment_options,
                     value="all",
                 ),
             ],
