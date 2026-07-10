@@ -438,8 +438,8 @@ tr:last-child td{border-bottom:none}
 .pd-mev-model-group-heading::before{content:"";position:absolute;left:2px;top:5px;width:7px;height:7px;border-right:2px solid var(--blue);border-bottom:2px solid var(--blue);transform:rotate(45deg);transition:transform .15s ease}
 .pd-mev-model-group:not([open]) .pd-mev-model-group-heading{margin-bottom:0;border-bottom:none}
 .pd-mev-model-group:not([open]) .pd-mev-model-group-heading::before{transform:rotate(-45deg)}
-.pd-mev-model-group-heading h4{margin:0;font-size:18px;font-weight:800;color:var(--ink,#0f172a)}
-.pd-mev-model-group-count{margin:3px 0 0;font-size:12px;font-weight:600;color:var(--muted,#64748b)}
+.pd-mev-model-group-heading h4{margin:0;font-size:18px;font-weight:800;color:var(--text)}
+.pd-mev-model-group-count{margin:3px 0 0;font-size:12px;font-weight:600;color:var(--text-muted)}
 .pd-mev-model-group-shared{margin-top:6px;display:flex;flex-wrap:wrap;gap:4px 16px}
 .pd-mev-model-group-shared .pd-mev-model-attr{margin:0}
 /* Lazy-loaded charts show this until the panel's charts are built on first open. */
@@ -454,10 +454,10 @@ tr:last-child td{border-bottom:none}
 .pd-mev-model-panel{padding:14px 16px;border:1px solid #dbe4f0;border-radius:14px;background:linear-gradient(180deg,#ffffff 0%,#fbfdff 100%);box-shadow:0 8px 20px rgba(15,23,42,.04);margin-bottom:0}
 .pd-mev-model-heading-summary{position:relative;cursor:pointer;list-style:none;padding-left:22px}
 .pd-mev-model-heading-summary::-webkit-details-marker{display:none}
-.pd-mev-model-heading-summary::before{content:"";position:absolute;left:3px;top:6px;width:6px;height:6px;border-right:2px solid var(--muted,#64748b);border-bottom:2px solid var(--muted,#64748b);transform:rotate(45deg);transition:transform .15s ease}
+.pd-mev-model-heading-summary::before{content:"";position:absolute;left:3px;top:6px;width:6px;height:6px;border-right:2px solid var(--text-muted);border-bottom:2px solid var(--text-muted);transform:rotate(45deg);transition:transform .15s ease}
 .pd-mev-model-panel:not([open]) .pd-mev-model-heading-summary::before{transform:rotate(-45deg)}
 .pd-mev-model-body{margin-top:14px;padding-top:12px;border-top:1px solid #e8eef6}
-.pd-mev-model-attr{margin:2px 0 0;font-size:13px;color:var(--muted,#475569)}
+.pd-mev-model-attr{margin:2px 0 0;font-size:13px;color:var(--text-muted)}
 .pd-mev-summary-grid{grid-template-columns:minmax(420px,2.2fr) repeat(4,minmax(150px,1fr));align-items:stretch}
 .pd-mev-summary-grid>.pd-test-card{min-width:0;min-height:158px;padding:12px 13px}
 .pd-mev-summary-grid .pd-test-card-heading span{font-size:9px;letter-spacing:.24px}
@@ -1188,6 +1188,7 @@ tr:last-child td{border-bottom:none}
 .monitoring-shell.theme-dark .pd-placeholder-title,
 .monitoring-shell.theme-dark .pd-mev-chart-title,
 .monitoring-shell.theme-dark .pd-mev-model-copy h4,
+.monitoring-shell.theme-dark .pd-mev-model-group-heading h4,
 .monitoring-shell.theme-dark .saas-historical-dispersion-title,
 .monitoring-shell.theme-dark .pd-overview-flow-node-label,
 .monitoring-shell.theme-dark .pd-overview-flow-node-value,
@@ -1358,7 +1359,10 @@ tr:last-child td{border-bottom:none}
 .monitoring-shell.theme-dark .pd-test-footnote,
 .monitoring-shell.theme-dark .pd-performance-comparison,
 .monitoring-shell.theme-dark td,
-.monitoring-shell.theme-dark th{
+.monitoring-shell.theme-dark th,
+.monitoring-shell.theme-dark .pd-mev-model-group-heading,
+.monitoring-shell.theme-dark .pd-mev-model-group-members,
+.monitoring-shell.theme-dark .pd-mev-model-body{
   border-color:var(--dark-border);
 }
 .monitoring-shell.theme-dark .pd-domain-heading p,
