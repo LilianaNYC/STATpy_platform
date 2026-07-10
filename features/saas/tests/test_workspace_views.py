@@ -385,7 +385,8 @@ def test_model_attribute_lines_carry_full_per_model_attributes(monkeypatch):
     assert "Regions: US, EU" in texts
     assert "Model Group: PD" in texts
     assert "Portfolio: C&I" in texts
-    assert any(text.startswith("Segment: ") for text in texts)
+    # Segment is shown in the child summary heading, not as an attribute row.
+    assert not any(text.startswith("Segment") for text in texts)
     # Development Date is intentionally not shown on the cards.
     assert not any(text.startswith("Development Date") for text in texts)
 
@@ -412,8 +413,9 @@ def test_build_model_group_card_nests_children_under_one_collapsible_parent():
 
 
 def test_partition_group_attributes_rolls_shared_up_and_leaves_differences(monkeypatch):
-    # d and e share Region/Model Group but differ on Segment: Region rolls up to
-    # the parent (and is suppressed on children); Segment stays per-child.
+    # d and e share Region/Model Group: those roll up to the parent (and are
+    # suppressed on children). Segment is never rolled up -- it lives in the
+    # child summary heading -- even though d and e differ on it.
     monkeypatch.setitem(views.SAAS_PAGE_DATA, "model_segments_map", {"d": ["Cyclical"], "e": ["Defensive"]})
     monkeypatch.setitem(views.SAAS_PAGE_DATA, "model_region_map", {"d": ["US"], "e": ["US"]})
     monkeypatch.setitem(views.SAAS_PAGE_DATA, "model_group_map", {"d": ["PD"], "e": ["PD"]})
@@ -425,9 +427,9 @@ def test_partition_group_attributes_rolls_shared_up_and_leaves_differences(monke
     assert "Region: US" in [line.children for line in shared_lines]
     assert "Segment" not in shared_keys
 
-    # A singleton trivially shares every attribute it has, so they all roll up
-    # into the header (giving singleton cards the same header as multi-child ones).
+    # A singleton trivially shares its (rollable) attributes, so they roll up
+    # into the header -- but Segment is never among them.
     singleton_lines, singleton_keys = views.partition_group_attributes(["d"])
-    assert singleton_keys == frozenset({"Segment", "Region", "Model Group"})
-    assert "Segment: Cyclical" in [line.children for line in singleton_lines]
+    assert singleton_keys == frozenset({"Region", "Model Group"})
+    assert "Segment" not in singleton_keys
     assert "Region: US" in [line.children for line in singleton_lines]

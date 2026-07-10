@@ -878,16 +878,20 @@ def group_cards_into_family_rows(
     return rows
 
 
-# Per-model attribute rows, in the order they render. A model can carry several
-# distinct values for one attribute (e.g. multi-segment models), so labels
-# pluralize when there is more than one value.
-_ATTRIBUTE_ORDER = ("Segment", "Region", "Model Group", "Portfolio")
+# Per-model attribute rows, in the order they render (and are considered for
+# roll-up to the parent header). A model can carry several distinct values for
+# one attribute (e.g. multi-region models), so labels pluralize. "Segment" is
+# deliberately absent: it is shown in the child summary heading instead, so it
+# is neither rendered as an attribute row nor rolled up to the header.
+_ATTRIBUTE_ORDER = ("Region", "Model Group", "Portfolio")
 
 
 def model_attributes(model_name: str) -> dict[str, list[str]]:
-    """Ordered ``attribute -> display values`` for a model. Attributes with no
-    value are omitted. Keys follow :data:`_ATTRIBUTE_ORDER`; segment values are
-    already run through :func:`layout.format_segment_label`."""
+    """``attribute -> display values`` for a model. Attributes with no value are
+    omitted. Includes a "Segment" key (used by the child summary heading);
+    :data:`_ATTRIBUTE_ORDER` governs which keys render as rows / roll up, and it
+    excludes Segment. Segment values are run through
+    :func:`layout.format_segment_label`."""
     attributes: dict[str, list[str]] = {}
 
     segments = SAAS_PAGE_DATA.get("model_segments_map", {}).get(model_name)
