@@ -244,6 +244,14 @@ def test_build_model_panel_defaults_family_picker_to_all(monkeypatch):
     grid = _find_component_by_id(panel, {"type": page.MODEL_MEV_GRID_TYPE, "model": "Model A"})
     assert grid is not None
 
+    # The summary shows the segment; the Model Name (its GMIS name) is in the
+    # info-chip tooltip, not the visible heading.
+    kicker = panel.children[0].children[0].children[0].children
+    heading_text, info_chip = kicker[0], kicker[1]
+    assert heading_text.startswith("1. ")
+    assert "Model A" not in heading_text
+    assert info_chip.title == "GMIS Name: Model A"
+
 
 def test_build_model_chart_cards_returns_empty_mev_card_without_figure_builder():
     def fail_if_called(*_args, **_kwargs):

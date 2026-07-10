@@ -1050,6 +1050,11 @@ def build_model_panel(
     date_periods = records.available_date_periods(visible_records)
     selected_run_fors = selectors.normalize_selected_run_fors(run_for)
     attribute_lines = model_attribute_lines(model_name, skip=suppress_attributes)
+    # The child summary shows the model's segment(s); the underlying Model Name
+    # (its GMIS name) moves into the info-chip tooltip.
+    segment_labels = model_attributes(model_name).get("Segment", [])
+    summary_heading = ", ".join(segment_labels) if segment_labels else model_name
+    gmis_tooltip = f"GMIS Name: {model_name}"
     chart_cards = build_model_chart_cards(
         model_name,
         visible_records,
@@ -1085,13 +1090,13 @@ def build_model_panel(
                         children=[
                             html.Div(
                                 [
-                                    f"{panel_index}. {model_name}",
+                                    f"{panel_index}. {summary_heading}",
                                     html.Span(
                                         "i",
                                         className="pd-info-chip",
-                                        title="This is the model name used in the GMIS system.",
+                                        title=gmis_tooltip,
                                         style={"marginLeft": "6px", "textTransform": "none", "verticalAlign": "middle"},
-                                        **{"aria-label": "This is the model name used in the GMIS system."},
+                                        **{"aria-label": gmis_tooltip},
                                     ),
                                 ],
                                 className="pd-content-kicker",
