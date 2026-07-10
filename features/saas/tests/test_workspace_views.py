@@ -394,7 +394,7 @@ def test_build_model_group_card_nests_children_under_one_collapsible_parent():
 
     texts = _text_nodes(card)
     assert "PD Model D" in texts          # parent label rendered once
-    assert "1. Parent Model" in texts     # numbered parent kicker
+    assert "1. Model" in texts            # numbered parent kicker
     assert "2 models" in texts            # member count shown for multi-child parents
     assert "Region: US" in texts          # shared attribute rolled up into the header
 

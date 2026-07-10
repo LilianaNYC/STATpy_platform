@@ -978,7 +978,7 @@ def build_model_group_card(
     every child are rolled up into the header; the card is a native
     ``<details>`` so it can be collapsed, and the subnav opens it on navigation."""
     summary_children = [
-        html.Div(f"{group_index}. Parent Model", className="pd-content-kicker"),
+        html.Div(f"{group_index}. Model", className="pd-content-kicker"),
         html.H4(parent_label),
     ]
     if len(member_panels) > 1:
