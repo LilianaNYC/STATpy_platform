@@ -633,21 +633,26 @@ def build_subnav_models(segment: str | None, selected_models, *, region: str | N
             ),
         ]
 
-    effective_models = selectors.effective_model_names(segment, selected_models, region=region, model_group=model_group, portfolio=portfolio)
+    groups = selectors.group_effective_models(
+        segment, selected_models, region=region, model_group=model_group, portfolio=portfolio
+    )
 
-    if not effective_models:
+    if not groups:
         return "Models in Scope", []
 
+    # One chip per parent Descriptive Name (not per child Model Name), scrolling
+    # to the parent card. Two Model Names sharing a descriptive name would
+    # otherwise surface as two identical-looking chips.
     return "Models in Scope", [
         html.Div(
             [
                 html.Button(
-                    selectors.model_descriptive_label(model_name),
+                    parent_label,
                     type="button",
                     className="saas-subnav-model-chip",
-                    **{"data-saas-scroll-target": model_panel_id(model_name)},
+                    **{"data-saas-scroll-target": model_group_id(parent_label)},
                 )
-                for model_name in effective_models
+                for parent_label, _member_models in groups
             ],
             className="saas-subnav-model-list",
         ),
@@ -873,58 +878,123 @@ def group_cards_into_family_rows(
     return rows
 
 
-def model_attribute_lines(model_name: str, selected_run_fors: list[str]):
-    """Full per-model attribute rows shown inside a parent card's child block:
-    Segment(s), Region(s), Model Group(s), Portfolio(s) and the Development Date
-    for the primary Model Use Case / Cycle. A model can carry several distinct
-    values for each attribute (e.g. multi-segment models), so labels pluralize."""
-    lines = []
+# Per-model attribute rows, in the order they render. A model can carry several
+# distinct values for one attribute (e.g. multi-segment models), so labels
+# pluralize when there is more than one value.
+_ATTRIBUTE_ORDER = ("Segment", "Region", "Model Group", "Portfolio", "Development Date")
 
-    def _attribute_line(singular: str, values, formatter=lambda value: value):
-        cleaned = [formatter(value) for value in (values or []) if value]
-        if not cleaned:
-            return
-        label = singular if len(cleaned) == 1 else f"{singular}s"
-        lines.append(html.P(f"{label}: {', '.join(cleaned)}", className="pd-mev-model-attr"))
+
+def model_attributes(model_name: str, selected_run_fors: list[str]) -> dict[str, list[str]]:
+    """Ordered ``attribute -> display values`` for a model. Attributes with no
+    value are omitted. Keys follow :data:`_ATTRIBUTE_ORDER`; segment values are
+    already run through :func:`layout.format_segment_label`."""
+    attributes: dict[str, list[str]] = {}
 
     segments = SAAS_PAGE_DATA.get("model_segments_map", {}).get(model_name)
     if not segments:
         fallback = SAAS_PAGE_DATA.get("model_segments", {}).get(model_name)
         segments = [fallback] if fallback else []
-    _attribute_line("Segment", segments, layout.format_segment_label)
-    _attribute_line("Region", SAAS_PAGE_DATA.get("model_region_map", {}).get(model_name))
-    _attribute_line("Model Group", SAAS_PAGE_DATA.get("model_group_map", {}).get(model_name))
-    _attribute_line("Portfolio", SAAS_PAGE_DATA.get("model_portfolio_map", {}).get(model_name))
+    segment_values = [layout.format_segment_label(value) for value in segments if value]
+    if segment_values:
+        attributes["Segment"] = segment_values
+
+    for key, map_key in (
+        ("Region", "model_region_map"),
+        ("Model Group", "model_group_map"),
+        ("Portfolio", "model_portfolio_map"),
+    ):
+        values = [value for value in (SAAS_PAGE_DATA.get(map_key, {}).get(model_name) or []) if value]
+        if values:
+            attributes[key] = values
 
     primary_run_for = selected_run_fors[0] if selected_run_fors else None
     development_date = selectors.model_development_date(model_name, primary_run_for)
     if development_date is not None:
-        lines.append(
-            html.P(
-                f"Development Date: {format_monitoring_date(development_date)}",
-                className="pd-mev-model-attr",
-            )
-        )
-    return lines
+        attributes["Development Date"] = [format_monitoring_date(development_date)]
+
+    return attributes
 
 
-def build_model_group_card(group_index: int, parent_label: str, member_panels: list):
-    """One card per parent Descriptive Name, with every in-scope child model
-    panel nested inside. Two Model Names sharing a descriptive name (see
-    selectors.group_effective_models) render as sibling children of one card
-    instead of two visually-identical top-level panels."""
-    heading_children = [
+def _attribute_line(singular: str, values: list[str]):
+    label = singular if len(values) == 1 else f"{singular}s"
+    return html.P(f"{label}: {', '.join(values)}", className="pd-mev-model-attr")
+
+
+def render_attribute_lines(attributes: dict[str, list[str]], *, skip=()) -> list:
+    """Render an ordered attribute map to ``html.P`` rows, dropping the keys in
+    ``skip`` (used to suppress attributes already shown once on the parent card)."""
+    return [
+        _attribute_line(key, attributes[key])
+        for key in _ATTRIBUTE_ORDER
+        if key in attributes and key not in skip
+    ]
+
+
+def model_attribute_lines(model_name: str, selected_run_fors: list[str], *, skip=()) -> list:
+    """Full per-model attribute rows shown inside a parent card's child block."""
+    return render_attribute_lines(model_attributes(model_name, selected_run_fors), skip=skip)
+
+
+def partition_group_attributes(member_names: list[str], selected_run_fors: list[str]):
+    """Split a parent's attributes into the ones shared by every child and the
+    ones that differ. Returns ``(shared_lines, shared_keys)``: an attribute is
+    shared iff every member carries the identical value list for it, in which
+    case it renders once on the parent card and is suppressed on each child.
+
+    Singletons return ``([], frozenset())`` -- with one child there is nothing to
+    roll up, so the lone model keeps its attributes in its own block.
+    """
+    if len(member_names) < 2:
+        return [], frozenset()
+
+    per_member = {name: model_attributes(name, selected_run_fors) for name in member_names}
+    shared_lines: list = []
+    shared_keys: set[str] = set()
+    for key in _ATTRIBUTE_ORDER:
+        values_seen = {tuple(per_member[name].get(key, ())) for name in member_names}
+        common = next(iter(values_seen))
+        if len(values_seen) == 1 and common:
+            shared_lines.append(_attribute_line(key, list(common)))
+            shared_keys.add(key)
+    return shared_lines, frozenset(shared_keys)
+
+
+def model_group_id(parent_label: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", parent_label.strip().lower()).strip("-")
+    return f"saas-model-group-{slug}"
+
+
+def build_model_group_card(
+    group_index: int,
+    parent_label: str,
+    member_panels: list,
+    *,
+    shared_attribute_lines: list | None = None,
+):
+    """One collapsible card per parent Descriptive Name, with every in-scope
+    child model panel nested inside. Two Model Names sharing a descriptive name
+    (see selectors.group_effective_models) render as sibling children of one card
+    instead of two visually-identical top-level panels. Attributes common to
+    every child are rolled up into the header; the card is a native
+    ``<details>`` so it can be collapsed, and the subnav opens it on navigation."""
+    summary_children = [
         html.Div(f"{group_index}. Parent Model", className="pd-content-kicker"),
         html.H4(parent_label),
     ]
     if len(member_panels) > 1:
-        heading_children.append(
+        summary_children.append(
             html.P(f"{len(member_panels)} models", className="pd-mev-model-group-count")
         )
-    return html.Div(
+    if shared_attribute_lines:
+        summary_children.append(
+            html.Div(shared_attribute_lines, className="pd-mev-model-group-shared")
+        )
+    return html.Details(
+        id=model_group_id(parent_label),
         className="section-card pd-mev-model-group",
+        open=True,
         children=[
-            html.Div(className="pd-mev-model-group-heading", children=heading_children),
+            html.Summary(summary_children, className="pd-mev-model-group-heading"),
             html.Div(className="pd-mev-model-group-members", children=member_panels),
         ],
     )
@@ -943,6 +1013,7 @@ def build_model_panel(
     figure_builder,
     show_historical_statistics=False,
     theme_value: str | None = None,
+    suppress_attributes=(),
 ):
     snapshot_period_value = selectors.normalize_snapshot_period(snapshot_period)
     visible_records = records.filter_records_by_snapshot_period(records_, snapshot_period_value)
@@ -979,7 +1050,7 @@ def build_model_panel(
     )
     date_periods = records.available_date_periods(visible_records)
     selected_run_fors = selectors.normalize_selected_run_fors(run_for)
-    attribute_lines = model_attribute_lines(model_name, selected_run_fors)
+    attribute_lines = model_attribute_lines(model_name, selected_run_fors, skip=suppress_attributes)
     chart_cards = build_model_chart_cards(
         model_name,
         visible_records,

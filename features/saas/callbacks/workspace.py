@@ -1249,6 +1249,9 @@ def _register_render_callbacks(app) -> None:
             _group_effective_models(segment, selected_models, region=region, model_group=model_group, portfolio=portfolio),
             start=1,
         ):
+            shared_attribute_lines, shared_attribute_keys = views.partition_group_attributes(
+                member_models, selected_run_fors
+            )
             member_panels = []
             for model_name in member_models:
                 panel_index += 1
@@ -1266,9 +1269,17 @@ def _register_render_callbacks(app) -> None:
                         figure_builder=figures.build_model_figure,
                         show_historical_statistics=show_historical_statistics,
                         theme_value=theme_value,
+                        suppress_attributes=shared_attribute_keys,
                     )
                 )
-            panels.append(views.build_model_group_card(group_index, parent_label, member_panels))
+            panels.append(
+                views.build_model_group_card(
+                    group_index,
+                    parent_label,
+                    member_panels,
+                    shared_attribute_lines=shared_attribute_lines,
+                )
+            )
 
         return panels or _build_empty_state(
             "No MEV charts match the current filters",

@@ -66,16 +66,28 @@ def test_model_panel_id_creates_stable_anchor():
     assert views.model_panel_id("Model A / B") == "saas-model-panel-model-a-b"
 
 
-def test_build_subnav_models_uses_model_panel_anchor(monkeypatch):
-    monkeypatch.setattr(views.selectors, "effective_model_names", lambda _segment, _selected, **_kwargs: ["Model A"])
-    monkeypatch.setattr(views.selectors, "model_descriptive_label", lambda model_name: f"Label {model_name}")
+def test_model_group_id_creates_stable_anchor():
+    assert views.model_group_id("PD Model D") == "saas-model-group-pd-model-d"
+
+
+def test_build_subnav_models_emits_one_chip_per_parent(monkeypatch):
+    # Two Model Names sharing a Descriptive Name -> a single parent chip that
+    # scrolls to the parent card, not two identical-looking child chips.
+    monkeypatch.setattr(
+        views.selectors,
+        "group_effective_models",
+        lambda _segment, _selected, **_kwargs: [
+            ("PD Model D", ["PD_model_d", "PD_model_e"]),
+            ("PD Model A", ["PD_model_a"]),
+        ],
+    )
 
     label, subnav_children = views.build_subnav_models(None, None)
-    button = subnav_children[0].children[0]
+    buttons = subnav_children[0].children
 
     assert label == "Models in Scope"
-    assert button.children == "Label Model A"
-    assert button.__dict__["data-saas-scroll-target"] == "saas-model-panel-model-a"
+    assert [button.children for button in buttons] == ["PD Model D", "PD Model A"]
+    assert buttons[0].__dict__["data-saas-scroll-target"] == "saas-model-group-pd-model-d"
 
 
 def test_scenario_dropdown_uses_single_select_ids():
@@ -360,15 +372,40 @@ def test_model_attribute_lines_carry_full_per_model_attributes(monkeypatch):
     assert any(text.startswith("Development Date: ") for text in texts)
 
 
-def test_build_model_group_card_nests_children_under_one_parent_header():
+def test_build_model_group_card_nests_children_under_one_collapsible_parent():
     members = [views.html.Div("child-a"), views.html.Div("child-b")]
-    card = views.build_model_group_card(1, "PD Model D", members)
+    shared = [views.html.P("Region: US", className="pd-mev-model-attr")]
+    card = views.build_model_group_card(1, "PD Model D", members, shared_attribute_lines=shared)
+
+    # Collapsible <details>, open by default, anchored for the subnav.
+    assert card.id == "saas-model-group-pd-model-d"
+    assert card.open is True
 
     texts = _text_nodes(card)
     assert "PD Model D" in texts          # parent label rendered once
     assert "1. Parent Model" in texts     # numbered parent kicker
     assert "2 models" in texts            # member count shown for multi-child parents
+    assert "Region: US" in texts          # shared attribute rolled up into the header
 
     member_container = card.children[-1]
     assert member_container.className == "pd-mev-model-group-members"
     assert member_container.children == members
+
+
+def test_partition_group_attributes_rolls_shared_up_and_leaves_differences(monkeypatch):
+    # d and e share Region/Model Group but differ on Segment: Region rolls up to
+    # the parent (and is suppressed on children); Segment stays per-child.
+    monkeypatch.setitem(views.SAAS_PAGE_DATA, "model_segments_map", {"d": ["Cyclical"], "e": ["Defensive"]})
+    monkeypatch.setitem(views.SAAS_PAGE_DATA, "model_region_map", {"d": ["US"], "e": ["US"]})
+    monkeypatch.setitem(views.SAAS_PAGE_DATA, "model_group_map", {"d": ["PD"], "e": ["PD"]})
+    monkeypatch.setitem(views.SAAS_PAGE_DATA, "model_portfolio_map", {})
+    monkeypatch.setattr(views.selectors, "model_development_date", lambda *_args: None)
+
+    shared_lines, shared_keys = views.partition_group_attributes(["d", "e"], ["Cycle A"])
+
+    assert shared_keys == frozenset({"Region", "Model Group"})
+    assert "Region: US" in [line.children for line in shared_lines]
+    assert "Segment" not in shared_keys
+
+    # A singleton has nothing to roll up.
+    assert views.partition_group_attributes(["d"], ["Cycle A"]) == ([], frozenset())

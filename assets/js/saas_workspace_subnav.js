@@ -12,6 +12,9 @@
     var target = document.getElementById(targetId);
     var scrollContainer = getScrollContainer();
     if (!target || !scrollContainer) return;
+    // Parent cards are collapsible <details>; expand before scrolling so the
+    // navigated-to model is actually visible.
+    if (target.tagName === "DETAILS") target.open = true;
     var contentRect = scrollContainer.getBoundingClientRect();
     var targetRect = target.getBoundingClientRect();
     var top = scrollContainer.scrollTop + targetRect.top - contentRect.top - 10;
