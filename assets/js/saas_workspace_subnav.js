@@ -94,6 +94,11 @@
     if (btn.style.display !== display) {
       btn.style.display = display;
     }
+    // The global zoom tip above the panel stack follows the same visibility.
+    var zoomNote = document.querySelector(".saas-zoom-note");
+    if (zoomNote && zoomNote.style.display !== display) {
+      zoomNote.style.display = display;
+    }
     var anyOpen = Array.prototype.some.call(panels, function (panel) {
       return panel.open;
     });

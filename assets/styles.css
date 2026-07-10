@@ -111,7 +111,8 @@ body{background:#f8fafc;overflow:hidden}
 .saas-download-item-format{grid-area:format;align-self:center;justify-self:end;padding:4px 7px;border:1px solid var(--border);border-radius:999px;background:#f8fafc;color:var(--text-muted);font-size:9px;font-weight:800;letter-spacing:.3px;text-transform:uppercase;white-space:nowrap}
 .saas-download-compare-note{margin:5px 4px 2px;padding:7px 9px;border-left:3px solid #cbd5e1;border-radius:6px;background:#f8fafc;color:var(--text-muted);font-size:10.5px;line-height:1.4}
 .saas-download-compare-note.is-hidden{display:none}
-.saas-zoom-note{margin:8px 2px 0;font-style:italic}
+/* Global zoom tip above the model panel stack (shown once, not per panel). */
+.saas-zoom-note{margin:0 2px 8px;justify-content:flex-end;font-style:italic}
 .saas-modal-overlay{position:fixed;inset:0;background:rgba(15,23,42,.45);display:none;align-items:center;justify-content:center;z-index:1000}
 .saas-modal-overlay.is-open{display:flex}
 .saas-modal{background:#fff;border-radius:12px;padding:22px 24px;width:380px;max-width:92vw;box-shadow:0 18px 48px rgba(15,23,42,.28)}

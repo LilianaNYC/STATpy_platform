@@ -1026,6 +1026,14 @@ def _build_chart_canvas() -> html.Section:
                     "The Scenario Analysis as a Service (SAAS) dashboard is a self-service tool for reviewing the macro-economic variables (MEVs) that drive credit risk models under stress scenarios, across model use case / cycles. By bringing each MEV's history and forward projections together, it helps users understand the drivers behind the models and sense-check the scenario projections.",
                 ],
             ),
+            # One global zoom tip above the panel stack (instead of repeating it
+            # inside every model panel). Hidden until charts are rendered; the
+            # client JS shows it alongside the expand-all button.
+            html.Div(
+                "Tip: drag on a chart to zoom in; double-click the chart to return to the original view.",
+                className="pd-mev-chart-meta saas-zoom-note",
+                style={"display": "none"},
+            ),
             html.Div(
                 id=MEV_MODEL_PANELS_ID,
                 className="saas-model-panel-stack",

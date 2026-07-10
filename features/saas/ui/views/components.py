@@ -1147,10 +1147,6 @@ def build_model_panel(
                             ),
                         ],
                     ),
-                    html.Div(
-                        "Tip: drag on a chart to zoom in; double-click the chart to return to the original view.",
-                        className="pd-mev-chart-meta saas-zoom-note",
-                    ),
                     html.Button(
                         id={"type": layout.MODEL_CHART_TRIGGER_TYPE, "model": model_name},
                         className="saas-chart-trigger",
