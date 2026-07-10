@@ -30,6 +30,13 @@ def _find_component_by_id(node, component_id):
     return None
 
 
+def _collect_by_type(node, type_name, hits):
+    if type(node).__name__ == type_name:
+        hits.append(node)
+    for child in _children_of(node):
+        _collect_by_type(child, type_name, hits)
+
+
 def test_single_select_option_classes_marks_selected_value():
     option_ids = [{"value": "a"}, {"value": "b"}]
 
@@ -250,15 +257,21 @@ def test_build_model_panel_defaults_family_picker_to_all(monkeypatch):
     assert family_picker is not None
     assert family_picker.value == views.records.FAMILY_ALL_VALUE
 
-    # Child panel is a collapsible <details>, collapsed on first render; the
-    # charts live in its body so they stay in the DOM (MATCH callbacks keep
-    # firing) while hidden.
+    # Child panel is a collapsible <details>, collapsed on first render.
     assert type(panel).__name__ == "Details"
     assert panel.open is False
     body = panel.children[-1]
     assert body.className == "pd-mev-model-body"
     grid = _find_component_by_id(panel, {"type": page.MODEL_MEV_GRID_TYPE, "model": "Model A"})
     assert grid is not None
+
+    # Charts are deferred: no dcc.Graph is rendered up front, and a hidden
+    # chart-trigger button is present for the client to click on first open.
+    graphs = []
+    _collect_by_type(panel, "Graph", graphs)
+    assert graphs == []
+    trigger = _find_component_by_id(panel, {"type": page.MODEL_CHART_TRIGGER_TYPE, "model": "Model A"})
+    assert trigger is not None
 
     # The summary shows the segment; the Model Name (its GMIS name) is in the
     # info-chip tooltip, not the visible heading.

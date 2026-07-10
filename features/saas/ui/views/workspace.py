@@ -149,6 +149,9 @@ MODEL_MEV_SINGLE_OPTION_TYPE = "saas-model-mev-single-option"
 MODEL_MEV_MULTI_SECTION_TYPE = "saas-model-mev-multi-section"
 MODEL_MEV_GRID_TYPE = "saas-model-mev-grid"
 MODEL_DATE_RANGE_CONTROLS_TYPE = "saas-model-date-range-controls"
+# Hidden per-model button the client clicks the first time a (collapsed) child
+# panel is opened, so its charts are built lazily instead of all up front.
+MODEL_CHART_TRIGGER_TYPE = "saas-model-chart-trigger"
 MODEL_DATE_RANGE_WINDOW_TYPE = "saas-model-date-range-window"
 MODEL_DATE_RANGE_FROM_TYPE = "saas-model-date-range-from"
 MODEL_DATE_RANGE_TO_TYPE = "saas-model-date-range-to"

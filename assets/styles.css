@@ -435,6 +435,8 @@ tr:last-child td{border-bottom:none}
 .pd-mev-model-group-count{margin:3px 0 0;font-size:12px;font-weight:600;color:var(--muted,#64748b)}
 .pd-mev-model-group-shared{margin-top:6px;display:flex;flex-wrap:wrap;gap:4px 16px}
 .pd-mev-model-group-shared .pd-mev-model-attr{margin:0}
+/* Lazy-loaded charts show this until the panel's charts are built on first open. */
+.saas-chart-placeholder{padding:24px 8px;text-align:center;color:var(--text-muted);font-style:italic}
 /* Expand/collapse-all-charts control above the model panel stack. */
 .saas-panels-toolbar{display:flex;justify-content:flex-end;margin-bottom:12px}
 .saas-expand-all-btn{min-height:32px;padding:6px 14px;border-radius:999px;border:1px solid var(--border);background:rgba(255,255,255,.98);color:var(--text);font-size:12px;font-weight:700;cursor:pointer;transition:background .15s,border-color .15s,color .15s,transform .15s}

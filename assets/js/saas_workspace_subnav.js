@@ -38,7 +38,19 @@
       var el = evt.target;
       if (!el || el.tagName !== "DETAILS") return;
       if (el.open) scheduleResize();
-      if (el.classList.contains("pd-mev-model-panel")) scheduleRefreshButton();
+      if (el.classList.contains("pd-mev-model-panel")) {
+        scheduleRefreshButton();
+        // Lazy-load this panel's charts the first time it opens: click the
+        // hidden trigger so the server builds them (they aren't rendered up
+        // front). Once loaded, later opens reuse the built charts.
+        if (el.open && el.dataset.saasChartsLoaded !== "true") {
+          var trigger = el.querySelector(".saas-chart-trigger");
+          if (trigger) {
+            el.dataset.saasChartsLoaded = "true";
+            trigger.click();
+          }
+        }
+      }
     },
     true
   );

@@ -1044,22 +1044,14 @@ def build_model_panel(
     segment_labels = model_attributes(model_name).get("Segment", [])
     summary_heading = ", ".join(segment_labels) if segment_labels else model_name
     gmis_tooltip = f"GMIS Name: {model_name}"
-    chart_cards = build_model_chart_cards(
-        model_name,
-        visible_records,
-        records_,
-        default_model_mev_mode,
-        default_model_scenarios,
-        snapshot_period_value,
-        mev_label_mode,
-        None,
-        reference_lines,
-        default_display_mevs,
-        figure_builder=figure_builder,
-        primary_run_for=selected_run_fors[0] if selected_run_fors else None,
-        show_historical_statistics=show_historical_statistics,
-        theme_value=theme_value,
-    )
+    # Charts are built lazily the first time this (collapsed-by-default) panel is
+    # opened -- see the MODEL_CHART_TRIGGER_TYPE callback. Rendering every model's
+    # charts up front draws dozens of hidden Plotly figures at once and freezes
+    # the page, so the grid starts as a placeholder and a hidden trigger button
+    # (clicked by the client on first open) asks the server to build them.
+    chart_cards = [
+        html.Div("Loading charts…", className="pd-mev-chart-meta saas-chart-placeholder"),
+    ]
 
     # Collapsible child panel: the summary is the model's identity (so a
     # collapsed parent card shows a waterfall of just its child Model Names),
@@ -1158,6 +1150,13 @@ def build_model_panel(
                     html.Div(
                         "Tip: drag on a chart to zoom in; double-click the chart to return to the original view.",
                         className="pd-mev-chart-meta saas-zoom-note",
+                    ),
+                    html.Button(
+                        id={"type": layout.MODEL_CHART_TRIGGER_TYPE, "model": model_name},
+                        className="saas-chart-trigger",
+                        style={"display": "none"},
+                        n_clicks=0,
+                        **{"aria-hidden": "true", "tabIndex": -1},
                     ),
                     html.Div(
                         id={"type": layout.MODEL_MEV_GRID_TYPE, "model": model_name},

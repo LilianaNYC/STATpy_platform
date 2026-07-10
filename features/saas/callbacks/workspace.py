@@ -1295,11 +1295,19 @@ def _register_render_callbacks(app) -> None:
         Input({"type": layout.MODEL_DATE_RANGE_FROM_TYPE, "model": MATCH}, "value"),
         Input({"type": layout.MODEL_DATE_RANGE_TO_TYPE, "model": MATCH}, "value"),
         Input(theme.APP_THEME_ID, "value"),
+        Input({"type": layout.MODEL_CHART_TRIGGER_TYPE, "model": MATCH}, "n_clicks"),
         State({"type": layout.MODEL_MEV_GRID_TYPE, "model": MATCH}, "id"),
         State(layout.APPLIED_FILTERS_STORE_ID, "data"),
         prevent_initial_call=True,
     )
-    def update_model_mev_chart_controls(selected_mev_mode, selected_scenario, selected_mevs_multi, selected_mev_single, window_value, from_value, to_value, theme_value, model_grid_id, applied):
+    def update_model_mev_chart_controls(selected_mev_mode, selected_scenario, selected_mevs_multi, selected_mev_single, window_value, from_value, to_value, theme_value, chart_trigger, model_grid_id, applied):
+        # Lazy render: charts are only built once the panel has been opened at
+        # least once (the client clicks the hidden MODEL_CHART_TRIGGER_TYPE button
+        # on first open). Until then this callback -- which also fires when the
+        # dropdowns mount and when sync sets their values -- must not build the
+        # dozens of hidden charts that froze the page.
+        if not chart_trigger:
+            return no_update, no_update
         model_name = (
             ctx.triggered_id.get("model")
             if isinstance(ctx.triggered_id, dict)
