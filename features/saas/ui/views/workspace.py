@@ -639,16 +639,10 @@ def _build_top_bar() -> html.Div:
                                 value=DEFAULT_MEV_LABEL_MODE,
                                 min_width="220px",
                             ),
-                            _build_inline_segmented_filter(
-                                "Historical Statistics",
-                                filter_id=HISTORICAL_STATS_FILTER_ID,
-                                value_id=HISTORICAL_STATS_ID,
-                                filter_key=HISTORICAL_STATS_FILTER_KEY,
-                                options=HISTORICAL_STATS_OPTIONS,
-                                value=DEFAULT_HISTORICAL_STATS_VALUE,
-                                min_width="220px",
-                                wrapper_class_name="monitoring-filter saas-historical-stats-filter is-hidden",
-                            ),
+                            # Keep the expand-all button BEFORE the (toggleable)
+                            # Historical Statistics filter: the row is a grid, so
+                            # anything after that filter shifts a cell when Snapshot
+                            # Period = History un-hides it -- the button must not move.
                             html.Div(
                                 className="monitoring-filter saas-top-filter-action saas-expand-all-filter",
                                 children=[
@@ -671,6 +665,16 @@ def _build_top_bar() -> html.Div:
                                         ],
                                     ),
                                 ],
+                            ),
+                            _build_inline_segmented_filter(
+                                "Historical Statistics",
+                                filter_id=HISTORICAL_STATS_FILTER_ID,
+                                value_id=HISTORICAL_STATS_ID,
+                                filter_key=HISTORICAL_STATS_FILTER_KEY,
+                                options=HISTORICAL_STATS_OPTIONS,
+                                value=DEFAULT_HISTORICAL_STATS_VALUE,
+                                min_width="220px",
+                                wrapper_class_name="monitoring-filter saas-historical-stats-filter is-hidden",
                             ),
                         ],
                     ),
