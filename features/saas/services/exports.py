@@ -135,15 +135,53 @@ def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
         for group in groups
         for model in (group.get("models") or [])
     )
+    all_child_names = [
+        model.get("model_name")
+        for group in groups
+        for model in (group.get("models") or [])
+        if model.get("model_name")
+    ]
+    segments_map = SAAS_PAGE_DATA.get("model_segments_map", {})
+    unique_segments = {
+        segment
+        for name in all_child_names
+        for segment in (segments_map.get(name) or [])
+        if segment
+    }
+    # Parent-model counts per Model Group, in the canonical taxonomy order. A
+    # parent counts under every group its children belong to.
+    group_map = SAAS_PAGE_DATA.get("model_group_map", {})
+    parents_by_group: dict[str, set] = {}
+    for group in groups:
+        parent_label = group.get("parent_label") or "Model"
+        for model in group.get("models") or []:
+            for model_group in group_map.get(model.get("model_name"), []) or []:
+                parents_by_group.setdefault(model_group, set()).add(parent_label)
+    canonical_groups = ["PD", "EAD", "LGD", "Loss"]
+    breakdown_labels = canonical_groups + sorted(
+        set(parents_by_group) - set(canonical_groups)
+    )
+
+    def _stat(value, label) -> str:
+        return (
+            f'<div class="saas-report-stat"><div class="saas-report-stat-value">{value}</div>'
+            f'<div class="saas-report-stat-label">{html_escape(str(label))}</div></div>'
+        )
+
     stats_html = (
         '<div class="saas-report-stats">'
-        f'<div class="saas-report-stat"><div class="saas-report-stat-value">{parent_count}</div>'
-        f'<div class="saas-report-stat-label">Model{"s" if parent_count != 1 else ""}</div></div>'
-        f'<div class="saas-report-stat"><div class="saas-report-stat-value">{model_count}</div>'
-        f'<div class="saas-report-stat-label">GMIS model{"s" if model_count != 1 else ""}</div></div>'
-        f'<div class="saas-report-stat"><div class="saas-report-stat-value">{chart_count}</div>'
-        f'<div class="saas-report-stat-label">Chart{"s" if chart_count != 1 else ""}</div></div>'
-        "</div>"
+        + _stat(parent_count, f"Model{'s' if parent_count != 1 else ''}")
+        + _stat(len(unique_segments), f"Segment{'s' if len(unique_segments) != 1 else ''}")
+        + _stat(model_count, f"Use case{'s' if model_count != 1 else ''}")
+        + _stat(chart_count, f"Chart{'s' if chart_count != 1 else ''}")
+        + "</div>"
+        + '<div class="saas-report-cover-heading">Models by group</div>'
+        + '<div class="saas-report-stats">'
+        + "".join(
+            _stat(len(parents_by_group.get(label, ())), f"{label} model{'s' if len(parents_by_group.get(label, ())) != 1 else ''}")
+            for label in breakdown_labels
+        )
+        + "</div>"
     )
     cover = (
         '<header class="saas-report-cover">'
@@ -164,8 +202,48 @@ def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
         + "</header>"
     )
 
+    # Page 2: model-structure tree -- Model Group -> parent model -> use case
+    # (segment + GMIS name), mirroring the workspace card hierarchy.
+    tree_columns: list[str] = []
+    for group_label in breakdown_labels:
+        parent_names = parents_by_group.get(group_label)
+        if not parent_names:
+            continue
+        parent_items: list[str] = []
+        for group in groups:
+            parent_label = group.get("parent_label") or "Model"
+            if parent_label not in parent_names:
+                continue
+            child_items = "".join(
+                "<li>"
+                f'<span class="saas-report-tree-segment">{html_escape(model.get("segment_label") or model.get("model_name") or "")}</span>'
+                f'<span class="saas-report-tree-gmis">{html_escape(model.get("model_name") or "")}</span>'
+                "</li>"
+                for model in group.get("models") or []
+                if group_label in {
+                    g for name in [model.get("model_name")] for g in (group_map.get(name) or [])
+                }
+            )
+            parent_items.append(
+                f'<li><span class="saas-report-tree-parent">{html_escape(parent_label)}</span>'
+                f"<ul>{child_items}</ul></li>"
+            )
+        tree_columns.append(
+            '<div class="saas-report-tree-group">'
+            f'<div class="saas-report-tree-root">{html_escape(group_label)}</div>'
+            f'<ul>{"".join(parent_items)}</ul></div>'
+        )
+    tree_page = (
+        '<section class="saas-report-tree-page">'
+        '<div class="saas-report-cover-heading">Model structure</div>'
+        '<p class="saas-report-tree-note">Model group &rarr; model &rarr; use case (segment, with its GMIS model name).</p>'
+        f'<div class="saas-report-tree">{"".join(tree_columns)}</div></section>'
+        if tree_columns
+        else ""
+    )
+
     if group_blocks:
-        body = cover + "\n".join(group_blocks)
+        body = cover + tree_page + "\n".join(group_blocks)
     else:
         body = cover + "<p>No charts match the current filters.</p>"
 
@@ -191,6 +269,18 @@ def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
   .saas-report-stat {{ min-width: 110px; padding: 10px 16px; border: 1px solid #dbe4f0; border-radius: 10px; }}
   .saas-report-stat-value {{ font-size: 22px; font-weight: 800; color: #0f1d35; line-height: 1.1; }}
   .saas-report-stat-label {{ font-size: 11px; color: #52606d; margin-top: 2px; }}
+  /* --- Model structure tree (page 2) --- */
+  .saas-report-tree-page {{ margin: 28px 0; }}
+  .saas-report-tree-note {{ font-size: 12.5px; color: #52606d; margin: 0 0 14px; }}
+  .saas-report-tree {{ display: flex; flex-wrap: wrap; gap: 20px 48px; align-items: flex-start; }}
+  .saas-report-tree-root {{ display: inline-block; font-size: 12px; font-weight: 800; letter-spacing: .6px; text-transform: uppercase; color: #2563eb; border: 1.5px solid #2563eb; border-radius: 999px; padding: 4px 14px; margin-bottom: 4px; }}
+  .saas-report-tree ul {{ list-style: none; margin: 0; padding-left: 18px; }}
+  .saas-report-tree li {{ position: relative; padding: 5px 0 0 14px; border-left: 1.5px solid #c3d2e8; }}
+  .saas-report-tree li:last-child {{ border-left-color: transparent; }}
+  .saas-report-tree li::before {{ content: ""; position: absolute; left: -1.5px; top: 0; height: 17px; width: 14px; border-left: 1.5px solid #c3d2e8; border-bottom: 1.5px solid #c3d2e8; border-bottom-left-radius: 6px; }}
+  .saas-report-tree-parent {{ font-size: 13.5px; font-weight: 700; color: #0f1d35; }}
+  .saas-report-tree-segment {{ font-size: 12.5px; font-weight: 600; color: #1f2933; }}
+  .saas-report-tree-gmis {{ font-size: 11.5px; color: #829ab1; margin-left: 8px; }}
   .saas-report-toc {{ margin: 0 0 24px; padding: 12px 16px; border: 1px solid #dbe4f0; border-radius: 10px; background: #f8fbff; }}
   .saas-report-toc ol {{ margin: 0; padding-left: 20px; font-size: 13px; columns: 2; column-gap: 40px; }}
   .saas-report-toc li {{ break-inside: avoid; margin-bottom: 3px; }}
@@ -211,6 +301,7 @@ def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
   @media print {{
     @page {{ size: landscape; margin: 10mm; }}
     .saas-report-cover {{ page-break-after: always; }}
+    .saas-report-tree-page {{ margin: 0; page-break-after: always; }}
     .saas-report-toc {{ margin-bottom: 0; }}
     /* Every parent model section starts on a fresh page (no orphaned headers
        at page bottoms), and everything is tightened so the section header
