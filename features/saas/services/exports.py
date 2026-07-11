@@ -90,7 +90,7 @@ def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
                 # Fixed pixel size keeps each chart from being laid out at the
                 # on-screen viewport width and then clipped when the browser
                 # paginates for print.
-                fig = fig.update_layout(autosize=False, width=695, height=398)
+                fig = fig.update_layout(autosize=False, width=765, height=438)
                 # Legend sits below the axis title with just enough clearance
                 # to avoid overlap (closer than -0.48 crowds the title).
                 fig.update_layout(legend_y=-0.34)
