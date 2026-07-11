@@ -39,8 +39,23 @@ def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
     parent Descriptive Name (shared attributes in its header), one subsection per
     child model (segment + GMIS name), and that model's charts in a two-up grid.
     Groups come from ``reports.build_grouped_report_sections``."""
-    generated_at = datetime.now().strftime("%Y-%m-%d %H:%M")
-    meta_items = "".join(f"<li>{html_escape(line)}</li>" for line in meta_lines)
+    generated_at = datetime.now().strftime("%B %d, %Y at %H:%M")
+
+    # Cover-page parameters grid: meta lines arrive as "Label: value" strings.
+    meta_cells = []
+    for line in meta_lines:
+        label, _, value = str(line).partition(": ")
+        if value:
+            meta_cells.append(
+                '<div class="saas-report-param">'
+                f'<div class="saas-report-param-label">{html_escape(label)}</div>'
+                f'<div class="saas-report-param-value">{html_escape(value)}</div></div>'
+            )
+        else:
+            meta_cells.append(
+                f'<div class="saas-report-param"><div class="saas-report-param-value">{html_escape(line)}</div></div>'
+            )
+    params_html = f'<div class="saas-report-params">{"".join(meta_cells)}</div>' if meta_cells else ""
 
     include_plotlyjs = "cdn"
     group_blocks: list[str] = []
@@ -110,14 +125,49 @@ def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
             f'{"".join(model_blocks)}</section>'
         )
 
-    if group_blocks:
-        toc = (
-            '<nav class="saas-report-toc"><div class="saas-report-toc-title">Models in this report</div>'
-            f'<ol>{"".join(toc_items)}</ol></nav>'
+    # Cover page: branded title block, report parameters, headline counts and
+    # the table of contents -- designed to read cleanly even when the browser
+    # prints without background graphics (typography, rules and borders only).
+    parent_count = len(groups)
+    model_count = sum(len(group.get("models") or []) for group in groups)
+    chart_count = sum(
+        len(model.get("figures") or [])
+        for group in groups
+        for model in (group.get("models") or [])
+    )
+    stats_html = (
+        '<div class="saas-report-stats">'
+        f'<div class="saas-report-stat"><div class="saas-report-stat-value">{parent_count}</div>'
+        f'<div class="saas-report-stat-label">Model{"s" if parent_count != 1 else ""}</div></div>'
+        f'<div class="saas-report-stat"><div class="saas-report-stat-value">{model_count}</div>'
+        f'<div class="saas-report-stat-label">GMIS model{"s" if model_count != 1 else ""}</div></div>'
+        f'<div class="saas-report-stat"><div class="saas-report-stat-value">{chart_count}</div>'
+        f'<div class="saas-report-stat-label">Chart{"s" if chart_count != 1 else ""}</div></div>'
+        "</div>"
+    )
+    cover = (
+        '<header class="saas-report-cover">'
+        '<div class="saas-report-brand">Wholesale Portfolio Model Monitoring</div>'
+        "<h1>Scenario Analysis as a Service</h1>"
+        '<div class="saas-report-subtitle">Macro-Economic Variable (MEV) Scenario Report</div>'
+        f'<div class="saas-report-generated">Generated {html_escape(generated_at)}</div>'
+        '<div class="saas-report-cover-rule"></div>'
+        '<div class="saas-report-cover-heading">Report parameters</div>'
+        f"{params_html}"
+        f"{stats_html if groups else ''}"
+        + (
+            '<div class="saas-report-cover-heading">Contents</div>'
+            f'<nav class="saas-report-toc"><ol>{"".join(toc_items)}</ol></nav>'
+            if toc_items
+            else ""
         )
-        body = toc + "\n".join(group_blocks)
+        + "</header>"
+    )
+
+    if group_blocks:
+        body = cover + "\n".join(group_blocks)
     else:
-        body = "<p>No charts match the current filters.</p>"
+        body = cover + "<p>No charts match the current filters.</p>"
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -126,13 +176,25 @@ def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
 <title>SAAS MEV Report</title>
 <style>
   body {{ font-family: -apple-system, Helvetica, Arial, sans-serif; margin: 24px; color: #1f2933; }}
-  h1 {{ font-size: 20px; margin-bottom: 4px; }}
-  .saas-report-meta {{ font-size: 13px; color: #52606d; margin-bottom: 20px; }}
-  .saas-report-meta ul {{ margin: 4px 0 0; padding-left: 18px; }}
+  /* --- Cover page --- */
+  .saas-report-cover {{ max-width: 980px; }}
+  .saas-report-brand {{ font-size: 11px; font-weight: 800; letter-spacing: 1.4px; text-transform: uppercase; color: #2563eb; margin-bottom: 14px; }}
+  .saas-report-cover h1 {{ font-size: 30px; margin: 0 0 2px; letter-spacing: -.3px; color: #0f1d35; }}
+  .saas-report-subtitle {{ font-size: 15px; color: #52606d; }}
+  .saas-report-generated {{ font-size: 12px; color: #829ab1; margin-top: 6px; }}
+  .saas-report-cover-rule {{ height: 3px; width: 64px; background: #2563eb; border-radius: 2px; margin: 18px 0 20px; }}
+  .saas-report-cover-heading {{ font-size: 11px; font-weight: 800; letter-spacing: .8px; text-transform: uppercase; color: #52606d; margin: 20px 0 8px; }}
+  .saas-report-params {{ display: grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); gap: 10px 24px; }}
+  .saas-report-param-label {{ font-size: 10px; font-weight: 800; letter-spacing: .5px; text-transform: uppercase; color: #829ab1; }}
+  .saas-report-param-value {{ font-size: 13.5px; font-weight: 600; color: #1f2933; margin-top: 1px; }}
+  .saas-report-stats {{ display: flex; gap: 14px; margin-top: 20px; }}
+  .saas-report-stat {{ min-width: 110px; padding: 10px 16px; border: 1px solid #dbe4f0; border-radius: 10px; }}
+  .saas-report-stat-value {{ font-size: 22px; font-weight: 800; color: #0f1d35; line-height: 1.1; }}
+  .saas-report-stat-label {{ font-size: 11px; color: #52606d; margin-top: 2px; }}
   .saas-report-toc {{ margin: 0 0 24px; padding: 12px 16px; border: 1px solid #dbe4f0; border-radius: 10px; background: #f8fbff; }}
-  .saas-report-toc-title {{ font-size: 11px; font-weight: 800; letter-spacing: .5px; text-transform: uppercase; color: #52606d; margin-bottom: 6px; }}
-  .saas-report-toc ol {{ margin: 0; padding-left: 20px; font-size: 13px; }}
-  .saas-report-toc a {{ color: #2563eb; text-decoration: none; }}
+  .saas-report-toc ol {{ margin: 0; padding-left: 20px; font-size: 13px; columns: 2; column-gap: 40px; }}
+  .saas-report-toc li {{ break-inside: avoid; margin-bottom: 3px; }}
+  .saas-report-toc a {{ color: #2563eb; text-decoration: none; font-weight: 600; }}
   .saas-report-toc-count {{ color: #829ab1; margin-left: 8px; font-size: 12px; }}
   .saas-report-group {{ margin-bottom: 28px; padding: 18px 20px; border: 1px solid #dbe4f0; border-radius: 12px; }}
   .saas-report-group-kicker {{ font-size: 11px; font-weight: 800; letter-spacing: .65px; text-transform: uppercase; color: #2563eb; }}
@@ -148,7 +210,8 @@ def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
   .saas-report-empty {{ font-size: 13px; color: #829ab1; }}
   @media print {{
     @page {{ size: landscape; margin: 10mm; }}
-    .saas-report-toc {{ page-break-after: always; }}
+    .saas-report-cover {{ page-break-after: always; }}
+    .saas-report-toc {{ margin-bottom: 0; }}
     /* Every parent model section starts on a fresh page (no orphaned headers
        at page bottoms), and everything is tightened so the section header
        plus two ~290px chart rows fit the ~718px printable height. */
@@ -165,13 +228,8 @@ def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
 </style>
 </head>
 <body>
-  <h1>Scenario Analysis as a Service (SAAS) &mdash; MEV Report</h1>
-  <div class="saas-report-meta">
-    Generated {generated_at}
-    <ul>{meta_items}</ul>
-  </div>
   {body}
-  <p class="saas-report-print-hint">To save this report as a PDF, open this file in a browser and use Print &rarr; Save as PDF.</p>
+  <p class="saas-report-print-hint">To save this report as a PDF, open this file in a browser and use Print &rarr; Save as PDF (landscape). Enable "Background graphics" for the full styling.</p>
 </body>
 </html>"""
 
