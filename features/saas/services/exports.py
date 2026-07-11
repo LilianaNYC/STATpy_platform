@@ -373,15 +373,11 @@ def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
   .saas-report-chart figcaption {{ font-size: 12.5px; font-weight: 700; margin-bottom: 4px; }}
   .saas-report-chart .plotly-graph-div {{ margin: 0; }}
   .saas-report-empty {{ font-size: 13px; color: #829ab1; }}
-  /* Print-only page footer: position:fixed elements repeat on every printed
-     page in Chromium, which is how the timestamp lands on each PDF page. */
-  .saas-report-print-footer {{ display: none; }}
   @media print {{
     @page {{ size: landscape; margin: 10mm; }}
     .saas-report-cover {{ page-break-after: always; }}
     .saas-report-tree-page {{ margin: 0; page-break-after: always; }}
     .saas-report-toc {{ margin-bottom: 0; }}
-    .saas-report-print-footer {{ display: block; position: fixed; bottom: 0; right: 0; font-size: 8.5px; color: #a3b2c6; }}
     .saas-report-print-hint {{ display: none; }}
     /* Every parent model section starts on a fresh page (no orphaned headers
        at page bottoms), and everything is tightened so the section header
@@ -401,7 +397,6 @@ def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
 <body>
   {body}
   <p class="saas-report-print-hint">To save this report as a PDF, open this file in a browser and use Print &rarr; Save as PDF (landscape). Enable "Background graphics" for the full styling.</p>
-  <div class="saas-report-print-footer">SAAS MEV Report &middot; Generated {html_escape(generated_at)}</div>
 </body>
 </html>"""
 
