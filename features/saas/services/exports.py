@@ -89,17 +89,11 @@ def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
             for title, fig in model.get("figures") or []:
                 # Fixed pixel size keeps each chart from being laid out at the
                 # on-screen viewport width and then clipped when the browser
-                # paginates for print. 520x285 is sized so a landscape A4 page
-                # fits a 2x2 grid -- two chart blocks (chart + caption + gap,
-                # ~305px) down even on a page that also carries the section
-                # headers, and two 520px charts across.
-                # The "Quarter" x-axis title is dropped: the tick labels already
-                # read as quarters and at this height it collides with the legend.
-                fig = fig.update_layout(autosize=False, width=545, height=313)
-                fig.update_xaxes(title_text=None)
-                # Push the legend further below the axis so the tick labels
-                # stay clear of the legend box at report chart heights.
-                fig.update_layout(legend_y=-0.42)
+                # paginates for print.
+                fig = fig.update_layout(autosize=False, width=600, height=344)
+                # Push the legend further below the axis title (not just the
+                # tick labels) so the two no longer collide at report height.
+                fig.update_layout(legend_y=-0.48)
                 # The figure builder lays the legend out full-width and
                 # left-aligned but floors entries at half-width for the
                 # responsive dashboard cards. The report's fixed 520px charts
