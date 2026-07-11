@@ -90,10 +90,10 @@ def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
                 # Fixed pixel size keeps each chart from being laid out at the
                 # on-screen viewport width and then clipped when the browser
                 # paginates for print.
-                fig = fig.update_layout(autosize=False, width=630, height=361)
+                fig = fig.update_layout(autosize=False, width=662, height=379)
                 # Legend sits below the axis title with just enough clearance
                 # to avoid overlap (closer than -0.48 crowds the title).
-                fig.update_layout(legend_y=-0.40)
+                fig.update_layout(legend_y=-0.34)
                 # The figure builder lays the legend out full-width and
                 # left-aligned but floors entries at half-width for the
                 # responsive dashboard cards. The report's fixed 520px charts
