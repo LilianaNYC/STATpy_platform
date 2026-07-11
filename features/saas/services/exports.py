@@ -202,41 +202,78 @@ def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
         + "</header>"
     )
 
-    # Page 2: model-structure tree -- Model Group -> parent model -> use case
-    # (segment + GMIS name), mirroring the workspace card hierarchy.
-    tree_columns: list[str] = []
-    for group_label in breakdown_labels:
-        parent_names = parents_by_group.get(group_label)
-        if not parent_names:
-            continue
-        parent_items: list[str] = []
-        for group in groups:
-            parent_label = group.get("parent_label") or "Model"
-            if parent_label not in parent_names:
-                continue
-            child_items = "".join(
-                "<li>"
-                f'<span class="saas-report-tree-segment">{html_escape(model.get("segment_label") or model.get("model_name") or "")}</span>'
-                f'<span class="saas-report-tree-gmis">{html_escape(model.get("model_name") or "")}</span>'
-                "</li>"
-                for model in group.get("models") or []
-                if group_label in {
-                    g for name in [model.get("model_name")] for g in (group_map.get(name) or [])
-                }
+    # Page 2: model-structure tree following the filter waterfall --
+    # Region -> Model Group -> Portfolio -> model -> use case (segment + GMIS
+    # name). Built from the same attribute maps that drive the filters; a
+    # model missing a level files under a muted placeholder.
+    region_map = SAAS_PAGE_DATA.get("model_region_map", {})
+    portfolio_map = SAAS_PAGE_DATA.get("model_portfolio_map", {})
+    NO_PORTFOLIO = "(no portfolio)"
+    tree: dict = {}
+    for group in groups:
+        parent_label = group.get("parent_label") or "Model"
+        for model in group.get("models") or []:
+            name = model.get("model_name")
+            child = (
+                model.get("segment_label") or name or "",
+                name or "",
             )
-            parent_items.append(
-                f'<li><span class="saas-report-tree-parent">{html_escape(parent_label)}</span>'
-                f"<ul>{child_items}</ul></li>"
+            for region in region_map.get(name) or ["(no region)"]:
+                for model_group in group_map.get(name) or ["(no group)"]:
+                    for portfolio in portfolio_map.get(name) or [NO_PORTFOLIO]:
+                        children = (
+                            tree.setdefault(region, {})
+                            .setdefault(model_group, {})
+                            .setdefault(portfolio, {})
+                            .setdefault(parent_label, [])
+                        )
+                        if child not in children:
+                            children.append(child)
+
+    def _ordered(keys, preferred: list[str]) -> list[str]:
+        preferred_present = [key for key in preferred if key in keys]
+        return preferred_present + [key for key in keys if key not in preferred_present]
+
+    region_order = [value for value in (SAAS_PAGE_DATA.get("region_values") or []) if value]
+    portfolio_order = [value for value in (SAAS_PAGE_DATA.get("portfolio_values") or []) if value] + [NO_PORTFOLIO]
+
+    tree_columns = []
+    for region in _ordered(tree, region_order):
+        group_items = []
+        for model_group in _ordered(tree[region], canonical_groups):
+            portfolio_items = []
+            for portfolio in _ordered(tree[region][model_group], portfolio_order):
+                parent_items = []
+                for parent_label, children in tree[region][model_group][portfolio].items():
+                    child_items = "".join(
+                        "<li>"
+                        f'<span class="saas-report-tree-segment">{html_escape(segment)}</span>'
+                        f'<span class="saas-report-tree-gmis">{html_escape(gmis)}</span>'
+                        "</li>"
+                        for segment, gmis in children
+                    )
+                    parent_items.append(
+                        f'<li><span class="saas-report-tree-parent">{html_escape(parent_label)}</span>'
+                        f"<ul>{child_items}</ul></li>"
+                    )
+                portfolio_class = "saas-report-tree-pf-missing" if portfolio == NO_PORTFOLIO else "saas-report-tree-pf"
+                portfolio_items.append(
+                    f'<li><span class="{portfolio_class}">{html_escape(portfolio)}</span>'
+                    f'<ul>{"".join(parent_items)}</ul></li>'
+                )
+            group_items.append(
+                f'<li><span class="saas-report-tree-mg">{html_escape(model_group)}</span>'
+                f'<ul>{"".join(portfolio_items)}</ul></li>'
             )
         tree_columns.append(
             '<div class="saas-report-tree-group">'
-            f'<div class="saas-report-tree-root">{html_escape(group_label)}</div>'
-            f'<ul>{"".join(parent_items)}</ul></div>'
+            f'<div class="saas-report-tree-root">{html_escape(region)}</div>'
+            f'<ul>{"".join(group_items)}</ul></div>'
         )
     tree_page = (
         '<section class="saas-report-tree-page">'
         '<div class="saas-report-cover-heading">Model structure</div>'
-        '<p class="saas-report-tree-note">Model group &rarr; model &rarr; use case (segment, with its GMIS model name).</p>'
+        '<p class="saas-report-tree-note">Region &rarr; model group &rarr; portfolio &rarr; model &rarr; use case (segment, with its GMIS model name).</p>'
         f'<div class="saas-report-tree">{"".join(tree_columns)}</div></section>'
         if tree_columns
         else ""
@@ -278,7 +315,10 @@ def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
   .saas-report-tree li {{ position: relative; padding: 5px 0 0 14px; border-left: 1.5px solid #c3d2e8; }}
   .saas-report-tree li:last-child {{ border-left-color: transparent; }}
   .saas-report-tree li::before {{ content: ""; position: absolute; left: -1.5px; top: 0; height: 17px; width: 14px; border-left: 1.5px solid #c3d2e8; border-bottom: 1.5px solid #c3d2e8; border-bottom-left-radius: 6px; }}
-  .saas-report-tree-parent {{ font-size: 13.5px; font-weight: 700; color: #0f1d35; }}
+  .saas-report-tree-mg {{ font-size: 11.5px; font-weight: 800; letter-spacing: .5px; text-transform: uppercase; color: #2563eb; }}
+  .saas-report-tree-pf {{ font-size: 12.5px; font-weight: 700; color: #52606d; }}
+  .saas-report-tree-pf-missing {{ font-size: 12px; font-style: italic; color: #a3b2c6; }}
+  .saas-report-tree-parent {{ font-size: 13px; font-weight: 700; color: #0f1d35; }}
   .saas-report-tree-segment {{ font-size: 12.5px; font-weight: 600; color: #1f2933; }}
   .saas-report-tree-gmis {{ font-size: 11.5px; color: #829ab1; margin-left: 8px; }}
   .saas-report-toc {{ margin: 0 0 24px; padding: 12px 16px; border: 1px solid #dbe4f0; border-radius: 10px; background: #f8fbff; }}
