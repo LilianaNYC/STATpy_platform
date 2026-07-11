@@ -241,7 +241,7 @@ def build_global_filters(data: dict, extra_controls=None) -> html.Div:
         html.Div(
             className="monitoring-filter",
             children=[
-                html.Label("Specific Models", htmlFor=MODELS_TOGGLE_ID),
+                html.Label("Models", htmlFor=MODELS_TOGGLE_ID),
                 build_single_select_dropdown(
                     value_id=MODELS_ID,
                     toggle_id=MODELS_TOGGLE_ID,

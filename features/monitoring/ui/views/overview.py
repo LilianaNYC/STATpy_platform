@@ -111,7 +111,7 @@ def _default_scenario(data: dict) -> str:
 
 def _pd_post_subjective_rag(data: dict, models: set[str], segment: str, reporting_cycle: str, scenario: str) -> dict[str, str]:
     """``models`` is a set so the Segments chapter can pool every PD model
-    (matching the tab's "Specific Models: All models" default) while the
+    (matching the tab's "Models: All models" default) while the
     Models chapter passes a single-model set for its per-model verdict."""
     from .pd_performance import _pd_post_review_summaries
     from .....shared.domain.calculations import PdFilterContext, get_pd_crr_master_scale, set_precomputed_metrics

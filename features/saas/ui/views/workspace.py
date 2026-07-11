@@ -542,7 +542,7 @@ def _build_top_bar() -> html.Div:
                                 value=DEFAULT_PORTFOLIO,
                             ),
                             _build_checklist_filter(
-                                "Specific Models",
+                                "Models",
                                 toggle_id=MODEL_NAME_TOGGLE_ID,
                                 menu_id=MODEL_NAME_MENU_ID,
                                 checklist_id=MODEL_NAME_ID,
@@ -949,8 +949,8 @@ def build_apply_prompt() -> html.Div:
                     ]),
                     html.Li([
                         html.Strong("Choose your model scope. "),
-                        "Select a Segment or a set of Specific Models. Both stay available to pick from, but if a "
-                        "Segment is active it takes priority over any Specific Models selection.",
+                        "Select a Segment or a set of Models. Both stay available to pick from, but if a "
+                        "Segment is active it takes priority over any Models selection.",
                     ]),
                     html.Li([
                         html.Strong("Set the view options. "),
@@ -1000,7 +1000,7 @@ def build_apply_prompt() -> html.Div:
                             ],
                         ),
                         html.Span(
-                            "Note: Export uses the last applied top-bar filters. If you change Model Use Case / Cycle, Compare To, Segment, Specific Models, Snapshot Period, Reference Lines, or MEV Label, click Apply filters again before exporting. The two comparison exports also need at least one Compare To cycle, and each Excel starts with a README tab explaining its columns.",
+                            "Note: Export uses the last applied top-bar filters. If you change Model Use Case / Cycle, Compare To, Segment, Models, Snapshot Period, Reference Lines, or MEV Label, click Apply filters again before exporting. The two comparison exports also need at least one Compare To cycle, and each Excel starts with a README tab explaining its columns.",
                             className="saas-getting-started-note",
                         ),
                     ]),

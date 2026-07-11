@@ -221,10 +221,10 @@ def segment_values_for_filters(
     """Segment values reachable given Region + Model Group + Portfolio, and
     optionally restricted to a specific set of (raw) Model Names.
 
-    Segment narrows off the same three upstream filters as Specific Models
+    Segment narrows off the same three upstream filters as Models
     (see :func:`model_names_for_filters`); it isn't chained after Specific
     Models in the sense of being disabled by it, but when ``model_names`` is
-    passed (the current Specific Models selection, expanded via
+    passed (the current Models selection, expanded via
     :func:`effective_model_names`) the result only covers segments those
     particular models actually have.
     """

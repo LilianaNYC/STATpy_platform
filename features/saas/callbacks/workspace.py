@@ -945,11 +945,11 @@ def _register_filter_callbacks(app) -> None:
         option_values = set(all_option_values)
         current_values = [value for value in current_values if value in option_values]
         has_specific_model_selection = 0 < len(current_values) < len(all_option_values)
-        # Segment and Specific Models are both always interactive in SAAS
+        # Segment and Models are both always interactive in SAAS
         # (unlike the PD Performance dashboard, where they're mutually
         # exclusive). If both end up set, Segment still takes priority in
         # effective_model_names. Segment's own options are additionally
-        # narrowed to whatever the current Specific Models selection actually
+        # narrowed to whatever the current Models selection actually
         # covers (segment=None here so Segment doesn't gate its own options).
         selected_raw_models = _effective_model_names(None, current_values, region=region, model_group=model_group, portfolio=portfolio)
         select_all_options = [{"label": "All", "value": "all"}]
@@ -963,7 +963,7 @@ def _register_filter_callbacks(app) -> None:
         toggle_label = _model_toggle_label(current_values, all_options, False)
 
         if segment_active and has_specific_model_selection:
-            help_text = "Both Segment and Specific Models are set. Segment takes priority while it's active."
+            help_text = "Both Segment and Models are set. Segment takes priority while it's active."
         else:
             help_text = ""
 
@@ -979,18 +979,18 @@ def _register_filter_callbacks(app) -> None:
 
         return (
             segment_options,
-            False,  # Segment's toggle is never disabled by a Specific Models selection
+            False,  # Segment's toggle is never disabled by a Models selection
             select_all_options,
             model_options,
             current_values,
             toggle_label,
-            False,  # Specific Models' toggle is never disabled by a Segment selection
+            False,  # Models' toggle is never disabled by a Segment selection
             help_text,
         )
 
-    # Cascade: Region -> Model Group -> Portfolio -> Specific Models, with
+    # Cascade: Region -> Model Group -> Portfolio -> Models, with
     # Segment narrowing off the same three upstream filters as a separate
-    # (mutually exclusive with Specific Models) alternative. Each step below
+    # (mutually exclusive with Models) alternative. Each step below
     # narrows the next filter's options to only values still reachable, and
     # resets that filter back to "All" if its current selection is no longer
     # part of the narrowed set.
@@ -1229,7 +1229,7 @@ def _register_render_callbacks(app) -> None:
         if not effective_models:
             return _build_empty_state(
                 "No models match the current filters",
-                "Adjust Region, Model Group, Portfolio, Segment, or Specific Models to bring one or more SAAS models into scope.",
+                "Adjust Region, Model Group, Portfolio, Segment, or Models to bring one or more SAAS models into scope.",
             )
 
         time_series_df = SAAS_PAGE_DATA.get("mev_time_series")
@@ -1281,7 +1281,7 @@ def _register_render_callbacks(app) -> None:
 
         return panels or _build_empty_state(
             "No MEV charts match the current filters",
-            "Adjust the Model Use Case / Cycle, Segment, or Specific Models filters to broaden the SAAS workbook selection.",
+            "Adjust the Model Use Case / Cycle, Segment, or Models filters to broaden the SAAS workbook selection.",
         )
 
     @app.callback(

@@ -69,7 +69,7 @@ def test_performance_specific_models_use_single_select_dropdown():
             model_filter = _find_component_by_id(node, component_id)
             if model_filter is not None:
                 break
-        # Specific Models is a single-select Dropdown (not a multi checklist) on
+        # Models is a single-select Dropdown (not a multi checklist) on
         # the LGD/EAD/Loss tabs.
         assert isinstance(model_filter, Dropdown)
         assert getattr(model_filter, "multi", False) is not True

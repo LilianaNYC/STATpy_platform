@@ -1136,7 +1136,7 @@ def page_layout() -> list:
                                     ),
                                 ),
                                 _build_filter(
-                                    "Specific Models",
+                                    "Models",
                                     shared_filters.build_single_select_dropdown(
                                         value_id=MODEL_DROPDOWN_ID,
                                         toggle_id=MODEL_TOGGLE_ID,

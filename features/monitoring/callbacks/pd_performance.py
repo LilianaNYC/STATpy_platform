@@ -71,7 +71,7 @@ def register_callbacks(app) -> None:
         return (
             has_specific_model_selection,  # disable Segment when a specific model is chosen
             has_specific_model_selection,  # ...and its toggle
-            has_segment_selection,         # disable Specific Models when a segment is chosen
+            has_segment_selection,         # disable Models when a segment is chosen
         )
 
     # -----------------------------------------------------------------
@@ -238,7 +238,7 @@ def register_callbacks(app) -> None:
         ]
         return label, classes
 
-    # Specific Models toggle
+    # Models toggle
     @app.callback(
         Output(controls.MODELS_MENU_ID, "className"),
         Input(controls.MODELS_TOGGLE_ID, "n_clicks"),

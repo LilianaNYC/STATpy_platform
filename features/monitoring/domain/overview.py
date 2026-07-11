@@ -219,7 +219,7 @@ def _pd_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
 
     # "All Models" is PD's pooled, portfolio-level verdict across every named
     # model -- the same default the PD Performance tab itself shows when its
-    # Specific Models filter is left at "All models" (see _pd_scope_label /
+    # Models filter is left at "All models" (see _pd_scope_label /
     # _resolve_pd_sensitivity_entity in ui/views/pd_performance.py). Only
     # worth its own row when there's more than one model to pool; with a
     # single model it would just duplicate that model's row.
