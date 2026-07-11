@@ -74,10 +74,13 @@ def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
             for title, fig in model.get("figures") or []:
                 # Fixed pixel size keeps each chart from being laid out at the
                 # on-screen viewport width and then clipped when the browser
-                # paginates for print; two 520px charts fit a landscape page.
+                # paginates for print. 500x270 is sized so a landscape A4 page
+                # (~1032x718px printable at 10mm margins) fits a 2x2 grid --
+                # two chart blocks (chart + caption + gap, ~290px) down even on
+                # a page that also carries the section headers.
                 # The "Quarter" x-axis title is dropped: the tick labels already
                 # read as quarters and at this height it collides with the legend.
-                fig = fig.update_layout(autosize=False, width=520, height=340)
+                fig = fig.update_layout(autosize=False, width=500, height=270)
                 fig.update_xaxes(title_text=None)
                 chart_html = fig.to_html(
                     full_html=False,
@@ -144,10 +147,20 @@ def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
   .saas-report-chart .plotly-graph-div {{ margin: 0; }}
   .saas-report-empty {{ font-size: 13px; color: #829ab1; }}
   @media print {{
-    @page {{ size: landscape; margin: 12mm; }}
+    @page {{ size: landscape; margin: 10mm; }}
     .saas-report-toc {{ page-break-after: always; }}
-    .saas-report-group {{ page-break-before: always; border: none; padding: 0; }}
-    .saas-report-group:first-of-type {{ page-break-before: auto; }}
+    /* Sections flow continuously (no forced page break per group) so each
+       page packs two rows of charts; headings stay glued to their first row.
+       Everything is tightened so two ~290px chart blocks plus a section
+       header fit the ~718px printable height. */
+    .saas-report-group {{ border: none; padding: 0; margin-bottom: 10px; }}
+    .saas-report-group h2 {{ font-size: 16px; margin: 1px 0 2px; page-break-after: avoid; }}
+    .saas-report-group-kicker {{ font-size: 10px; page-break-inside: avoid; page-break-after: avoid; }}
+    .saas-report-attrs {{ font-size: 11.5px; margin-bottom: 4px; }}
+    .saas-report-model {{ margin-top: 6px; padding-top: 4px; }}
+    .saas-report-model h3 {{ font-size: 13px; margin: 0 0 4px; page-break-after: avoid; }}
+    .saas-report-chart-grid {{ gap: 8px 14px; }}
+    .saas-report-chart figcaption {{ font-size: 11.5px; margin-bottom: 2px; }}
   }}
 </style>
 </head>
