@@ -542,7 +542,7 @@ def _build_top_bar() -> html.Div:
                                 value=DEFAULT_PORTFOLIO,
                             ),
                             _build_checklist_filter(
-                                "Models",
+                                "Model",
                                 toggle_id=MODEL_NAME_TOGGLE_ID,
                                 menu_id=MODEL_NAME_MENU_ID,
                                 checklist_id=MODEL_NAME_ID,
