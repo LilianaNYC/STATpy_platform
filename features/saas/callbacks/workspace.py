@@ -624,7 +624,7 @@ def _register_export_callbacks(
         snapshot_period = applied.get("snapshot_period")
         reference_lines = applied.get("reference_lines")
         mev_label_mode = applied.get("mev_label_mode")
-        sections = reports.build_report_figures(
+        sections = reports.build_grouped_report_sections(
             run_for, compare_against, segment, selected_models,
             snapshot_period, reference_lines, mev_label_mode,
             region=region, model_group=model_group, portfolio=portfolio,

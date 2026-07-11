@@ -27,25 +27,92 @@ from ..data_access import SAAS_PAGE_DATA
 from ..domain.metrics import BASELINE_SCENARIO_VALUE
 
 
-def build_saas_report_html(sections: list[tuple[str, object]], meta_lines: list[str]) -> str:
+def _report_anchor(text: str) -> str:
+    slug = "".join(ch if ch.isalnum() else "-" for ch in str(text or "").lower()).strip("-")
+    while "--" in slug:
+        slug = slug.replace("--", "-")
+    return f"saas-group-{slug or 'model'}"
+
+
+def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
+    """Standalone HTML report mirroring the workspace hierarchy: one section per
+    parent Descriptive Name (shared attributes in its header), one subsection per
+    child model (segment + GMIS name), and that model's charts in a two-up grid.
+    Groups come from ``reports.build_grouped_report_sections``."""
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M")
     meta_items = "".join(f"<li>{html_escape(line)}</li>" for line in meta_lines)
 
-    if sections:
-        chart_blocks = []
-        for index, (title, fig) in enumerate(sections):
-            # Fixed pixel size keeps the chart from being laid out at the on-screen
-            # viewport width and then clipped when the browser paginates for print.
-            fig = fig.update_layout(autosize=False, width=900, height=420)
-            chart_html = fig.to_html(
-                full_html=False,
-                include_plotlyjs="cdn" if index == 0 else False,
-                config={"responsive": False},
+    include_plotlyjs = "cdn"
+    group_blocks: list[str] = []
+    toc_items: list[str] = []
+    for group_index, group in enumerate(groups, start=1):
+        parent_label = group.get("parent_label") or "Model"
+        anchor = _report_anchor(parent_label)
+        models = group.get("models") or []
+        chart_count = sum(len(model.get("figures") or []) for model in models)
+        toc_items.append(
+            f'<li><a href="#{anchor}">{html_escape(parent_label)}</a>'
+            f'<span class="saas-report-toc-count">{len(models)} model{"s" if len(models) != 1 else ""}'
+            f" &middot; {chart_count} chart{'s' if chart_count != 1 else ''}</span></li>"
+        )
+
+        shared = " &nbsp;&middot;&nbsp; ".join(
+            html_escape(line) for line in (group.get("shared_attributes") or [])
+        )
+        shared_html = f'<div class="saas-report-attrs">{shared}</div>' if shared else ""
+
+        model_blocks: list[str] = []
+        for model in models:
+            segment_label = model.get("segment_label") or model.get("model_name") or ""
+            gmis_name = model.get("model_name") or ""
+            extra = " &nbsp;&middot;&nbsp; ".join(
+                html_escape(line) for line in (model.get("attributes") or [])
             )
-            chart_blocks.append(
-                f'<section class="saas-report-chart"><h2>{html_escape(title)}</h2>{chart_html}</section>'
+            extra_html = f'<div class="saas-report-attrs">{extra}</div>' if extra else ""
+
+            chart_cells: list[str] = []
+            for title, fig in model.get("figures") or []:
+                # Fixed pixel size keeps each chart from being laid out at the
+                # on-screen viewport width and then clipped when the browser
+                # paginates for print; two 520px charts fit a landscape page.
+                # The "Quarter" x-axis title is dropped: the tick labels already
+                # read as quarters and at this height it collides with the legend.
+                fig = fig.update_layout(autosize=False, width=520, height=340)
+                fig.update_xaxes(title_text=None)
+                chart_html = fig.to_html(
+                    full_html=False,
+                    include_plotlyjs=include_plotlyjs,
+                    config={"responsive": False},
+                )
+                include_plotlyjs = False
+                chart_cells.append(
+                    f'<figure class="saas-report-chart"><figcaption>{html_escape(title)}</figcaption>{chart_html}</figure>'
+                )
+            charts_html = (
+                f'<div class="saas-report-chart-grid">{"".join(chart_cells)}</div>'
+                if chart_cells
+                else '<p class="saas-report-empty">No charts match the current filters for this model.</p>'
             )
-        body = "\n".join(chart_blocks)
+            model_blocks.append(
+                '<section class="saas-report-model">'
+                f'<h3>{html_escape(segment_label)}'
+                f'<span class="saas-report-gmis">GMIS Name: {html_escape(gmis_name)}</span></h3>'
+                f"{extra_html}{charts_html}</section>"
+            )
+
+        group_blocks.append(
+            f'<section class="saas-report-group" id="{anchor}">'
+            f'<div class="saas-report-group-kicker">{group_index}. Model</div>'
+            f"<h2>{html_escape(parent_label)}</h2>{shared_html}"
+            f'{"".join(model_blocks)}</section>'
+        )
+
+    if group_blocks:
+        toc = (
+            '<nav class="saas-report-toc"><div class="saas-report-toc-title">Models in this report</div>'
+            f'<ol>{"".join(toc_items)}</ol></nav>'
+        )
+        body = toc + "\n".join(group_blocks)
     else:
         body = "<p>No charts match the current filters.</p>"
 
@@ -57,14 +124,30 @@ def build_saas_report_html(sections: list[tuple[str, object]], meta_lines: list[
 <style>
   body {{ font-family: -apple-system, Helvetica, Arial, sans-serif; margin: 24px; color: #1f2933; }}
   h1 {{ font-size: 20px; margin-bottom: 4px; }}
-  .saas-report-meta {{ font-size: 13px; color: #52606d; margin-bottom: 24px; }}
+  .saas-report-meta {{ font-size: 13px; color: #52606d; margin-bottom: 20px; }}
   .saas-report-meta ul {{ margin: 4px 0 0; padding-left: 18px; }}
-  .saas-report-chart {{ margin-bottom: 32px; page-break-inside: avoid; }}
-  .saas-report-chart h2 {{ font-size: 15px; margin-bottom: 8px; }}
+  .saas-report-toc {{ margin: 0 0 24px; padding: 12px 16px; border: 1px solid #dbe4f0; border-radius: 10px; background: #f8fbff; }}
+  .saas-report-toc-title {{ font-size: 11px; font-weight: 800; letter-spacing: .5px; text-transform: uppercase; color: #52606d; margin-bottom: 6px; }}
+  .saas-report-toc ol {{ margin: 0; padding-left: 20px; font-size: 13px; }}
+  .saas-report-toc a {{ color: #2563eb; text-decoration: none; }}
+  .saas-report-toc-count {{ color: #829ab1; margin-left: 8px; font-size: 12px; }}
+  .saas-report-group {{ margin-bottom: 28px; padding: 18px 20px; border: 1px solid #dbe4f0; border-radius: 12px; }}
+  .saas-report-group-kicker {{ font-size: 11px; font-weight: 800; letter-spacing: .65px; text-transform: uppercase; color: #2563eb; }}
+  .saas-report-group h2 {{ font-size: 18px; margin: 2px 0 4px; }}
+  .saas-report-attrs {{ font-size: 12.5px; color: #52606d; margin-bottom: 6px; }}
+  .saas-report-model {{ margin-top: 14px; padding-top: 12px; border-top: 1px solid #e8eef6; }}
+  .saas-report-model h3 {{ font-size: 14px; margin: 0 0 6px; }}
+  .saas-report-gmis {{ font-weight: 500; font-size: 12px; color: #829ab1; margin-left: 10px; }}
+  .saas-report-chart-grid {{ display: grid; grid-template-columns: repeat(2, max-content); gap: 18px 24px; }}
+  .saas-report-chart {{ margin: 0; page-break-inside: avoid; break-inside: avoid; }}
+  .saas-report-chart figcaption {{ font-size: 12.5px; font-weight: 700; margin-bottom: 4px; }}
   .saas-report-chart .plotly-graph-div {{ margin: 0; }}
+  .saas-report-empty {{ font-size: 13px; color: #829ab1; }}
   @media print {{
     @page {{ size: landscape; margin: 12mm; }}
-    .saas-report-chart {{ page-break-after: always; }}
+    .saas-report-toc {{ page-break-after: always; }}
+    .saas-report-group {{ page-break-before: always; border: none; padding: 0; }}
+    .saas-report-group:first-of-type {{ page-break-before: auto; }}
   }}
 </style>
 </head>
