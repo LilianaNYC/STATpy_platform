@@ -89,19 +89,19 @@ def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
             for title, fig in model.get("figures") or []:
                 # Fixed pixel size keeps each chart from being laid out at the
                 # on-screen viewport width and then clipped when the browser
-                # paginates for print. 500x270 is sized so a landscape A4 page
-                # (~1032x718px printable at 10mm margins) fits a 2x2 grid --
-                # two chart blocks (chart + caption + gap, ~290px) down even on
-                # a page that also carries the section headers.
+                # paginates for print. 520x285 is sized so a landscape A4 page
+                # fits a 2x2 grid -- two chart blocks (chart + caption + gap,
+                # ~305px) down even on a page that also carries the section
+                # headers, and two 520px charts across.
                 # The "Quarter" x-axis title is dropped: the tick labels already
                 # read as quarters and at this height it collides with the legend.
-                fig = fig.update_layout(autosize=False, width=500, height=270)
+                fig = fig.update_layout(autosize=False, width=520, height=285)
                 fig.update_xaxes(title_text=None)
-                # Left-align the legend and stretch its box to the chart width:
-                # with entrywidthmode="fraction" the legend box spans the full
-                # plot width and each entry takes a fraction of it, so 1/n
-                # entries fill the box in one row (floored at 0.25 so long
-                # labels wrap to extra rows instead of overlapping).
+                # The figure builder lays the legend out full-width and
+                # left-aligned but floors entries at half-width for the
+                # responsive dashboard cards. The report's fixed 520px charts
+                # fit three entries per row, so relax the floor here (and
+                # shrink the font a step so labels clear the third-width slots).
                 legend_entry_count = sum(
                     1
                     for trace in fig.data
@@ -109,9 +109,6 @@ def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
                 )
                 fig.update_layout(
                     legend=dict(
-                        x=0,
-                        xanchor="left",
-                        entrywidthmode="fraction",
                         entrywidth=max(1 / legend_entry_count if legend_entry_count else 1, 0.25),
                         font=dict(size=9.5),
                     )
