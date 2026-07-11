@@ -91,23 +91,38 @@ def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
                 # on-screen viewport width and then clipped when the browser
                 # paginates for print.
                 fig = fig.update_layout(autosize=False, width=765, height=438)
-                # Legend sits below the axis title with just enough clearance
-                # to avoid overlap (closer than -0.48 crowds the title).
-                fig.update_layout(legend_y=-0.34)
                 # The figure builder lays the legend out full-width and
                 # left-aligned but floors entries at half-width for the
-                # responsive dashboard cards. The report's fixed 520px charts
-                # fit three entries per row, so relax the floor here (and
-                # shrink the font a step so labels clear the third-width slots).
+                # responsive dashboard cards. The report's fixed, wider charts
+                # fit up to four entries per row, so relax the floor here (and
+                # shrink the font a step so labels clear the narrower slots).
                 legend_entry_count = sum(
                     1
                     for trace in fig.data
                     if getattr(trace, "showlegend", None) is not False and getattr(trace, "name", None)
                 )
+                entries_per_row = 4
+                entry_width = max(1 / legend_entry_count if legend_entry_count else 1, 1 / entries_per_row)
+                legend_rows = max(1, -(-legend_entry_count // entries_per_row)) if legend_entry_count else 1
+                # More legend rows (more scenarios / Compare To cycles selected)
+                # need the legend pushed further down and more bottom margin so
+                # extra rows have room without crowding the axis title or
+                # running past the chart -- a fixed offset only worked for the
+                # common 3-entry case.
                 fig.update_layout(
                     legend=dict(
-                        entrywidth=max(1 / legend_entry_count if legend_entry_count else 1, 0.25),
+                        y=-0.34 - (legend_rows - 1) * 0.14,
+                        entrywidth=entry_width,
                         font=dict(size=9.5),
+                    )
+                )
+                current_margin = fig.layout.margin
+                fig.update_layout(
+                    margin=dict(
+                        t=current_margin.t,
+                        r=current_margin.r,
+                        l=current_margin.l,
+                        b=(current_margin.b or 0) + (legend_rows - 1) * 26,
                     )
                 )
                 chart_html = fig.to_html(
