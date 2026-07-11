@@ -97,6 +97,25 @@ def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
                 # read as quarters and at this height it collides with the legend.
                 fig = fig.update_layout(autosize=False, width=500, height=270)
                 fig.update_xaxes(title_text=None)
+                # Left-align the legend and stretch its box to the chart width:
+                # with entrywidthmode="fraction" the legend box spans the full
+                # plot width and each entry takes a fraction of it, so 1/n
+                # entries fill the box in one row (floored at 0.25 so long
+                # labels wrap to extra rows instead of overlapping).
+                legend_entry_count = sum(
+                    1
+                    for trace in fig.data
+                    if getattr(trace, "showlegend", None) is not False and getattr(trace, "name", None)
+                )
+                fig.update_layout(
+                    legend=dict(
+                        x=0,
+                        xanchor="left",
+                        entrywidthmode="fraction",
+                        entrywidth=max(1 / legend_entry_count if legend_entry_count else 1, 0.25),
+                        font=dict(size=9.5),
+                    )
+                )
                 chart_html = fig.to_html(
                     full_html=False,
                     include_plotlyjs=include_plotlyjs,
