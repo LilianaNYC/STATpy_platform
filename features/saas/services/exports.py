@@ -149,11 +149,11 @@ def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
   @media print {{
     @page {{ size: landscape; margin: 10mm; }}
     .saas-report-toc {{ page-break-after: always; }}
-    /* Sections flow continuously (no forced page break per group) so each
-       page packs two rows of charts; headings stay glued to their first row.
-       Everything is tightened so two ~290px chart blocks plus a section
-       header fit the ~718px printable height. */
-    .saas-report-group {{ border: none; padding: 0; margin-bottom: 10px; }}
+    /* Every parent model section starts on a fresh page (no orphaned headers
+       at page bottoms), and everything is tightened so the section header
+       plus two ~290px chart rows fit the ~718px printable height. */
+    .saas-report-group {{ border: none; padding: 0; margin-bottom: 10px; page-break-before: always; }}
+    .saas-report-group:first-of-type {{ page-break-before: auto; }}
     .saas-report-group h2 {{ font-size: 16px; margin: 1px 0 2px; page-break-after: avoid; }}
     .saas-report-group-kicker {{ font-size: 10px; page-break-inside: avoid; page-break-after: avoid; }}
     .saas-report-attrs {{ font-size: 11.5px; margin-bottom: 4px; }}
