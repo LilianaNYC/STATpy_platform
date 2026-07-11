@@ -95,8 +95,11 @@ def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
                 # headers, and two 520px charts across.
                 # The "Quarter" x-axis title is dropped: the tick labels already
                 # read as quarters and at this height it collides with the legend.
-                fig = fig.update_layout(autosize=False, width=520, height=285)
+                fig = fig.update_layout(autosize=False, width=545, height=313)
                 fig.update_xaxes(title_text=None)
+                # Push the legend further below the axis so the tick labels
+                # stay clear of the legend box at report chart heights.
+                fig.update_layout(legend_y=-0.42)
                 # The figure builder lays the legend out full-width and
                 # left-aligned but floors entries at half-width for the
                 # responsive dashboard cards. The report's fixed 520px charts
@@ -372,6 +375,7 @@ def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
   .saas-report-empty {{ font-size: 13px; color: #829ab1; }}
   @media print {{
     @page {{ size: landscape; margin: 10mm; }}
+    body {{ margin: 0; }}
     .saas-report-cover {{ page-break-after: always; }}
     .saas-report-tree-page {{ margin: 0; page-break-after: always; }}
     .saas-report-toc {{ margin-bottom: 0; }}
