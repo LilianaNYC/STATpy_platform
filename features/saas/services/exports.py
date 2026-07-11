@@ -148,6 +148,18 @@ def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
         for segment in (segments_map.get(name) or [])
         if segment
     }
+    unique_regions = {
+        region
+        for name in all_child_names
+        for region in (SAAS_PAGE_DATA.get("model_region_map", {}).get(name) or [])
+        if region
+    }
+    unique_portfolios = {
+        portfolio
+        for name in all_child_names
+        for portfolio in (SAAS_PAGE_DATA.get("model_portfolio_map", {}).get(name) or [])
+        if portfolio
+    }
     # Parent-model counts per Model Group, in the canonical taxonomy order. A
     # parent counts under every group its children belong to.
     group_map = SAAS_PAGE_DATA.get("model_group_map", {})
@@ -168,8 +180,12 @@ def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
             f'<div class="saas-report-stat-label">{html_escape(str(label))}</div></div>'
         )
 
+    # Headline tiles mirror the structure-tree hierarchy (region -> group ->
+    # portfolio -> model -> use case) plus the chart total.
     stats_html = (
         '<div class="saas-report-stats">'
+        + _stat(len(unique_regions), f"Region{'s' if len(unique_regions) != 1 else ''}")
+        + _stat(len(unique_portfolios), f"Portfolio{'s' if len(unique_portfolios) != 1 else ''}")
         + _stat(parent_count, f"Model{'s' if parent_count != 1 else ''}")
         + _stat(len(unique_segments), f"Segment{'s' if len(unique_segments) != 1 else ''}")
         + _stat(model_count, f"Use case{'s' if model_count != 1 else ''}")
@@ -185,7 +201,7 @@ def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
     )
     cover = (
         '<header class="saas-report-cover">'
-        '<div class="saas-report-brand">Wholesale Portfolio Model Monitoring</div>'
+        '<div class="saas-report-brand">Wholesale Credit Risk Analytics</div>'
         "<h1>Scenario Analysis as a Service</h1>"
         '<div class="saas-report-subtitle">Macro-Economic Variable (MEV) Scenario Report</div>'
         f'<div class="saas-report-generated">Generated {html_escape(generated_at)}</div>'
@@ -338,11 +354,16 @@ def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
   .saas-report-chart figcaption {{ font-size: 12.5px; font-weight: 700; margin-bottom: 4px; }}
   .saas-report-chart .plotly-graph-div {{ margin: 0; }}
   .saas-report-empty {{ font-size: 13px; color: #829ab1; }}
+  /* Print-only page footer: position:fixed elements repeat on every printed
+     page in Chromium, which is how the timestamp lands on each PDF page. */
+  .saas-report-print-footer {{ display: none; }}
   @media print {{
     @page {{ size: landscape; margin: 10mm; }}
     .saas-report-cover {{ page-break-after: always; }}
     .saas-report-tree-page {{ margin: 0; page-break-after: always; }}
     .saas-report-toc {{ margin-bottom: 0; }}
+    .saas-report-print-footer {{ display: block; position: fixed; bottom: 0; right: 0; font-size: 8.5px; color: #a3b2c6; }}
+    .saas-report-print-hint {{ display: none; }}
     /* Every parent model section starts on a fresh page (no orphaned headers
        at page bottoms), and everything is tightened so the section header
        plus two ~290px chart rows fit the ~718px printable height. */
@@ -361,6 +382,7 @@ def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
 <body>
   {body}
   <p class="saas-report-print-hint">To save this report as a PDF, open this file in a browser and use Print &rarr; Save as PDF (landscape). Enable "Background graphics" for the full styling.</p>
+  <div class="saas-report-print-footer">SAAS MEV Report &middot; Generated {html_escape(generated_at)}</div>
 </body>
 </html>"""
 
