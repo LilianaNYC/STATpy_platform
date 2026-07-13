@@ -40,6 +40,7 @@ from .....shared.ui.charts import (
     build_pd_scenario_rank_figure,
     build_pd_sensitivity_combined_figure,
 )
+from .....shared.ui.loading import build_dashboard_loading_shell
 from .....shared.ui.controls import (
     build_chart_header,
     build_frozen_horizon_control,
@@ -3015,8 +3016,11 @@ def page_layout(data: dict) -> list:
                     id="tab-pd_models",
                     className="tab-panel active pd-performance-app",
                     children=[
-                        html.Div(
-                            id=CONTENT_ID,
+                        build_dashboard_loading_shell(
+                            content_id=CONTENT_ID,
+                            scope_label="Monitoring Dashboard",
+                            title="Refreshing dashboard",
+                            note="Updating scoped metrics, charts, and summary insights.",
                             children=build_pd_apply_prompt(),
                         ),
                     ],

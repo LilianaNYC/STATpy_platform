@@ -606,6 +606,7 @@ def _register_export_callbacks(
 ) -> None:
     @app.callback(
         Output(layout.DOWNLOAD_DATA_ID, "data"),
+        Output(layout.DOWNLOAD_REPORT_STATUS_ID, "children"),
         Input(layout.DOWNLOAD_REPORT_ID, "n_clicks"),
         State(layout.APPLIED_FILTERS_STORE_ID, "data"),
         prevent_initial_call=True,
@@ -654,22 +655,23 @@ def _register_export_callbacks(
         html_doc = exports.build_saas_report_html(sections, meta_lines)
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         prefix = reports.run_for_filename_prefix(run_for)
-        return dcc.send_string(html_doc, filename=f"{prefix}-saas-charts-{timestamp}.html")
+        return dcc.send_string(html_doc, filename=f"{prefix}-saas-charts-{timestamp}.html"), timestamp
 
     @app.callback(
         Output(layout.EXCEL_MODAL_ID, "className"),
         Input(layout.EXCEL_OPEN_ID, "n_clicks"),
         Input(layout.EXCEL_CANCEL_ID, "n_clicks"),
-        Input(layout.EXCEL_GENERATE_ID, "n_clicks"),
         prevent_initial_call=True,
     )
-    def toggle_excel_modal(_open_clicks, _cancel_clicks, _generate_clicks):
+    def toggle_excel_modal(_open_clicks, _cancel_clicks):
         if ctx.triggered_id == layout.EXCEL_OPEN_ID:
             return "saas-modal-overlay is-open"
         return "saas-modal-overlay"
 
     @app.callback(
         Output(layout.EXCEL_DOWNLOAD_DATA_ID, "data"),
+        Output(layout.EXCEL_STATUS_ID, "children"),
+        Output(layout.EXCEL_MODAL_ID, "className", allow_duplicate=True),
         Input(layout.EXCEL_GENERATE_ID, "n_clicks"),
         State(layout.EXCEL_SCENARIO_ID, "value"),
         State(layout.APPLIED_FILTERS_STORE_ID, "data"),
@@ -722,22 +724,27 @@ def _register_export_callbacks(
         workbook = exports.build_saas_excel_workbook(metric_rows, chart_specs, meta_lines, scenario_label, columns)
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         prefix = reports.run_for_filename_prefix(run_for)
-        return dcc.send_bytes(lambda buffer: workbook.save(buffer), filename=f"{prefix}-saas-historical-range-analysis-{timestamp}.xlsx")
+        return (
+            dcc.send_bytes(lambda buffer: workbook.save(buffer), filename=f"{prefix}-saas-historical-range-analysis-{timestamp}.xlsx"),
+            timestamp,
+            "saas-modal-overlay",
+        )
 
     @app.callback(
         Output(layout.RECON_MODAL_ID, "className"),
         Input(layout.RECON_OPEN_ID, "n_clicks"),
         Input(layout.RECON_CANCEL_ID, "n_clicks"),
-        Input(layout.RECON_GENERATE_ID, "n_clicks"),
         prevent_initial_call=True,
     )
-    def toggle_recon_modal(_open_clicks, _cancel_clicks, _generate_clicks):
+    def toggle_recon_modal(_open_clicks, _cancel_clicks):
         if ctx.triggered_id == layout.RECON_OPEN_ID:
             return "saas-modal-overlay is-open"
         return "saas-modal-overlay"
 
     @app.callback(
         Output(layout.RECON_DOWNLOAD_DATA_ID, "data"),
+        Output(layout.RECON_STATUS_ID, "children"),
+        Output(layout.RECON_MODAL_ID, "className", allow_duplicate=True),
         Input(layout.RECON_GENERATE_ID, "n_clicks"),
         State(layout.RECON_SCENARIO_ID, "value"),
         State(layout.APPLIED_FILTERS_STORE_ID, "data"),
@@ -795,22 +802,27 @@ def _register_export_callbacks(
         workbook = exports.build_saas_reconciliation_workbook(recon, meta_lines, scenario_label, threshold_fraction)
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         prefix = reports.run_for_filename_prefix(run_for)
-        return dcc.send_bytes(lambda buffer: workbook.save(buffer), filename=f"{prefix}-saas-historical-reconciliation-{timestamp}.xlsx")
+        return (
+            dcc.send_bytes(lambda buffer: workbook.save(buffer), filename=f"{prefix}-saas-historical-reconciliation-{timestamp}.xlsx"),
+            timestamp,
+            "saas-modal-overlay",
+        )
 
     @app.callback(
         Output(layout.PROJECTION_MODAL_ID, "className"),
         Input(layout.PROJECTION_OPEN_ID, "n_clicks"),
         Input(layout.PROJECTION_CANCEL_ID, "n_clicks"),
-        Input(layout.PROJECTION_GENERATE_ID, "n_clicks"),
         prevent_initial_call=True,
     )
-    def toggle_projection_modal(_open_clicks, _cancel_clicks, _generate_clicks):
+    def toggle_projection_modal(_open_clicks, _cancel_clicks):
         if ctx.triggered_id == layout.PROJECTION_OPEN_ID:
             return "saas-modal-overlay is-open"
         return "saas-modal-overlay"
 
     @app.callback(
         Output(layout.PROJECTION_DOWNLOAD_DATA_ID, "data"),
+        Output(layout.PROJECTION_STATUS_ID, "children"),
+        Output(layout.PROJECTION_MODAL_ID, "className", allow_duplicate=True),
         Input(layout.PROJECTION_GENERATE_ID, "n_clicks"),
         State(layout.PROJECTION_SCENARIO_ID, "value"),
         State(layout.PROJECTION_HORIZON_ID, "value"),
@@ -873,7 +885,11 @@ def _register_export_callbacks(
         workbook = exports.build_saas_projection_workbook(comparison, meta_lines, scenario_label)
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         prefix = reports.run_for_filename_prefix(run_for)
-        return dcc.send_bytes(lambda buffer: workbook.save(buffer), filename=f"{prefix}-saas-projection-comparison-{timestamp}.xlsx")
+        return (
+            dcc.send_bytes(lambda buffer: workbook.save(buffer), filename=f"{prefix}-saas-projection-comparison-{timestamp}.xlsx"),
+            timestamp,
+            "saas-modal-overlay",
+        )
 
 
 def _register_filter_callbacks(app) -> None:

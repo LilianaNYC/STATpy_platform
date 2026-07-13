@@ -5,9 +5,12 @@ from __future__ import annotations
 from dash import dcc, html
 
 
-def _build_loading_spinner(scope_label: str, title: str, note: str):
+def _build_loading_spinner(scope_label: str, title: str, note: str, card_class_name: str | None = None):
+    class_name = "dashboard-loading-card"
+    if card_class_name:
+        class_name = f"{class_name} {card_class_name}"
     return html.Div(
-        className="dashboard-loading-card",
+        className=class_name,
         role="status",
         **{"aria-live": "polite"},
         children=[
@@ -43,17 +46,24 @@ def build_dashboard_loading_shell(
     note: str,
     content_class_name: str | None = None,
     loading_id: str | None = None,
+    target_components: dict | None = None,
+    parent_class_name: str = "dashboard-loading-shell",
+    loading_class_name: str = "dashboard-loading-mask",
+    overlay_style: dict | None = None,
+    spinner_card_class_name: str | None = None,
 ):
     """Wrap a callback-driven content surface in the shared loading experience."""
 
     return dcc.Loading(
         id=loading_id or f"{content_id}-loading",
-        parent_className="dashboard-loading-shell",
-        className="dashboard-loading-mask",
+        parent_className=parent_class_name,
+        className=loading_class_name,
         delay_show=180,
+        show_initially=False,
         color="transparent",
-        overlay_style={"visibility": "visible", "filter": "blur(2px) saturate(0.9)"},
-        custom_spinner=_build_loading_spinner(scope_label, title, note),
+        overlay_style=overlay_style or {"visibility": "visible", "filter": "blur(2px) saturate(0.9)"},
+        target_components=target_components,
+        custom_spinner=_build_loading_spinner(scope_label, title, note, spinner_card_class_name),
         children=html.Div(
             id=content_id,
             className=content_class_name,

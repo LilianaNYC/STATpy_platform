@@ -20,6 +20,7 @@ from .....shared.ui.charts import (
     build_pd_time_series_xaxis,
 )
 from .....shared.ui.controls import build_chart_header
+from .....shared.ui.loading import build_dashboard_loading_shell
 from ...domain.overview import (
     FINAL_RAG_COLUMN,
     FINAL_RAG_PLACEHOLDER,
@@ -1689,8 +1690,11 @@ def page_layout(data: dict) -> list:
             children=[
                 html.Div(
                     className="tab-panel active pd-performance-app",
-                    children=html.Div(
-                        id=CONTENT_ID,
+                    children=build_dashboard_loading_shell(
+                        content_id=CONTENT_ID,
+                        scope_label="Monitoring Dashboard",
+                        title="Refreshing dashboard",
+                        note="Updating scoped metrics, charts, and summary insights.",
                         children=build_overview_apply_prompt(),
                     ),
                 ),
