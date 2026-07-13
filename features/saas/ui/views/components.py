@@ -868,7 +868,7 @@ def group_cards_into_family_rows(
 # one attribute (e.g. multi-region models), so labels pluralize. "Segment" is
 # deliberately absent: it is shown in the child summary heading instead, so it
 # is neither rendered as an attribute row nor rolled up to the header.
-_ATTRIBUTE_ORDER = ("Region", "Model Group", "Portfolio")
+_ATTRIBUTE_ORDER = ("Region", "Portfolio", "Model Group")
 
 
 def model_attributes(model_name: str) -> dict[str, list[str]]:
@@ -889,8 +889,8 @@ def model_attributes(model_name: str) -> dict[str, list[str]]:
 
     for key, map_key in (
         ("Region", "model_region_map"),
-        ("Model Group", "model_group_map"),
         ("Portfolio", "model_portfolio_map"),
+        ("Model Group", "model_group_map"),
     ):
         values = [value for value in (SAAS_PAGE_DATA.get(map_key, {}).get(model_name) or []) if value]
         if values:
