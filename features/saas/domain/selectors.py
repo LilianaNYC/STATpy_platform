@@ -599,7 +599,7 @@ def resolve_mev_description(mev_name: str) -> str | None:
     return description or None
 
 
-def excel_mev_type_label(mev_name: str) -> str:
+def mev_type_label(mev_name: str) -> str:
     mev_types = mev_types_for_name(mev_name)
     if mev_types == {"raw"}:
         return "Raw"

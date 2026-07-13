@@ -328,6 +328,34 @@ def test_build_model_chart_cards_uses_injected_figure_builder():
     assert cards[0].children[0].children[-1].figure == {"data": [], "layout": {"title": "Test"}}
 
 
+def test_build_model_chart_cards_title_shows_mev_type_tag(monkeypatch):
+    monkeypatch.setattr(views.selectors, "mev_type_label", lambda name: {"MEV A": "Transformed", "MEV B": "—"}[name])
+
+    cards = views.build_model_chart_cards(
+        "Model A",
+        [{"MEV Name": "MEV A", "Scenario": "baseline"}, {"MEV Name": "MEV B", "Scenario": "baseline"}],
+        [{"MEV Name": "MEV A", "Scenario": "baseline"}, {"MEV Name": "MEV B", "Scenario": "baseline"}],
+        "transformed_only",
+        ["baseline"],
+        "history",
+        None,
+        None,
+        None,
+        ["MEV A", "MEV B"],
+        figure_builder=lambda *_args, **_kwargs: {"data": [], "layout": {}},
+    )
+
+    # A known type (Transformed/Raw) renders as a tag next to the title; an
+    # unresolved type ("—") renders no tag rather than a literal "—" badge.
+    title_a = cards[0].children[0].children[0].children[0].children
+    title_b = cards[1].children[0].children[0].children[0].children
+    assert title_a[0] == "MEV A"
+    assert title_a[1].children == "Transformed"
+    assert title_a[1].className == "pd-mev-chart-type-tag"
+    assert title_b[0] == "MEV B"
+    assert title_b[1] is None
+
+
 def test_build_model_chart_cards_groups_each_family_onto_its_own_row(monkeypatch):
     monkeypatch.setattr(
         views.records,
@@ -353,8 +381,10 @@ def test_build_model_chart_cards_groups_each_family_onto_its_own_row(monkeypatch
 
     assert [row.className for row in cards] == ["pd-mev-chart-family-row"] * 3
     assert [len(row.children) for row in cards] == [2, 1, 2]
+    # The title Div's children are now [mev_label, type_tag_or_None] (the type
+    # tag shows Transformed/Raw when known); grab just the label text.
     titles_by_row = [
-        [card.children[0].children[0].children[0].children for card in row.children]
+        [card.children[0].children[0].children[0].children[0] for card in row.children]
         for row in cards
     ]
     assert titles_by_row == [["T1", "R1"], ["R2"], ["T2", "R3"]]

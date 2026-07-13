@@ -757,6 +757,7 @@ def build_model_chart_cards(
             if str(row.get("MEV Name") or "").strip() == mev_name
         ]
         mev_label = selectors.resolve_mev_label(mev_name, mev_label_mode)
+        mev_type = selectors.mev_type_label(mev_name)
         mev_description = selectors.resolve_mev_description(mev_name)
         normalized_label_mode = selectors.normalize_mev_label_mode(mev_label_mode)
         if normalized_label_mode == "long_name" or normalized_label_mode == "group_mnemonic":
@@ -814,7 +815,15 @@ def build_model_chart_cards(
                         children=[
                             html.Div(
                                 [
-                                    html.Div(mev_label, className="pd-mev-chart-title"),
+                                    html.Div(
+                                        [
+                                            mev_label,
+                                            html.Span(mev_type, className="pd-mev-chart-type-tag")
+                                            if mev_type and mev_type != "—"
+                                            else None,
+                                        ],
+                                        className="pd-mev-chart-title",
+                                    ),
                                     *meta_lines,
                                 ]
                             ),
