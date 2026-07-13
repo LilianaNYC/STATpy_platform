@@ -1244,19 +1244,17 @@ def _register_render_callbacks(app) -> None:
 
         records = filtered_df.to_dict(orient="records")
         panels = []
-        panel_index = 0
         for group_index, (parent_label, member_models) in enumerate(
             _group_effective_models(segment, selected_models, region=region, model_group=model_group, portfolio=portfolio),
             start=1,
         ):
             shared_attribute_lines, shared_attribute_keys = views.partition_group_attributes(member_models)
             member_panels = []
-            for model_name in member_models:
-                panel_index += 1
+            for child_index, model_name in enumerate(member_models, start=1):
                 model_records = [row for row in records if row.get("Model Name") == model_name]
                 member_panels.append(
                     views.build_model_panel(
-                        panel_index,
+                        f"{group_index}.{child_index}",
                         model_name,
                         model_records,
                         selected_run_fors,

@@ -989,7 +989,7 @@ def build_model_group_card(
 
 
 def build_model_panel(
-    panel_index: int,
+    panel_index: int | str,
     model_name: str,
     records_: list[dict],
     run_for,
