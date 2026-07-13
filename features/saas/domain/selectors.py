@@ -177,48 +177,48 @@ def _options_with_all(values: list[str], all_value: str) -> list[dict]:
     ]
 
 
-def model_group_values_for_filters(*, region: str | None = None) -> list[str]:
-    """Model Group values reachable given the Region filter (cascade step 1)."""
-    all_values = list(SAAS_PAGE_DATA.get("model_group_values") or [])
+def portfolio_values_for_filters(*, region: str | None = None) -> list[str]:
+    """Portfolio values reachable given the Region filter (cascade step 1)."""
+    all_values = list(SAAS_PAGE_DATA.get("portfolio_values") or [])
     if not is_region_active(region):
         return all_values
     model_region_map = SAAS_PAGE_DATA.get("model_region_map", {})
-    model_group_map = SAAS_PAGE_DATA.get("model_group_map", {})
+    model_portfolio_map = SAAS_PAGE_DATA.get("model_portfolio_map", {})
     reachable = {
-        group
-        for model_name, groups in model_group_map.items()
+        portfolio
+        for model_name, portfolios in model_portfolio_map.items()
         if region in (model_region_map.get(model_name) or [])
-        for group in groups
+        for portfolio in portfolios
     }
     return [value for value in all_values if value in reachable]
 
 
-def portfolio_values_for_filters(*, region: str | None = None, model_group: str | None = None) -> list[str]:
-    """Portfolio values reachable given Region + Model Group (cascade step 2)."""
-    all_values = list(SAAS_PAGE_DATA.get("portfolio_values") or [])
-    if not is_region_active(region) and not is_model_group_active(model_group):
+def model_group_values_for_filters(*, region: str | None = None, portfolio: str | None = None) -> list[str]:
+    """Model Group values reachable given Region + Portfolio (cascade step 2)."""
+    all_values = list(SAAS_PAGE_DATA.get("model_group_values") or [])
+    if not is_region_active(region) and not is_portfolio_active(portfolio):
         return all_values
     model_region_map = SAAS_PAGE_DATA.get("model_region_map", {})
     model_group_map = SAAS_PAGE_DATA.get("model_group_map", {})
     model_portfolio_map = SAAS_PAGE_DATA.get("model_portfolio_map", {})
     reachable: set[str] = set()
-    for model_name, portfolios in model_portfolio_map.items():
+    for model_name, groups in model_group_map.items():
         if is_region_active(region) and region not in (model_region_map.get(model_name) or []):
             continue
-        if is_model_group_active(model_group) and model_group not in (model_group_map.get(model_name) or []):
+        if is_portfolio_active(portfolio) and portfolio not in (model_portfolio_map.get(model_name) or []):
             continue
-        reachable.update(portfolios)
+        reachable.update(groups)
     return [value for value in all_values if value in reachable]
 
 
 def segment_values_for_filters(
     *,
     region: str | None = None,
-    model_group: str | None = None,
     portfolio: str | None = None,
+    model_group: str | None = None,
     model_names: list[str] | None = None,
 ) -> list[str]:
-    """Segment values reachable given Region + Model Group + Portfolio, and
+    """Segment values reachable given Region + Portfolio + Model Group, and
     optionally restricted to a specific set of (raw) Model Names.
 
     Segment narrows off the same three upstream filters as Models
@@ -253,25 +253,25 @@ def segment_values_for_filters(
     return [value for value in all_values if value in reachable]
 
 
-def model_group_options_for_filters(*, region: str | None = None) -> list[dict]:
-    return _options_with_all(model_group_values_for_filters(region=region), MODEL_GROUP_ALL_VALUE)
+def portfolio_options_for_filters(*, region: str | None = None) -> list[dict]:
+    return _options_with_all(portfolio_values_for_filters(region=region), PORTFOLIO_ALL_VALUE)
 
 
-def portfolio_options_for_filters(*, region: str | None = None, model_group: str | None = None) -> list[dict]:
+def model_group_options_for_filters(*, region: str | None = None, portfolio: str | None = None) -> list[dict]:
     return _options_with_all(
-        portfolio_values_for_filters(region=region, model_group=model_group), PORTFOLIO_ALL_VALUE
+        model_group_values_for_filters(region=region, portfolio=portfolio), MODEL_GROUP_ALL_VALUE
     )
 
 
 def segment_options_for_filters(
     *,
     region: str | None = None,
-    model_group: str | None = None,
     portfolio: str | None = None,
+    model_group: str | None = None,
     model_names: list[str] | None = None,
 ) -> list[dict]:
     return _options_with_all(
-        segment_values_for_filters(region=region, model_group=model_group, portfolio=portfolio, model_names=model_names),
+        segment_values_for_filters(region=region, portfolio=portfolio, model_group=model_group, model_names=model_names),
         SEGMENT_ALL_VALUE,
     )
 

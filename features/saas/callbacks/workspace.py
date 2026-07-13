@@ -643,8 +643,8 @@ def _register_export_callbacks(
             f"Model Use Case / Cycle: {_run_for_meta_label(run_for)}",
             f"Compare To: {_compare_against_toggle_label(compare_against, _primary_run_for_value(run_for))}",
             f"Region: {region_labels.get(region or layout.DEFAULT_REGION, region)}",
-            f"Model Group: {model_group_labels.get(model_group or layout.DEFAULT_MODEL_GROUP, model_group)}",
             f"Portfolio: {portfolio_labels.get(portfolio or layout.DEFAULT_PORTFOLIO, portfolio)}",
+            f"Model Group: {model_group_labels.get(model_group or layout.DEFAULT_MODEL_GROUP, model_group)}",
             scope_label,
             f"Snapshot Period: {subnav_view_labels.get(_normalize_snapshot_period(snapshot_period), snapshot_period)}",
             f"Reference Lines: {reference_line_labels.get(reference_lines or layout.DEFAULT_REFERENCE_LINES, reference_lines)}",
@@ -706,8 +706,8 @@ def _register_export_callbacks(
             f"Model Use Case / Cycle: {primary_run_for or '—'}",
             f"Scenario: {scenario_label}",
             f"Region: {region_labels.get(region or layout.DEFAULT_REGION, region)}",
-            f"Model Group: {model_group_labels.get(model_group or layout.DEFAULT_MODEL_GROUP, model_group)}",
             f"Portfolio: {portfolio_labels.get(portfolio or layout.DEFAULT_PORTFOLIO, portfolio)}",
+            f"Model Group: {model_group_labels.get(model_group or layout.DEFAULT_MODEL_GROUP, model_group)}",
             scope_label,
             f"MEV Label: {mev_label_mode_labels.get(_normalize_mev_label_mode(mev_label_mode), mev_label_mode)}",
             f"All Metrics and Charts in this workbook are computed from the selected scenario ({scenario_label}): "
@@ -778,8 +778,8 @@ def _register_export_callbacks(
             f"Compare To: {', '.join(compare_cycles) if compare_cycles else 'None selected'}",
             f"Scenario: {scenario_label}",
             f"Region: {region_labels.get(region or layout.DEFAULT_REGION, region)}",
-            f"Model Group: {model_group_labels.get(model_group or layout.DEFAULT_MODEL_GROUP, model_group)}",
             f"Portfolio: {portfolio_labels.get(portfolio or layout.DEFAULT_PORTFOLIO, portfolio)}",
+            f"Model Group: {model_group_labels.get(model_group or layout.DEFAULT_MODEL_GROUP, model_group)}",
             scope_label,
             f"MEV Label: {mev_label_mode_labels.get(_normalize_mev_label_mode(mev_label_mode), mev_label_mode)}",
             f"Relative threshold: {threshold_fraction * 100:g}% by default - editable in the Summary tab (cell B1).",
@@ -855,8 +855,8 @@ def _register_export_callbacks(
             f"Compare To: {', '.join(compare_cycles) if compare_cycles else 'None selected'}",
             f"Scenario: {scenario_label}",
             f"Region: {region_labels.get(region or layout.DEFAULT_REGION, region)}",
-            f"Model Group: {model_group_labels.get(model_group or layout.DEFAULT_MODEL_GROUP, model_group)}",
             f"Portfolio: {portfolio_labels.get(portfolio or layout.DEFAULT_PORTFOLIO, portfolio)}",
+            f"Model Group: {model_group_labels.get(model_group or layout.DEFAULT_MODEL_GROUP, model_group)}",
             scope_label,
             f"MEV Label: {mev_label_mode_labels.get(_normalize_mev_label_mode(mev_label_mode), mev_label_mode)}",
             f"Projection horizon: up to Q{max_quarter}.",
@@ -988,43 +988,43 @@ def _register_filter_callbacks(app) -> None:
             help_text,
         )
 
-    # Cascade: Region -> Model Group -> Portfolio -> Models, with
+    # Cascade: Region -> Portfolio -> Model Group -> Models, with
     # Segment narrowing off the same three upstream filters as a separate
     # (mutually exclusive with Models) alternative. Each step below
     # narrows the next filter's options to only values still reachable, and
     # resets that filter back to "All" if its current selection is no longer
     # part of the narrowed set.
     @app.callback(
-        Output(layout.MODEL_GROUP_ID, "options"),
-        Output(layout.MODEL_GROUP_MENU_ID, "children"),
-        Output(layout.MODEL_GROUP_ID, "value", allow_duplicate=True),
-        Input(layout.REGION_ID, "value"),
-        State(layout.MODEL_GROUP_ID, "value"),
-        prevent_initial_call=True,
-    )
-    def narrow_model_group_options(region, current_model_group):
-        options = _model_group_options_for_filters(region=region)
-        valid_values = {option["value"] for option in options}
-        selected_value = current_model_group if current_model_group in valid_values else layout.MODEL_GROUP_ALL_VALUE
-        children = shared_filters.build_single_select_option_buttons(options, selected_value, layout.MODEL_GROUP_FILTER_KEY)
-        value_output = selected_value if selected_value != current_model_group else no_update
-        return options, children, value_output
-
-    @app.callback(
         Output(layout.PORTFOLIO_ID, "options"),
         Output(layout.PORTFOLIO_MENU_ID, "children"),
         Output(layout.PORTFOLIO_ID, "value", allow_duplicate=True),
         Input(layout.REGION_ID, "value"),
-        Input(layout.MODEL_GROUP_ID, "value"),
         State(layout.PORTFOLIO_ID, "value"),
         prevent_initial_call=True,
     )
-    def narrow_portfolio_options(region, model_group, current_portfolio):
-        options = _portfolio_options_for_filters(region=region, model_group=model_group)
+    def narrow_portfolio_options(region, current_portfolio):
+        options = _portfolio_options_for_filters(region=region)
         valid_values = {option["value"] for option in options}
         selected_value = current_portfolio if current_portfolio in valid_values else layout.PORTFOLIO_ALL_VALUE
         children = shared_filters.build_single_select_option_buttons(options, selected_value, layout.PORTFOLIO_FILTER_KEY)
         value_output = selected_value if selected_value != current_portfolio else no_update
+        return options, children, value_output
+
+    @app.callback(
+        Output(layout.MODEL_GROUP_ID, "options"),
+        Output(layout.MODEL_GROUP_MENU_ID, "children"),
+        Output(layout.MODEL_GROUP_ID, "value", allow_duplicate=True),
+        Input(layout.REGION_ID, "value"),
+        Input(layout.PORTFOLIO_ID, "value"),
+        State(layout.MODEL_GROUP_ID, "value"),
+        prevent_initial_call=True,
+    )
+    def narrow_model_group_options(region, portfolio, current_model_group):
+        options = _model_group_options_for_filters(region=region, portfolio=portfolio)
+        valid_values = {option["value"] for option in options}
+        selected_value = current_model_group if current_model_group in valid_values else layout.MODEL_GROUP_ALL_VALUE
+        children = shared_filters.build_single_select_option_buttons(options, selected_value, layout.MODEL_GROUP_FILTER_KEY)
+        value_output = selected_value if selected_value != current_model_group else no_update
         return options, children, value_output
 
     @app.callback(
@@ -1229,7 +1229,7 @@ def _register_render_callbacks(app) -> None:
         if not effective_models:
             return _build_empty_state(
                 "No models match the current filters",
-                "Adjust Region, Model Group, Portfolio, Segment, or Models to bring one or more SAAS models into scope.",
+                "Adjust Region, Portfolio, Model Group, Segment, or Models to bring one or more SAAS models into scope.",
             )
 
         time_series_df = SAAS_PAGE_DATA.get("mev_time_series")

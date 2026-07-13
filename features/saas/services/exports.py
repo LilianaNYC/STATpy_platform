@@ -232,7 +232,7 @@ def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
     )
 
     # Page 2: model-structure tree following the filter waterfall --
-    # Region -> Model Group -> Portfolio -> model -> use case (segment + GMIS
+    # Region -> Portfolio -> Model Group -> model -> use case (segment + GMIS
     # name). Built from the same attribute maps that drive the filters; a
     # model missing a level files under a muted placeholder.
     region_map = SAAS_PAGE_DATA.get("model_region_map", {})
@@ -248,12 +248,12 @@ def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
                 name or "",
             )
             for region in region_map.get(name) or ["(no region)"]:
-                for model_group in group_map.get(name) or ["(no group)"]:
-                    for portfolio in portfolio_map.get(name) or [NO_PORTFOLIO]:
+                for portfolio in portfolio_map.get(name) or [NO_PORTFOLIO]:
+                    for model_group in group_map.get(name) or ["(no group)"]:
                         children = (
                             tree.setdefault(region, {})
-                            .setdefault(model_group, {})
                             .setdefault(portfolio, {})
+                            .setdefault(model_group, {})
                             .setdefault(parent_label, [])
                         )
                         if child not in children:
@@ -268,12 +268,12 @@ def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
 
     tree_columns = []
     for region in _ordered(tree, region_order):
-        group_items = []
-        for model_group in _ordered(tree[region], canonical_groups):
-            portfolio_items = []
-            for portfolio in _ordered(tree[region][model_group], portfolio_order):
+        portfolio_items_outer = []
+        for portfolio in _ordered(tree[region], portfolio_order):
+            group_items = []
+            for model_group in _ordered(tree[region][portfolio], canonical_groups):
                 parent_items = []
-                for parent_label, children in tree[region][model_group][portfolio].items():
+                for parent_label, children in tree[region][portfolio][model_group].items():
                     child_items = "".join(
                         "<li>"
                         f'<span class="saas-report-tree-segment">{html_escape(segment)}</span>'
@@ -285,24 +285,24 @@ def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
                         f'<li><span class="saas-report-tree-parent">{html_escape(parent_label)}</span>'
                         f"<ul>{child_items}</ul></li>"
                     )
-                portfolio_class = "saas-report-tree-pf-missing" if portfolio == NO_PORTFOLIO else "saas-report-tree-pf"
-                portfolio_items.append(
-                    f'<li><span class="{portfolio_class}">{html_escape(portfolio)}</span>'
+                group_items.append(
+                    f'<li><span class="saas-report-tree-l3">{html_escape(model_group)}</span>'
                     f'<ul>{"".join(parent_items)}</ul></li>'
                 )
-            group_items.append(
-                f'<li><span class="saas-report-tree-mg">{html_escape(model_group)}</span>'
-                f'<ul>{"".join(portfolio_items)}</ul></li>'
+            portfolio_class = "saas-report-tree-l2-muted" if portfolio == NO_PORTFOLIO else "saas-report-tree-l2"
+            portfolio_items_outer.append(
+                f'<li><span class="{portfolio_class}">{html_escape(portfolio)}</span>'
+                f'<ul>{"".join(group_items)}</ul></li>'
             )
         tree_columns.append(
             '<div class="saas-report-tree-group">'
             f'<div class="saas-report-tree-root">{html_escape(region)}</div>'
-            f'<ul>{"".join(group_items)}</ul></div>'
+            f'<ul>{"".join(portfolio_items_outer)}</ul></div>'
         )
     tree_page = (
         '<section class="saas-report-tree-page">'
         '<div class="saas-report-cover-heading">Model structure</div>'
-        '<p class="saas-report-tree-note">Region &rarr; model group &rarr; portfolio &rarr; model &rarr; use case (segment, with its GMIS model name).</p>'
+        '<p class="saas-report-tree-note">Region &rarr; portfolio &rarr; model group &rarr; model &rarr; use case (segment, with its GMIS model name).</p>'
         f'<div class="saas-report-tree">{"".join(tree_columns)}</div></section>'
         if tree_columns
         else ""
@@ -344,9 +344,9 @@ def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
   .saas-report-tree li {{ position: relative; padding: 5px 0 0 14px; border-left: 1.5px solid #c3d2e8; }}
   .saas-report-tree li:last-child {{ border-left-color: transparent; }}
   .saas-report-tree li::before {{ content: ""; position: absolute; left: -1.5px; top: 0; height: 17px; width: 14px; border-left: 1.5px solid #c3d2e8; border-bottom: 1.5px solid #c3d2e8; border-bottom-left-radius: 6px; }}
-  .saas-report-tree-mg {{ font-size: 11.5px; font-weight: 800; letter-spacing: .5px; text-transform: uppercase; color: #2563eb; }}
-  .saas-report-tree-pf {{ font-size: 12.5px; font-weight: 700; color: #52606d; }}
-  .saas-report-tree-pf-missing {{ font-size: 12px; font-style: italic; color: #a3b2c6; }}
+  .saas-report-tree-l2 {{ font-size: 11.5px; font-weight: 800; letter-spacing: .5px; text-transform: uppercase; color: #2563eb; }}
+  .saas-report-tree-l2-muted {{ font-size: 12px; font-style: italic; color: #a3b2c6; }}
+  .saas-report-tree-l3 {{ font-size: 12.5px; font-weight: 700; color: #52606d; }}
   .saas-report-tree-parent {{ font-size: 13px; font-weight: 700; color: #0f1d35; }}
   .saas-report-tree-segment {{ font-size: 12.5px; font-weight: 600; color: #1f2933; }}
   .saas-report-tree-gmis {{ font-size: 11.5px; color: #829ab1; margin-left: 8px; }}

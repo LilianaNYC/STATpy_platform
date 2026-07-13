@@ -524,15 +524,6 @@ def _build_top_bar() -> html.Div:
                                 value=DEFAULT_REGION,
                             ),
                             _build_single_select_filter(
-                                "Model Group",
-                                value_id=MODEL_GROUP_ID,
-                                toggle_id=MODEL_GROUP_TOGGLE_ID,
-                                menu_id=MODEL_GROUP_MENU_ID,
-                                filter_key=MODEL_GROUP_FILTER_KEY,
-                                options=MODEL_GROUP_OPTIONS,
-                                value=DEFAULT_MODEL_GROUP,
-                            ),
-                            _build_single_select_filter(
                                 "Portfolio",
                                 value_id=PORTFOLIO_ID,
                                 toggle_id=PORTFOLIO_TOGGLE_ID,
@@ -540,6 +531,15 @@ def _build_top_bar() -> html.Div:
                                 filter_key=PORTFOLIO_FILTER_KEY,
                                 options=PORTFOLIO_OPTIONS,
                                 value=DEFAULT_PORTFOLIO,
+                            ),
+                            _build_single_select_filter(
+                                "Model Group",
+                                value_id=MODEL_GROUP_ID,
+                                toggle_id=MODEL_GROUP_TOGGLE_ID,
+                                menu_id=MODEL_GROUP_MENU_ID,
+                                filter_key=MODEL_GROUP_FILTER_KEY,
+                                options=MODEL_GROUP_OPTIONS,
+                                value=DEFAULT_MODEL_GROUP,
                             ),
                             _build_checklist_filter(
                                 "Model",
