@@ -614,40 +614,30 @@ def model_panel_id(model_name: str) -> str:
 
 
 def build_subnav_models(segment: str | None, selected_models, *, region: str | None = None, model_group: str | None = None, portfolio: str | None = None):
-    """Subnav chip list: segments in scope when the Segment filter drives the
-    selection, models in scope otherwise. Returns (label, children)."""
-    if selectors.is_segment_active(segment):
-        active_segments = selectors.active_segment_values(segment)
-        if not active_segments:
-            return "Segments in Scope", []
-        return "Segments in Scope", [
-            html.Div(
-                [
-                    html.Span(
-                        layout.format_segment_label(segment_value),
-                        className="saas-subnav-model-chip saas-subnav-segment-chip",
-                    )
-                    for segment_value in active_segments
-                ],
-                className="saas-subnav-model-list",
-            ),
-        ]
+    """Subnav chip list: always the models in scope. When a Segment filter is
+    active the in-scope models are the ones in that segment (group_effective_models
+    already applies the filter), so a segment selection narrows the chips rather
+    than switching the section to a segment list. Returns (label, children)."""
+    groups = selectors.group_effective_models(
+        segment, selected_models, region=region, model_group=model_group, portfolio=portfolio
+    )
 
-    effective_models = selectors.effective_model_names(segment, selected_models, region=region, model_group=model_group, portfolio=portfolio)
-
-    if not effective_models:
+    if not groups:
         return "Models in Scope", []
 
+    # One chip per parent Descriptive Name (not per child Model Name), scrolling
+    # to the parent card. Two Model Names sharing a descriptive name would
+    # otherwise surface as two identical-looking chips.
     return "Models in Scope", [
         html.Div(
             [
                 html.Button(
-                    selectors.model_descriptive_label(model_name),
+                    parent_label,
                     type="button",
                     className="saas-subnav-model-chip",
-                    **{"data-saas-scroll-target": model_panel_id(model_name)},
+                    **{"data-saas-scroll-target": model_group_id(parent_label)},
                 )
-                for model_name in effective_models
+                for parent_label, _member_models in groups
             ],
             className="saas-subnav-model-list",
         ),
@@ -767,6 +757,7 @@ def build_model_chart_cards(
             if str(row.get("MEV Name") or "").strip() == mev_name
         ]
         mev_label = selectors.resolve_mev_label(mev_name, mev_label_mode)
+        mev_type = selectors.mev_type_label(mev_name)
         mev_description = selectors.resolve_mev_description(mev_name)
         normalized_label_mode = selectors.normalize_mev_label_mode(mev_label_mode)
         if normalized_label_mode == "long_name" or normalized_label_mode == "group_mnemonic":
@@ -824,7 +815,15 @@ def build_model_chart_cards(
                         children=[
                             html.Div(
                                 [
-                                    html.Div(mev_label, className="pd-mev-chart-title"),
+                                    html.Div(
+                                        [
+                                            mev_label,
+                                            html.Span(mev_type, className="pd-mev-chart-type-tag")
+                                            if mev_type and mev_type != "—"
+                                            else None,
+                                        ],
+                                        className="pd-mev-chart-title",
+                                    ),
                                     *meta_lines,
                                 ]
                             ),
@@ -873,8 +872,133 @@ def group_cards_into_family_rows(
     return rows
 
 
+# Per-model attribute rows, in the order they render (and are considered for
+# roll-up to the parent header). A model can carry several distinct values for
+# one attribute (e.g. multi-region models), so labels pluralize. "Segment" is
+# deliberately absent: it is shown in the child summary heading instead, so it
+# is neither rendered as an attribute row nor rolled up to the header.
+_ATTRIBUTE_ORDER = ("Region", "Portfolio", "Model Group")
+
+
+def model_attributes(model_name: str) -> dict[str, list[str]]:
+    """``attribute -> display values`` for a model. Attributes with no value are
+    omitted. Includes a "Segment" key (used by the child summary heading);
+    :data:`_ATTRIBUTE_ORDER` governs which keys render as rows / roll up, and it
+    excludes Segment. Segment values are run through
+    :func:`layout.format_segment_label`."""
+    attributes: dict[str, list[str]] = {}
+
+    segments = SAAS_PAGE_DATA.get("model_segments_map", {}).get(model_name)
+    if not segments:
+        fallback = SAAS_PAGE_DATA.get("model_segments", {}).get(model_name)
+        segments = [fallback] if fallback else []
+    segment_values = [layout.format_segment_label(value) for value in segments if value]
+    if segment_values:
+        attributes["Segment"] = segment_values
+
+    for key, map_key in (
+        ("Region", "model_region_map"),
+        ("Portfolio", "model_portfolio_map"),
+        ("Model Group", "model_group_map"),
+    ):
+        values = [value for value in (SAAS_PAGE_DATA.get(map_key, {}).get(model_name) or []) if value]
+        if values:
+            attributes[key] = values
+
+    return attributes
+
+
+def _attribute_line(singular: str, values: list[str]):
+    label = singular if len(values) == 1 else f"{singular}s"
+    return html.P(f"{label}: {', '.join(values)}", className="pd-mev-model-attr")
+
+
+def render_attribute_lines(attributes: dict[str, list[str]], *, skip=()) -> list:
+    """Render an ordered attribute map to ``html.P`` rows, dropping the keys in
+    ``skip`` (used to suppress attributes already shown once on the parent card)."""
+    return [
+        _attribute_line(key, attributes[key])
+        for key in _ATTRIBUTE_ORDER
+        if key in attributes and key not in skip
+    ]
+
+
+def model_attribute_lines(model_name: str, *, skip=()) -> list:
+    """Full per-model attribute rows shown inside a parent card's child block."""
+    return render_attribute_lines(model_attributes(model_name), skip=skip)
+
+
+def partition_group_attributes(member_names: list[str]):
+    """Split a parent's attributes into the ones shared by every child and the
+    ones that differ. Returns ``(shared_lines, shared_keys)``: an attribute is
+    shared iff every member carries the identical value list for it, in which
+    case it renders once on the parent card and is suppressed on each child.
+
+    A singleton parent trivially shares every attribute, so they all roll up
+    into the header (the lone child then shows only its charts) -- giving a
+    singleton card the same header layout as a multi-child parent.
+    """
+    if not member_names:
+        return [], frozenset()
+
+    per_member = {name: model_attributes(name) for name in member_names}
+    shared_lines: list = []
+    shared_keys: set[str] = set()
+    for key in _ATTRIBUTE_ORDER:
+        values_seen = {tuple(per_member[name].get(key, ())) for name in member_names}
+        common = next(iter(values_seen))
+        if len(values_seen) == 1 and common:
+            shared_lines.append(_attribute_line(key, list(common)))
+            shared_keys.add(key)
+    return shared_lines, frozenset(shared_keys)
+
+
+def model_group_id(parent_label: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", parent_label.strip().lower()).strip("-")
+    return f"saas-model-group-{slug}"
+
+
+def build_model_group_card(
+    group_index: int,
+    parent_label: str,
+    member_panels: list,
+    *,
+    shared_attribute_lines: list | None = None,
+):
+    """One collapsible card per parent Descriptive Name, with every in-scope
+    child model panel nested inside. Two Model Names sharing a descriptive name
+    (see selectors.group_effective_models) render as sibling children of one card
+    instead of two visually-identical top-level panels. Attributes common to
+    every child are rolled up into the header; the card is a native
+    ``<details>`` so it can be collapsed, and the subnav opens it on navigation."""
+    summary_children = [
+        html.Div(f"{group_index}. Model", className="pd-content-kicker"),
+        html.H4(parent_label),
+    ]
+    if len(member_panels) > 1:
+        summary_children.append(
+            html.P(f"{len(member_panels)} models", className="pd-mev-model-group-count")
+        )
+    if shared_attribute_lines:
+        summary_children.append(
+            html.Div(shared_attribute_lines, className="pd-mev-model-group-shared")
+        )
+    return html.Details(
+        id=model_group_id(parent_label),
+        className="section-card pd-mev-model-group",
+        # Parent opens by default so the page loads showing the waterfall of
+        # child Model Names under each parent; each child stays collapsed until
+        # clicked so the charts start below the fold.
+        open=True,
+        children=[
+            html.Summary(summary_children, className="pd-mev-model-group-heading"),
+            html.Div(className="pd-mev-model-group-members", children=member_panels),
+        ],
+    )
+
+
 def build_model_panel(
-    panel_index: int,
+    panel_index: int | str,
     model_name: str,
     records_: list[dict],
     run_for,
@@ -886,6 +1010,7 @@ def build_model_panel(
     figure_builder,
     show_historical_statistics=False,
     theme_value: str | None = None,
+    suppress_attributes=(),
 ):
     snapshot_period_value = selectors.normalize_snapshot_period(snapshot_period)
     visible_records = records.filter_records_by_snapshot_period(records_, snapshot_period_value)
@@ -921,60 +1046,59 @@ def build_model_panel(
         mev_label_mode=mev_label_mode,
     )
     date_periods = records.available_date_periods(visible_records)
-    # A model can belong to multiple segments - list every distinct one.
-    model_segments_map = SAAS_PAGE_DATA.get("model_segments_map", {})
-    model_segment_values = model_segments_map.get(model_name) or []
-    if model_segment_values:
-        segment_name = ", ".join(layout.format_segment_label(value) for value in model_segment_values)
-    else:
-        segment_name = layout.format_segment_label(SAAS_PAGE_DATA.get("model_segments", {}).get(model_name))
-    segment_field_label = "Segments" if len(model_segment_values) > 1 else "Segment"
-
     selected_run_fors = selectors.normalize_selected_run_fors(run_for)
-    chart_cards = build_model_chart_cards(
-        model_name,
-        visible_records,
-        records_,
-        default_model_mev_mode,
-        default_model_scenarios,
-        snapshot_period_value,
-        mev_label_mode,
-        None,
-        reference_lines,
-        default_display_mevs,
-        figure_builder=figure_builder,
-        primary_run_for=selected_run_fors[0] if selected_run_fors else None,
-        show_historical_statistics=show_historical_statistics,
-        theme_value=theme_value,
-    )
+    attribute_lines = model_attribute_lines(model_name, skip=suppress_attributes)
+    # The child summary shows the model's segment(s); the underlying Model Name
+    # (its GMIS name) moves into the info-chip tooltip.
+    segment_labels = model_attributes(model_name).get("Segment", [])
+    summary_heading = ", ".join(segment_labels) if segment_labels else model_name
+    gmis_tooltip = f"GMIS Name: {model_name}"
+    # Charts are built lazily the first time this (collapsed-by-default) panel is
+    # opened -- see the MODEL_CHART_TRIGGER_TYPE callback. Rendering every model's
+    # charts up front draws dozens of hidden Plotly figures at once and freezes
+    # the page, so the grid starts as a placeholder and a hidden trigger button
+    # (clicked by the client on first open) asks the server to build them.
+    chart_cards = [
+        html.Div("Loading charts…", className="pd-mev-chart-meta saas-chart-placeholder"),
+    ]
 
-    return html.Div(
+    # Collapsible child panel: the summary is the model's identity (so a
+    # collapsed parent card shows a waterfall of just its child Model Names),
+    # and the body -- filter controls plus charts -- lives below the fold.
+    # Charts stay in the DOM while collapsed, so their MATCH callbacks keep
+    # working; a global 'toggle' handler resizes Plotly when a panel opens.
+    return html.Details(
         id=model_panel_id(model_name),
-        className="section-card pd-mev-model-panel",
+        className="pd-mev-model-panel",
+        open=False,
         children=[
-            html.Div(
-                className="pd-mev-model-heading",
+            html.Summary(
+                className="pd-mev-model-heading-summary",
                 children=[
                     html.Div(
                         className="pd-mev-model-copy",
                         children=[
                             html.Div(
                                 [
-                                    f"{panel_index}. {model_name}",
+                                    f"{panel_index}. {summary_heading}",
                                     html.Span(
                                         "i",
                                         className="pd-info-chip",
-                                        title="This is the model name used in the GMIS system.",
+                                        title=gmis_tooltip,
                                         style={"marginLeft": "6px", "textTransform": "none", "verticalAlign": "middle"},
-                                        **{"aria-label": "This is the model name used in the GMIS system."},
+                                        **{"aria-label": gmis_tooltip},
                                     ),
                                 ],
                                 className="pd-content-kicker",
                             ),
-                            html.H4(selectors.model_descriptive_label(model_name)),
-                            html.P(f"{segment_field_label}: {segment_name}"),
+                            *attribute_lines,
                         ],
                     ),
+                ],
+            ),
+            html.Div(
+                className="pd-mev-model-body",
+                children=[
                     html.Div(
                         className="pd-mev-model-heading-actions",
                         children=[
@@ -1032,16 +1156,19 @@ def build_model_panel(
                             ),
                         ],
                     ),
+                    html.Button(
+                        id={"type": layout.MODEL_CHART_TRIGGER_TYPE, "model": model_name},
+                        className="saas-chart-trigger",
+                        style={"display": "none"},
+                        n_clicks=0,
+                        **{"aria-hidden": "true", "tabIndex": -1},
+                    ),
+                    html.Div(
+                        id={"type": layout.MODEL_MEV_GRID_TYPE, "model": model_name},
+                        className="pd-mev-chart-grid",
+                        children=chart_cards,
+                    ),
                 ],
-            ),
-            html.Div(
-                "Tip: drag on a chart to zoom in; double-click the chart to return to the original view.",
-                className="pd-mev-chart-meta saas-zoom-note",
-            ),
-            html.Div(
-                id={"type": layout.MODEL_MEV_GRID_TYPE, "model": model_name},
-                className="pd-mev-chart-grid",
-                children=chart_cards,
             ),
         ],
     )

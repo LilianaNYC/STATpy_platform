@@ -2427,6 +2427,17 @@ def build_saas_mev_time_series_figure(
 
     legend_title_text = "Scenario"
     show_bottom_legend = reference_lines != "monitoring"
+    # Left-aligned legend whose box spans the full plot width: with
+    # entrywidthmode="fraction" the box takes the plot width and each entry a
+    # fraction of it. Entries are floored at half-width -- measured in the
+    # browser, a full scenario label needs ~132px and the responsive dashboard
+    # cards only give ~120px thirds, so three-across clips; half-width rows of
+    # two never do (the fixed-size report export overrides this to thirds).
+    legend_entry_count = sum(
+        1 for trace in fig.data
+        if getattr(trace, "showlegend", None) is not False and getattr(trace, "name", None)
+    )
+    legend_entry_width = max(1 / legend_entry_count if legend_entry_count else 1, 0.5)
     fig.update_layout(
         height=438,
         margin=dict(t=52, r=18, b=88 if reference_lines == "monitoring" else bottom_margin, l=72),
@@ -2443,13 +2454,17 @@ def build_saas_mev_time_series_figure(
             title=dict(
                 text=legend_title_text,
                 font=dict(size=10.5, color=palette["legend_title"]),
+                # Title on its own row so the entries get the full box width.
+                side="top",
             ),
+            # The bottom legend only shows for reference_lines none/min_max
+            # (monitoring hides it).
             x=0,
             xanchor="left",
             y=legend_y,
             yanchor="top",
-            entrywidthmode="pixels",
-            entrywidth=125 if ultra_compact_legend else 110 if compact_legend else 100,
+            entrywidthmode="fraction",
+            entrywidth=legend_entry_width,
             bgcolor=palette["legend_bg"],
             bordercolor=palette["legend_border"],
             borderwidth=1,

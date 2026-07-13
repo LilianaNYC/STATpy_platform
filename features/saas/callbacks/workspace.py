@@ -41,6 +41,7 @@ _normalize_snapshot_period = selectors.normalize_snapshot_period
 _normalize_mev_label_mode = selectors.normalize_mev_label_mode
 _normalize_theme_value = selectors.normalize_theme_value
 _effective_model_names = selectors.effective_model_names
+_group_effective_models = selectors.group_effective_models
 _primary_run_for_value = selectors.primary_run_for_value
 _show_historical_statistics = selectors.show_historical_statistics
 _compute_saas_metrics = metrics.compute_saas_metrics
@@ -605,6 +606,7 @@ def _register_export_callbacks(
 ) -> None:
     @app.callback(
         Output(layout.DOWNLOAD_DATA_ID, "data"),
+        Output(layout.DOWNLOAD_REPORT_STATUS_ID, "children"),
         Input(layout.DOWNLOAD_REPORT_ID, "n_clicks"),
         State(layout.APPLIED_FILTERS_STORE_ID, "data"),
         prevent_initial_call=True,
@@ -623,7 +625,7 @@ def _register_export_callbacks(
         snapshot_period = applied.get("snapshot_period")
         reference_lines = applied.get("reference_lines")
         mev_label_mode = applied.get("mev_label_mode")
-        sections = reports.build_report_figures(
+        sections = reports.build_grouped_report_sections(
             run_for, compare_against, segment, selected_models,
             snapshot_period, reference_lines, mev_label_mode,
             region=region, model_group=model_group, portfolio=portfolio,
@@ -642,8 +644,8 @@ def _register_export_callbacks(
             f"Model Use Case / Cycle: {_run_for_meta_label(run_for)}",
             f"Compare To: {_compare_against_toggle_label(compare_against, _primary_run_for_value(run_for))}",
             f"Region: {region_labels.get(region or layout.DEFAULT_REGION, region)}",
-            f"Model Group: {model_group_labels.get(model_group or layout.DEFAULT_MODEL_GROUP, model_group)}",
             f"Portfolio: {portfolio_labels.get(portfolio or layout.DEFAULT_PORTFOLIO, portfolio)}",
+            f"Model Group: {model_group_labels.get(model_group or layout.DEFAULT_MODEL_GROUP, model_group)}",
             scope_label,
             f"Snapshot Period: {subnav_view_labels.get(_normalize_snapshot_period(snapshot_period), snapshot_period)}",
             f"Reference Lines: {reference_line_labels.get(reference_lines or layout.DEFAULT_REFERENCE_LINES, reference_lines)}",
@@ -653,22 +655,23 @@ def _register_export_callbacks(
         html_doc = exports.build_saas_report_html(sections, meta_lines)
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         prefix = reports.run_for_filename_prefix(run_for)
-        return dcc.send_string(html_doc, filename=f"{prefix}-saas-charts-{timestamp}.html")
+        return dcc.send_string(html_doc, filename=f"{prefix}-saas-charts-{timestamp}.html"), timestamp
 
     @app.callback(
         Output(layout.EXCEL_MODAL_ID, "className"),
         Input(layout.EXCEL_OPEN_ID, "n_clicks"),
         Input(layout.EXCEL_CANCEL_ID, "n_clicks"),
-        Input(layout.EXCEL_GENERATE_ID, "n_clicks"),
         prevent_initial_call=True,
     )
-    def toggle_excel_modal(_open_clicks, _cancel_clicks, _generate_clicks):
+    def toggle_excel_modal(_open_clicks, _cancel_clicks):
         if ctx.triggered_id == layout.EXCEL_OPEN_ID:
             return "saas-modal-overlay is-open"
         return "saas-modal-overlay"
 
     @app.callback(
         Output(layout.EXCEL_DOWNLOAD_DATA_ID, "data"),
+        Output(layout.EXCEL_STATUS_ID, "children"),
+        Output(layout.EXCEL_MODAL_ID, "className", allow_duplicate=True),
         Input(layout.EXCEL_GENERATE_ID, "n_clicks"),
         State(layout.EXCEL_SCENARIO_ID, "value"),
         State(layout.APPLIED_FILTERS_STORE_ID, "data"),
@@ -705,8 +708,8 @@ def _register_export_callbacks(
             f"Model Use Case / Cycle: {primary_run_for or '—'}",
             f"Scenario: {scenario_label}",
             f"Region: {region_labels.get(region or layout.DEFAULT_REGION, region)}",
-            f"Model Group: {model_group_labels.get(model_group or layout.DEFAULT_MODEL_GROUP, model_group)}",
             f"Portfolio: {portfolio_labels.get(portfolio or layout.DEFAULT_PORTFOLIO, portfolio)}",
+            f"Model Group: {model_group_labels.get(model_group or layout.DEFAULT_MODEL_GROUP, model_group)}",
             scope_label,
             f"MEV Label: {mev_label_mode_labels.get(_normalize_mev_label_mode(mev_label_mode), mev_label_mode)}",
             f"All Metrics and Charts in this workbook are computed from the selected scenario ({scenario_label}): "
@@ -721,22 +724,27 @@ def _register_export_callbacks(
         workbook = exports.build_saas_excel_workbook(metric_rows, chart_specs, meta_lines, scenario_label, columns)
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         prefix = reports.run_for_filename_prefix(run_for)
-        return dcc.send_bytes(lambda buffer: workbook.save(buffer), filename=f"{prefix}-saas-historical-range-analysis-{timestamp}.xlsx")
+        return (
+            dcc.send_bytes(lambda buffer: workbook.save(buffer), filename=f"{prefix}-saas-historical-range-analysis-{timestamp}.xlsx"),
+            timestamp,
+            "saas-modal-overlay",
+        )
 
     @app.callback(
         Output(layout.RECON_MODAL_ID, "className"),
         Input(layout.RECON_OPEN_ID, "n_clicks"),
         Input(layout.RECON_CANCEL_ID, "n_clicks"),
-        Input(layout.RECON_GENERATE_ID, "n_clicks"),
         prevent_initial_call=True,
     )
-    def toggle_recon_modal(_open_clicks, _cancel_clicks, _generate_clicks):
+    def toggle_recon_modal(_open_clicks, _cancel_clicks):
         if ctx.triggered_id == layout.RECON_OPEN_ID:
             return "saas-modal-overlay is-open"
         return "saas-modal-overlay"
 
     @app.callback(
         Output(layout.RECON_DOWNLOAD_DATA_ID, "data"),
+        Output(layout.RECON_STATUS_ID, "children"),
+        Output(layout.RECON_MODAL_ID, "className", allow_duplicate=True),
         Input(layout.RECON_GENERATE_ID, "n_clicks"),
         State(layout.RECON_SCENARIO_ID, "value"),
         State(layout.APPLIED_FILTERS_STORE_ID, "data"),
@@ -777,8 +785,8 @@ def _register_export_callbacks(
             f"Compare To: {', '.join(compare_cycles) if compare_cycles else 'None selected'}",
             f"Scenario: {scenario_label}",
             f"Region: {region_labels.get(region or layout.DEFAULT_REGION, region)}",
-            f"Model Group: {model_group_labels.get(model_group or layout.DEFAULT_MODEL_GROUP, model_group)}",
             f"Portfolio: {portfolio_labels.get(portfolio or layout.DEFAULT_PORTFOLIO, portfolio)}",
+            f"Model Group: {model_group_labels.get(model_group or layout.DEFAULT_MODEL_GROUP, model_group)}",
             scope_label,
             f"MEV Label: {mev_label_mode_labels.get(_normalize_mev_label_mode(mev_label_mode), mev_label_mode)}",
             f"Relative threshold: {threshold_fraction * 100:g}% by default - editable in the Summary tab (cell B1).",
@@ -794,22 +802,27 @@ def _register_export_callbacks(
         workbook = exports.build_saas_reconciliation_workbook(recon, meta_lines, scenario_label, threshold_fraction)
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         prefix = reports.run_for_filename_prefix(run_for)
-        return dcc.send_bytes(lambda buffer: workbook.save(buffer), filename=f"{prefix}-saas-historical-reconciliation-{timestamp}.xlsx")
+        return (
+            dcc.send_bytes(lambda buffer: workbook.save(buffer), filename=f"{prefix}-saas-historical-reconciliation-{timestamp}.xlsx"),
+            timestamp,
+            "saas-modal-overlay",
+        )
 
     @app.callback(
         Output(layout.PROJECTION_MODAL_ID, "className"),
         Input(layout.PROJECTION_OPEN_ID, "n_clicks"),
         Input(layout.PROJECTION_CANCEL_ID, "n_clicks"),
-        Input(layout.PROJECTION_GENERATE_ID, "n_clicks"),
         prevent_initial_call=True,
     )
-    def toggle_projection_modal(_open_clicks, _cancel_clicks, _generate_clicks):
+    def toggle_projection_modal(_open_clicks, _cancel_clicks):
         if ctx.triggered_id == layout.PROJECTION_OPEN_ID:
             return "saas-modal-overlay is-open"
         return "saas-modal-overlay"
 
     @app.callback(
         Output(layout.PROJECTION_DOWNLOAD_DATA_ID, "data"),
+        Output(layout.PROJECTION_STATUS_ID, "children"),
+        Output(layout.PROJECTION_MODAL_ID, "className", allow_duplicate=True),
         Input(layout.PROJECTION_GENERATE_ID, "n_clicks"),
         State(layout.PROJECTION_SCENARIO_ID, "value"),
         State(layout.PROJECTION_HORIZON_ID, "value"),
@@ -854,8 +867,8 @@ def _register_export_callbacks(
             f"Compare To: {', '.join(compare_cycles) if compare_cycles else 'None selected'}",
             f"Scenario: {scenario_label}",
             f"Region: {region_labels.get(region or layout.DEFAULT_REGION, region)}",
-            f"Model Group: {model_group_labels.get(model_group or layout.DEFAULT_MODEL_GROUP, model_group)}",
             f"Portfolio: {portfolio_labels.get(portfolio or layout.DEFAULT_PORTFOLIO, portfolio)}",
+            f"Model Group: {model_group_labels.get(model_group or layout.DEFAULT_MODEL_GROUP, model_group)}",
             scope_label,
             f"MEV Label: {mev_label_mode_labels.get(_normalize_mev_label_mode(mev_label_mode), mev_label_mode)}",
             f"Projection horizon: up to Q{max_quarter}.",
@@ -872,7 +885,11 @@ def _register_export_callbacks(
         workbook = exports.build_saas_projection_workbook(comparison, meta_lines, scenario_label)
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         prefix = reports.run_for_filename_prefix(run_for)
-        return dcc.send_bytes(lambda buffer: workbook.save(buffer), filename=f"{prefix}-saas-projection-comparison-{timestamp}.xlsx")
+        return (
+            dcc.send_bytes(lambda buffer: workbook.save(buffer), filename=f"{prefix}-saas-projection-comparison-{timestamp}.xlsx"),
+            timestamp,
+            "saas-modal-overlay",
+        )
 
 
 def _register_filter_callbacks(app) -> None:
@@ -944,11 +961,11 @@ def _register_filter_callbacks(app) -> None:
         option_values = set(all_option_values)
         current_values = [value for value in current_values if value in option_values]
         has_specific_model_selection = 0 < len(current_values) < len(all_option_values)
-        # Segment and Specific Models are both always interactive in SAAS
+        # Segment and Models are both always interactive in SAAS
         # (unlike the PD Performance dashboard, where they're mutually
         # exclusive). If both end up set, Segment still takes priority in
         # effective_model_names. Segment's own options are additionally
-        # narrowed to whatever the current Specific Models selection actually
+        # narrowed to whatever the current Models selection actually
         # covers (segment=None here so Segment doesn't gate its own options).
         selected_raw_models = _effective_model_names(None, current_values, region=region, model_group=model_group, portfolio=portfolio)
         select_all_options = [{"label": "All", "value": "all"}]
@@ -962,7 +979,7 @@ def _register_filter_callbacks(app) -> None:
         toggle_label = _model_toggle_label(current_values, all_options, False)
 
         if segment_active and has_specific_model_selection:
-            help_text = "Both Segment and Specific Models are set. Segment takes priority while it's active."
+            help_text = "Both Segment and Models are set. Segment takes priority while it's active."
         else:
             help_text = ""
 
@@ -978,52 +995,52 @@ def _register_filter_callbacks(app) -> None:
 
         return (
             segment_options,
-            False,  # Segment's toggle is never disabled by a Specific Models selection
+            False,  # Segment's toggle is never disabled by a Models selection
             select_all_options,
             model_options,
             current_values,
             toggle_label,
-            False,  # Specific Models' toggle is never disabled by a Segment selection
+            False,  # Models' toggle is never disabled by a Segment selection
             help_text,
         )
 
-    # Cascade: Region -> Model Group -> Portfolio -> Specific Models, with
+    # Cascade: Region -> Portfolio -> Model Group -> Models, with
     # Segment narrowing off the same three upstream filters as a separate
-    # (mutually exclusive with Specific Models) alternative. Each step below
+    # (mutually exclusive with Models) alternative. Each step below
     # narrows the next filter's options to only values still reachable, and
     # resets that filter back to "All" if its current selection is no longer
     # part of the narrowed set.
-    @app.callback(
-        Output(layout.MODEL_GROUP_ID, "options"),
-        Output(layout.MODEL_GROUP_MENU_ID, "children"),
-        Output(layout.MODEL_GROUP_ID, "value", allow_duplicate=True),
-        Input(layout.REGION_ID, "value"),
-        State(layout.MODEL_GROUP_ID, "value"),
-        prevent_initial_call=True,
-    )
-    def narrow_model_group_options(region, current_model_group):
-        options = _model_group_options_for_filters(region=region)
-        valid_values = {option["value"] for option in options}
-        selected_value = current_model_group if current_model_group in valid_values else layout.MODEL_GROUP_ALL_VALUE
-        children = shared_filters.build_single_select_option_buttons(options, selected_value, layout.MODEL_GROUP_FILTER_KEY)
-        value_output = selected_value if selected_value != current_model_group else no_update
-        return options, children, value_output
-
     @app.callback(
         Output(layout.PORTFOLIO_ID, "options"),
         Output(layout.PORTFOLIO_MENU_ID, "children"),
         Output(layout.PORTFOLIO_ID, "value", allow_duplicate=True),
         Input(layout.REGION_ID, "value"),
-        Input(layout.MODEL_GROUP_ID, "value"),
         State(layout.PORTFOLIO_ID, "value"),
         prevent_initial_call=True,
     )
-    def narrow_portfolio_options(region, model_group, current_portfolio):
-        options = _portfolio_options_for_filters(region=region, model_group=model_group)
+    def narrow_portfolio_options(region, current_portfolio):
+        options = _portfolio_options_for_filters(region=region)
         valid_values = {option["value"] for option in options}
         selected_value = current_portfolio if current_portfolio in valid_values else layout.PORTFOLIO_ALL_VALUE
         children = shared_filters.build_single_select_option_buttons(options, selected_value, layout.PORTFOLIO_FILTER_KEY)
         value_output = selected_value if selected_value != current_portfolio else no_update
+        return options, children, value_output
+
+    @app.callback(
+        Output(layout.MODEL_GROUP_ID, "options"),
+        Output(layout.MODEL_GROUP_MENU_ID, "children"),
+        Output(layout.MODEL_GROUP_ID, "value", allow_duplicate=True),
+        Input(layout.REGION_ID, "value"),
+        Input(layout.PORTFOLIO_ID, "value"),
+        State(layout.MODEL_GROUP_ID, "value"),
+        prevent_initial_call=True,
+    )
+    def narrow_model_group_options(region, portfolio, current_model_group):
+        options = _model_group_options_for_filters(region=region, portfolio=portfolio)
+        valid_values = {option["value"] for option in options}
+        selected_value = current_model_group if current_model_group in valid_values else layout.MODEL_GROUP_ALL_VALUE
+        children = shared_filters.build_single_select_option_buttons(options, selected_value, layout.MODEL_GROUP_FILTER_KEY)
+        value_output = selected_value if selected_value != current_model_group else no_update
         return options, children, value_output
 
     @app.callback(
@@ -1228,7 +1245,7 @@ def _register_render_callbacks(app) -> None:
         if not effective_models:
             return _build_empty_state(
                 "No models match the current filters",
-                "Adjust Region, Model Group, Portfolio, Segment, or Specific Models to bring one or more SAAS models into scope.",
+                "Adjust Region, Portfolio, Model Group, Segment, or Models to bring one or more SAAS models into scope.",
             )
 
         time_series_df = SAAS_PAGE_DATA.get("mev_time_series")
@@ -1243,27 +1260,42 @@ def _register_render_callbacks(app) -> None:
 
         records = filtered_df.to_dict(orient="records")
         panels = []
-        for panel_index, model_name in enumerate(effective_models, start=1):
-            model_records = [row for row in records if row.get("Model Name") == model_name]
+        for group_index, (parent_label, member_models) in enumerate(
+            _group_effective_models(segment, selected_models, region=region, model_group=model_group, portfolio=portfolio),
+            start=1,
+        ):
+            shared_attribute_lines, shared_attribute_keys = views.partition_group_attributes(member_models)
+            member_panels = []
+            for child_index, model_name in enumerate(member_models, start=1):
+                model_records = [row for row in records if row.get("Model Name") == model_name]
+                member_panels.append(
+                    views.build_model_panel(
+                        f"{group_index}.{child_index}",
+                        model_name,
+                        model_records,
+                        selected_run_fors,
+                        compare_against,
+                        snapshot_period,
+                        mev_label_mode,
+                        reference_lines,
+                        figure_builder=figures.build_model_figure,
+                        show_historical_statistics=show_historical_statistics,
+                        theme_value=theme_value,
+                        suppress_attributes=shared_attribute_keys,
+                    )
+                )
             panels.append(
-                views.build_model_panel(
-                    panel_index,
-                    model_name,
-                    model_records,
-                    selected_run_fors,
-                    compare_against,
-                    snapshot_period,
-                    mev_label_mode,
-                    reference_lines,
-                    figure_builder=figures.build_model_figure,
-                    show_historical_statistics=show_historical_statistics,
-                    theme_value=theme_value,
+                views.build_model_group_card(
+                    group_index,
+                    parent_label,
+                    member_panels,
+                    shared_attribute_lines=shared_attribute_lines,
                 )
             )
 
         return panels or _build_empty_state(
             "No MEV charts match the current filters",
-            "Adjust the Model Use Case / Cycle, Segment, or Specific Models filters to broaden the SAAS workbook selection.",
+            "Adjust the Model Use Case / Cycle, Segment, or Models filters to broaden the SAAS workbook selection.",
         )
 
     @app.callback(
@@ -1277,11 +1309,19 @@ def _register_render_callbacks(app) -> None:
         Input({"type": layout.MODEL_DATE_RANGE_FROM_TYPE, "model": MATCH}, "value"),
         Input({"type": layout.MODEL_DATE_RANGE_TO_TYPE, "model": MATCH}, "value"),
         Input(theme.APP_THEME_ID, "value"),
+        Input({"type": layout.MODEL_CHART_TRIGGER_TYPE, "model": MATCH}, "n_clicks"),
         State({"type": layout.MODEL_MEV_GRID_TYPE, "model": MATCH}, "id"),
         State(layout.APPLIED_FILTERS_STORE_ID, "data"),
         prevent_initial_call=True,
     )
-    def update_model_mev_chart_controls(selected_mev_mode, selected_scenario, selected_mevs_multi, selected_mev_single, window_value, from_value, to_value, theme_value, model_grid_id, applied):
+    def update_model_mev_chart_controls(selected_mev_mode, selected_scenario, selected_mevs_multi, selected_mev_single, window_value, from_value, to_value, theme_value, chart_trigger, model_grid_id, applied):
+        # Lazy render: charts are only built once the panel has been opened at
+        # least once (the client clicks the hidden MODEL_CHART_TRIGGER_TYPE button
+        # on first open). Until then this callback -- which also fires when the
+        # dropdowns mount and when sync sets their values -- must not build the
+        # dozens of hidden charts that froze the page.
+        if not chart_trigger:
+            return no_update, no_update
         model_name = (
             ctx.triggered_id.get("model")
             if isinstance(ctx.triggered_id, dict)

@@ -273,12 +273,12 @@ def compute_saas_metrics(run_for, segment, selected_models, mev_label_mode, scen
         # grouped by type then ordered by label.
         mev_names = sorted(
             present_names,
-            key=lambda name: (selectors.excel_mev_type_label(name), selectors.resolve_mev_label(name, mev_label_mode).lower()),
+            key=lambda name: (selectors.mev_type_label(name), selectors.resolve_mev_label(name, mev_label_mode).lower()),
         )
         for mev_name in mev_names:
             subset = [row for row in model_records if str(row.get("MEV Name") or "").strip() == mev_name]
             mev_label = selectors.resolve_mev_label(mev_name, mev_label_mode)
-            mev_type = selectors.excel_mev_type_label(mev_name)
+            mev_type = selectors.mev_type_label(mev_name)
             baseline_min, baseline_max = baseline_bounds.get((model_name, mev_name), (None, None))
             record = compute_saas_metric_record(
                 model_name, mev_label, subset,
@@ -365,7 +365,7 @@ def compute_saas_reconciliation(run_for, compare_against, segment, selected_mode
             mev_blocks.append({
                 "mev_name": mev_name,
                 "mev_label": selectors.resolve_mev_label(mev_name, mev_label_mode),
-                "mev_type": selectors.excel_mev_type_label(mev_name),
+                "mev_type": selectors.mev_type_label(mev_name),
                 "periods": [excel_quarter_label(date) for date in ordered_dates],
                 "values": values,
                 "diffs": diffs,
@@ -450,7 +450,7 @@ def compute_saas_projection_comparison(run_for, compare_against, segment, select
             mev_blocks.append({
                 "mev_name": mev_name,
                 "mev_label": selectors.resolve_mev_label(mev_name, mev_label_mode),
-                "mev_type": selectors.excel_mev_type_label(mev_name),
+                "mev_type": selectors.mev_type_label(mev_name),
                 "periods": [f"Q{quarter}" for quarter in ordered_quarters],
                 "values": values,
                 "diffs": diffs,

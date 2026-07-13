@@ -16,6 +16,7 @@ from .....shared.ui.charts import (
 )
 from .....shared.ui import controls as shared_filters
 from .....shared.ui.controls import build_chart_header, build_section_filter_bar, build_section_filter_item
+from .....shared.ui.loading import build_dashboard_loading_shell
 from .....shared.domain.calculations import pd_tone_class
 from .....shared.domain.mev_range import (
     calculate_pd_mev_thresholds,
@@ -1136,7 +1137,7 @@ def page_layout() -> list:
                                     ),
                                 ),
                                 _build_filter(
-                                    "Specific Models",
+                                    "Model",
                                     shared_filters.build_single_select_dropdown(
                                         value_id=MODEL_DROPDOWN_ID,
                                         toggle_id=MODEL_TOGGLE_ID,
@@ -1159,8 +1160,11 @@ def page_layout() -> list:
             children=[
                 html.Div(
                     className="tab-panel active pd-performance-app",
-                    children=html.Div(
-                        id=CONTENT_ID,
+                    children=build_dashboard_loading_shell(
+                        content_id=CONTENT_ID,
+                        scope_label="Monitoring Dashboard",
+                        title="Refreshing dashboard",
+                        note="Updating scoped metrics, charts, and summary insights.",
                         children=build_ead_apply_prompt(),
                     ),
                 ),

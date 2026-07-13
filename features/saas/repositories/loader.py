@@ -19,6 +19,7 @@ import pandas as pd
 
 from ....shared.domain import constants as config
 from ....config.settings import settings
+from ....shared.text import cell_str as _cell_str
 from ....shared.text import normalize_model_name as _normalize_model_name
 from ....shared.text import ordered_unique_strings as _ordered_unique_strings
 from ...monitoring.repositories.loader import load_pd_mev_catalog
@@ -115,6 +116,7 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
         "mev_group_label_map": {},
         "mev_description_map": {},
         "model_descriptive_name_map": {},
+        "descriptive_groups": {},
         "model_mev_contribution_map": {},
         "mev_time_series": empty_time_series,
     }
@@ -195,9 +197,9 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
 
     time_series_df["Date"] = pd.to_datetime(time_series_df.get("Date"), dayfirst=False, errors="coerce")
     time_series_df["Quarter"] = pd.to_numeric(time_series_df.get("Quarter"), errors="coerce")
-    time_series_df["Run For"] = time_series_df.get("Run For").map(lambda value: str(value).strip() if value is not None else "")
-    time_series_df["Scenario"] = time_series_df.get("Scenario").map(lambda value: str(value).strip() if value is not None else "")
-    time_series_df["MEV Name"] = time_series_df.get("MEV Name").map(lambda value: str(value).strip() if value is not None else "")
+    time_series_df["Run For"] = time_series_df.get("Run For").map(_cell_str)
+    time_series_df["Scenario"] = time_series_df.get("Scenario").map(_cell_str)
+    time_series_df["MEV Name"] = time_series_df.get("MEV Name").map(_cell_str)
     time_series_df["MEV Value"] = pd.to_numeric(time_series_df.get("MEV Value"), errors="coerce")
     time_series_df = time_series_df.dropna(subset=["Date", "MEV Value"])
     time_series_df = time_series_df[time_series_df["MEV Name"].astype(bool)][
@@ -208,7 +210,7 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
     run_for_quarter_zero_dates: dict[str, Any] = {}
     quarter_zero_df = time_series_df[time_series_df["Quarter"] == 0]
     for row in quarter_zero_df.to_dict(orient="records"):
-        run_for = str(row.get("Run For") or "").strip()
+        run_for = _cell_str(row.get("Run For"))
         date_value = row.get("Date")
         if not run_for or date_value is None:
             continue
@@ -216,7 +218,7 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
             run_for_quarter_zero_dates[run_for] = date_value
 
     model_characteristic_df["Run For"] = model_characteristic_df.get("Run For").map(
-        lambda value: str(value).strip() if value is not None else ""
+        _cell_str
     )
     model_characteristic_df["Model Name"] = model_characteristic_df.get(config.DUMMY_MEV_MODEL_NAME_COLUMN).map(
         _normalize_model_name
@@ -229,10 +231,10 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
     model_portfolio_map: dict[str, list[str]] = {}
     for row in model_characteristic_df.to_dict(orient="records"):
         model_name = _normalize_model_name(row.get("Model Name"))
-        descriptive_name = str(row.get("Model Descriptive Name") or "").strip()
+        descriptive_name = _cell_str(row.get("Model Descriptive Name"))
         if model_name and descriptive_name and model_name not in model_descriptive_name_map:
             model_descriptive_name_map[model_name] = descriptive_name
-        segment = str(row.get("Segment Name") or "").strip()
+        segment = _cell_str(row.get("Segment Name"))
         if model_name and segment:
             if model_name not in model_segments:
                 model_segments[model_name] = segment
@@ -241,21 +243,36 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
             segments_for_model = model_segments_map.setdefault(model_name, [])
             if segment not in segments_for_model:
                 segments_for_model.append(segment)
-        region = str(row.get("Region") or "").strip()
+        region = _cell_str(row.get("Region"))
         if model_name and region:
             regions_for_model = model_region_map.setdefault(model_name, [])
             if region not in regions_for_model:
                 regions_for_model.append(region)
-        model_group = str(row.get("Model Type") or "").strip()
+        model_group = _cell_str(row.get("Model Type"))
         if model_name and model_group:
             groups_for_model = model_group_map.setdefault(model_name, [])
             if model_group not in groups_for_model:
                 groups_for_model.append(model_group)
-        portfolio = str(row.get("Portfolio") or "").strip()
+        portfolio = _cell_str(row.get("Portfolio"))
         if model_name and portfolio:
             portfolios_for_model = model_portfolio_map.setdefault(model_name, [])
             if portfolio not in portfolios_for_model:
                 portfolios_for_model.append(portfolio)
+    # Parent (Model Descriptive Name) -> ordered child Model Names. Model Name is
+    # the only unique id, so a model with no descriptive name is its own singleton
+    # parent -- this is the single place the "fall back to Model Name" rule is
+    # applied (mirrors selectors.model_descriptive_label). Two Model Names sharing
+    # a descriptive name are the intended children of one parent.
+    descriptive_groups: dict[str, list[str]] = {}
+    for row in model_characteristic_df.to_dict(orient="records"):
+        model_name = _normalize_model_name(row.get("Model Name"))
+        if not model_name:
+            continue
+        parent = model_descriptive_name_map.get(model_name) or model_name
+        members = descriptive_groups.setdefault(parent, [])
+        if model_name not in members:
+            members.append(model_name)
+
     segment_values = _ordered_unique_strings(
         model_characteristic_df.get("Segment Name", pd.Series(dtype=object)).tolist()
     )
@@ -276,7 +293,7 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
     model_characteristic_df = model_characteristic_df.dropna(subset=["Development Date"])
     model_development_dates: dict[str, dict[str, Any]] = {}
     for row in model_characteristic_df.to_dict(orient="records"):
-        run_for = str(row.get("Run For") or "").strip()
+        run_for = _cell_str(row.get("Run For"))
         model_name = _normalize_model_name(row.get("Model Name"))
         development_date = row.get("Development Date")
         if not run_for or not model_name or development_date is None:
@@ -333,6 +350,7 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
         "mev_group_label_map": mev_group_label_map,
         "mev_description_map": mev_description_map,
         "model_descriptive_name_map": model_descriptive_name_map,
+        "descriptive_groups": descriptive_groups,
         "model_mev_contribution_map": model_mev_contribution_map,
         "mev_time_series": time_series_df,
     }
@@ -372,6 +390,7 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
 #         "mev_group_label_map": {},
 #         "mev_description_map": {},
 #         "model_descriptive_name_map": {},
+#         "descriptive_groups": {},                  # NEW
 #         "model_mev_contribution_map": {},
 #         "mev_time_series": empty_time_series,
 #     }
@@ -494,9 +513,9 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
 
 #     time_series_df["Date"] = pd.to_datetime(time_series_df.get("Date"), dayfirst=False, errors="coerce")
 #     time_series_df["Quarter"] = pd.to_numeric(time_series_df.get("Quarter"), errors="coerce")
-#     time_series_df["Run For"] = time_series_df.get("Run For").map(lambda value: str(value).strip() if value is not None else "")
-#     time_series_df["Scenario"] = time_series_df.get("Scenario").map(lambda value: str(value).strip() if value is not None else "")
-#     time_series_df["MEV Name"] = time_series_df.get("MEV Name").map(lambda value: str(value).strip() if value is not None else "")
+#     time_series_df["Run For"] = time_series_df.get("Run For").map(_cell_str)
+#     time_series_df["Scenario"] = time_series_df.get("Scenario").map(_cell_str)
+#     time_series_df["MEV Name"] = time_series_df.get("MEV Name").map(_cell_str)
 #     time_series_df["MEV Value"] = pd.to_numeric(time_series_df.get("MEV Value"), errors="coerce")
 #     time_series_df = time_series_df.dropna(subset=["Date", "MEV Value"])
 #     time_series_df = time_series_df[time_series_df["MEV Name"].astype(bool)][
@@ -507,7 +526,7 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
 #     run_for_quarter_zero_dates: dict[str, Any] = {}
 #     quarter_zero_df = time_series_df[time_series_df["Quarter"] == 0]
 #     for row in quarter_zero_df.to_dict(orient="records"):
-#         run_for = str(row.get("Run For") or "").strip()
+#         run_for = _cell_str(row.get("Run For"))
 #         date_value = row.get("Date")
 #         if not run_for or date_value is None:
 #             continue
@@ -515,7 +534,7 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
 #             run_for_quarter_zero_dates[run_for] = date_value
 
 #     model_characteristic_df["Run For"] = model_characteristic_df.get("Run For").map(
-#         lambda value: str(value).strip() if value is not None else ""
+#         _cell_str
 #     )
 #     model_characteristic_df["Model Name"] = model_characteristic_df.get("Model Name").map(_normalize_model_name)
 
@@ -527,10 +546,10 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
 #     model_portfolio_map: dict[str, list[str]] = {}     # NEW
 #     for row in model_characteristic_df.to_dict(orient="records"):
 #         model_name = row.get("Model Name")
-#         descriptive_name = str(row.get("Model Descriptive Name") or "").strip()
+#         descriptive_name = _cell_str(row.get("Model Descriptive Name"))
 #         if model_name and descriptive_name and model_name not in model_descriptive_name_map:
 #             model_descriptive_name_map[model_name] = descriptive_name
-#         segment = str(row.get("Segment Name") or "").strip()
+#         segment = _cell_str(row.get("Segment Name"))
 #         if model_name and segment:
 #             if model_name not in model_segments:
 #                 model_segments[model_name] = segment
@@ -539,21 +558,35 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
 #             segments_for_model = model_segments_map.setdefault(model_name, [])
 #             if segment not in segments_for_model:
 #                 segments_for_model.append(segment)
-#         region = str(row.get("Region") or "").strip()
+#         region = _cell_str(row.get("Region"))
 #         if model_name and region:
 #             regions_for_model = model_region_map.setdefault(model_name, [])
 #             if region not in regions_for_model:
 #                 regions_for_model.append(region)
-#         model_group = str(row.get("Model Type") or "").strip()
+#         model_group = _cell_str(row.get("Model Type"))
 #         if model_name and model_group:
 #             groups_for_model = model_group_map.setdefault(model_name, [])
 #             if model_group not in groups_for_model:
 #                 groups_for_model.append(model_group)
-#         portfolio = str(row.get("Portfolio") or "").strip()                    # NEW
+#         portfolio = _cell_str(row.get("Portfolio"))                    # NEW
 #         if model_name and portfolio:                                           # NEW
 #             portfolios_for_model = model_portfolio_map.setdefault(model_name, [])  # NEW
 #             if portfolio not in portfolios_for_model:                          # NEW
 #                 portfolios_for_model.append(portfolio)                         # NEW
+#     # Parent (Model Descriptive Name) -> ordered child Model Names. Model Name  # NEW
+#     # is the only unique id, so a model with no descriptive name is its own      # NEW
+#     # singleton parent -- the single place the "fall back to Model Name" rule    # NEW
+#     # is applied (mirrors selectors.model_descriptive_label). Built before the   # NEW
+#     # Development Date dropna so models without a dev date are still grouped.     # NEW
+#     descriptive_groups: dict[str, list[str]] = {}                              # NEW
+#     for row in model_characteristic_df.to_dict(orient="records"):              # NEW
+#         model_name = row.get("Model Name")                                     # NEW
+#         if not model_name:                                                     # NEW
+#             continue                                                           # NEW
+#         parent = model_descriptive_name_map.get(model_name) or model_name      # NEW
+#         members = descriptive_groups.setdefault(parent, [])                    # NEW
+#         if model_name not in members:                                          # NEW
+#             members.append(model_name)                                         # NEW
 #     segment_values = _ordered_unique_strings(
 #         model_characteristic_df.get("Segment Name", pd.Series(dtype=object)).tolist()
 #     )
@@ -575,7 +608,7 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
 #     model_characteristic_df = model_characteristic_df.dropna(subset=["Development Date"])
 #     model_development_dates: dict[str, dict[str, Any]] = {}
 #     for row in model_characteristic_df.to_dict(orient="records"):
-#         run_for = str(row.get("Run For") or "").strip()
+#         run_for = _cell_str(row.get("Run For"))
 #         model_name = row.get("Model Name")
 #         development_date = row.get("Development Date")
 #         if not run_for or not model_name or development_date is None:
@@ -631,6 +664,7 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
 #         "mev_group_label_map": mev_group_label_map,
 #         "mev_description_map": mev_description_map,
 #         "model_descriptive_name_map": model_descriptive_name_map,
+#         "descriptive_groups": descriptive_groups,          # NEW
 #         "model_mev_contribution_map": model_mev_contribution_map,
 #         "mev_time_series": time_series_df,
 #     }

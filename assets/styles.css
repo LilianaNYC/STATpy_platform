@@ -111,7 +111,10 @@ body{background:#f8fafc;overflow:hidden}
 .saas-download-item-format{grid-area:format;align-self:center;justify-self:end;padding:4px 7px;border:1px solid var(--border);border-radius:999px;background:#f8fafc;color:var(--text-muted);font-size:9px;font-weight:800;letter-spacing:.3px;text-transform:uppercase;white-space:nowrap}
 .saas-download-compare-note{margin:5px 4px 2px;padding:7px 9px;border-left:3px solid #cbd5e1;border-radius:6px;background:#f8fafc;color:var(--text-muted);font-size:10.5px;line-height:1.4}
 .saas-download-compare-note.is-hidden{display:none}
-.saas-zoom-note{margin:8px 2px 0;font-style:italic}
+/* Global zoom tip above the model panel stack (shown once, not per panel). */
+.saas-zoom-note{margin:0 2px 8px auto;align-items:center;justify-content:flex-end;max-width:min(640px,100%);padding:0;border:none;border-radius:0;background:none;color:var(--text-muted);font-style:italic;box-shadow:none}
+.saas-zoom-note-label{color:#1d4ed8;font-weight:800;letter-spacing:.2px}
+.saas-zoom-note-copy{color:#2563eb;font-weight:600}
 .saas-modal-overlay{position:fixed;inset:0;background:rgba(15,23,42,.45);display:none;align-items:center;justify-content:center;z-index:1000}
 .saas-modal-overlay.is-open{display:flex}
 .saas-modal{background:#fff;border-radius:12px;padding:22px 24px;width:380px;max-width:92vw;box-shadow:0 18px 48px rgba(15,23,42,.28)}
@@ -126,6 +129,56 @@ body{background:#f8fafc;overflow:hidden}
 .tab-panel{display:none}
 .tab-panel.active{display:block}
 #tab-pd_models,.pd-performance-app{max-width:1760px;margin:0 auto}
+.dashboard-loading-shell{position:relative;width:100%}
+.dashboard-loading-mask{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:24px;pointer-events:none;z-index:980}
+.dashboard-loading-mask-elevated{
+  z-index:1002;
+  background:rgba(241,245,249,.46);
+  backdrop-filter:blur(6px) saturate(.94);
+  -webkit-backdrop-filter:blur(6px) saturate(.94);
+}
+.dashboard-loading-shell-inline{position:relative;display:inline-block;width:auto;flex:0 0 auto}
+.dashboard-loading-mask-inline{position:absolute;left:50%;top:50%;display:flex;align-items:center;justify-content:center;padding:0;transform:translate(-50%,-50%);z-index:24}
+/* Invisible status marker: dcc.Loading's target_components watches this
+   element's `children` text (e.g. "idle"/"loading") to know when to show the
+   spinner. It must exist in the DOM but was never meant to be seen. */
+.dashboard-loading-target{display:none}
+.dashboard-loading-card{display:flex;align-items:center;gap:16px;max-width:min(520px,calc(100vw - 64px));padding:18px 20px;border:1px solid rgba(148,163,184,.22);border-radius:20px;background:linear-gradient(135deg,rgba(255,255,255,.97) 0%,rgba(248,250,252,.98) 55%,rgba(239,246,255,.98) 100%);box-shadow:0 22px 56px rgba(15,23,42,.16),0 0 0 1px rgba(255,255,255,.72) inset;color:var(--text)}
+.dashboard-loading-card:not(.dashboard-loading-card-inline){position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:981}
+.dashboard-loading-card-elevated{z-index:1003 !important}
+.dashboard-loading-card-inline{max-width:min(360px,calc(100vw - 40px));padding:15px 16px;border-radius:18px;gap:12px;box-shadow:0 20px 46px rgba(15,23,42,.18),0 0 0 1px rgba(255,255,255,.7) inset}
+.dashboard-loading-copy{display:flex;flex-direction:column;gap:4px;min-width:0}
+.dashboard-loading-kicker{font-size:10px;font-weight:800;letter-spacing:.72px;text-transform:uppercase;color:var(--blue)}
+.dashboard-loading-title{font-size:18px;font-weight:800;line-height:1.1;color:var(--text)}
+.dashboard-loading-note{max-width:40ch;font-size:12px;line-height:1.55;color:var(--text-muted)}
+.dashboard-loading-card-inline .dashboard-loading-title{font-size:15px}
+.dashboard-loading-card-inline .dashboard-loading-note{max-width:28ch;font-size:11.5px;line-height:1.5}
+.dashboard-loading-beacon{position:relative;flex:0 0 64px;width:64px;height:64px;border-radius:18px;background:linear-gradient(135deg,rgba(37,99,235,.16) 0%,rgba(59,130,246,.08) 100%);box-shadow:inset 0 1px 0 rgba(255,255,255,.68)}
+.dashboard-loading-card-inline .dashboard-loading-beacon{flex-basis:50px;width:50px;height:50px;border-radius:14px}
+.dashboard-loading-beacon::before{content:"";position:absolute;inset:10px;border-radius:50%;background:radial-gradient(circle,rgba(255,255,255,.72) 0%,rgba(255,255,255,.04) 68%,transparent 72%)}
+.dashboard-loading-card-inline .dashboard-loading-beacon::before{inset:8px}
+.dashboard-loading-orbit{position:absolute;border:1px solid rgba(37,99,235,.24);border-radius:999px;animation:dashboardLoadingSpin 4.2s linear infinite}
+.dashboard-loading-orbit-outer{inset:7px}
+.dashboard-loading-orbit-inner{inset:16px;animation-duration:2.8s;animation-direction:reverse;border-color:rgba(14,165,233,.34)}
+.dashboard-loading-card-inline .dashboard-loading-orbit-outer{inset:6px}
+.dashboard-loading-card-inline .dashboard-loading-orbit-inner{inset:12px}
+.dashboard-loading-node{position:absolute;width:9px;height:9px;border-radius:999px;background:linear-gradient(180deg,#38bdf8 0%,#2563eb 100%);box-shadow:0 0 0 4px rgba(37,99,235,.10),0 6px 14px rgba(37,99,235,.22);animation:dashboardLoadingPulse 1.8s ease-in-out infinite}
+.dashboard-loading-card-inline .dashboard-loading-node{width:7px;height:7px}
+.dashboard-loading-node-top{top:9px;left:50%;margin-left:-4.5px}
+.dashboard-loading-node-right{right:9px;bottom:15px;animation-delay:.35s}
+.dashboard-loading-node-left{left:9px;bottom:15px;animation-delay:.7s}
+.dashboard-loading-card-inline .dashboard-loading-node-top{top:7px;margin-left:-3.5px}
+.dashboard-loading-card-inline .dashboard-loading-node-right{right:7px;bottom:11px}
+.dashboard-loading-card-inline .dashboard-loading-node-left{left:7px;bottom:11px}
+.dashboard-loading-core{position:absolute;left:50%;top:50%;width:18px;height:18px;margin:-9px 0 0 -9px;border-radius:6px;background:linear-gradient(180deg,#0b4fd8 0%,#2563eb 100%);box-shadow:0 12px 24px rgba(37,99,235,.28);transform:rotate(45deg);animation:dashboardLoadingCore 1.5s ease-in-out infinite}
+.dashboard-loading-card-inline .dashboard-loading-core{width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:5px}
+.dashboard-loading-action-surface{position:relative;display:inline-block;width:auto}
+.saas-export-loading-shell{flex-shrink:0;min-width:168px;width:auto}
+.dashboard-loading-shell-modal{width:100%}
+.dashboard-loading-shell-modal .dashboard-loading-card-inline{max-width:100%}
+@keyframes dashboardLoadingSpin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+@keyframes dashboardLoadingPulse{0%,100%{transform:scale(.92);opacity:.72}50%{transform:scale(1.14);opacity:1}}
+@keyframes dashboardLoadingCore{0%,100%{transform:rotate(45deg) scale(.96)}50%{transform:rotate(45deg) scale(1.08)}}
 
 /* ---------------------------------------------------------------------
    Top bar controls
@@ -134,15 +187,36 @@ body{background:#f8fafc;overflow:hidden}
 .monitoring-filter{display:flex;flex-direction:column;gap:5px;position:relative}
 .monitoring-filter>label{font-size:10px;color:var(--text-muted);font-weight:800;letter-spacing:.35px;text-transform:uppercase}
 .saas-top-filter-row{display:grid;column-gap:14px;row-gap:12px;align-items:end;justify-content:flex-start}
-.saas-primary-filter-row{grid-template-columns:repeat(3,minmax(140px,171px)) minmax(110px,280px) minmax(140px,171px) minmax(190px,260px) minmax(100px,140px)}
-.saas-secondary-filter-row{grid-template-columns:repeat(auto-fit,minmax(140px,171px));margin-top:14px;padding-top:12px;border-top:1px solid #e8eef6}
+/* Uniform columns: every filter (and the Apply cell) shares the same 171px max
+   so all seven tracks size equally at typical widths. The Model Use Case /
+   Cycle column (6th) carries a 140px floor -- its label needs 138px to stay on
+   one line -- while the rest can compress to 120px on narrow screens. */
+.saas-primary-filter-row{grid-template-columns:repeat(5,minmax(120px,171px)) minmax(140px,171px) minmax(120px,171px)}
+/* Waterfall chevrons: the primary filters cascade left-to-right (each selection
+   narrows the next), so draw an arrow in the grid gap before every cell after
+   the first. Cells are position:relative; the glyph centers in the 14px gap,
+   vertically aligned with the 32px bottom-aligned toggles. Colored (and sized
+   up) in the app's accent blue, full opacity, so the cascade stands out --
+   labels stay their normal muted color. */
+.saas-primary-filter-row>.monitoring-filter+.monitoring-filter::before{content:"❯";position:absolute;left:-15px;bottom:10px;width:16px;font-size:13px;font-weight:800;line-height:1;text-align:center;color:var(--blue);opacity:1;pointer-events:none}
+/* Narrower columns than the primary row (160px max, not 171px): auto-fit counts
+   tracks from the max, and this row must hold six items on one line -- the five
+   display filters plus the expand-all button -- when Snapshot = History un-hides
+   Historical Statistics. 160px is the sweet spot: "History & Projection" needs
+   158px to render unclipped, and anything past ~162px drops the row to five
+   tracks at typical widths. */
+.saas-secondary-filter-row{grid-template-columns:repeat(auto-fit,minmax(140px,160px));margin-top:14px;padding-top:12px;border-top:1px solid #e8eef6}
 .saas-top-filter-row .monitoring-filter{width:100%;min-width:0 !important;max-width:none !important}
 .saas-top-filter-row .monitoring-top-select,
 .saas-top-filter-row .single-select-dropdown,
 .saas-top-filter-row .checkbox-dropdown-toggle,
 .saas-top-filter-row .checkbox-dropdown-menu{min-width:100%;max-width:none}
 .saas-top-filter-row .pd-mev-filter-actions{width:100%;min-width:0;justify-content:flex-start}
-.saas-primary-filter-row .monitoring-model-filter .checkbox-dropdown-menu{width:max-content;min-width:100%}
+/* 190px floor: the "Type to search models…" placeholder needs ~183px of menu
+   (134px text + input/menu padding and borders, browser-measured) to render
+   unclipped; max-content alone sizes the menu to the checklist labels, which
+   can be narrower. */
+.saas-primary-filter-row .monitoring-model-filter .checkbox-dropdown-menu{width:max-content;min-width:190px}
 .saas-top-filter-action{justify-content:flex-end;padding-top:19px}
 .saas-top-filter-reset{width:100%;min-height:32px;justify-content:center}
 .saas-top-filter-action .pd-mev-filter-actions{width:100%;gap:8px}
@@ -238,6 +312,10 @@ body{background:#f8fafc;overflow:hidden}
 .VirtualizedSelectOption{font-family:'Inter','Segoe UI',sans-serif;font-size:12px;font-weight:500}
 .checkbox-dropdown-menu input[type="checkbox"]{width:16px;height:16px;accent-color:var(--blue);cursor:pointer}
 .pd-models-search{display:block;width:100%;box-sizing:border-box;margin:2px 0 6px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--text);font-family:inherit;font-size:11.5px}
+/* dcc.Input renders a wrapper (styled above) around an inner input that keeps
+   the browser's default fixed width -- stretch it to fill the wrapper so the
+   placeholder isn't clipped. */
+.pd-models-search input{width:100%;min-width:0;box-sizing:border-box;border:none;background:transparent;font:inherit;color:inherit;outline:none;padding:0}
 .pd-models-search::placeholder{color:var(--text-muted)}
 .pd-models-search:focus{outline:none;border-color:var(--blue)}
 .checkbox-dropdown-menu input[type="checkbox"]:disabled{cursor:not-allowed;opacity:.5}
@@ -425,7 +503,32 @@ tr:last-child td{border-bottom:none}
 .pd-rag-red{color:var(--red)}
 .pd-rag-na{color:#94a3b8}
 .pd-section-subtitle{font-size:11px;color:var(--text-muted);margin-top:-5px;margin-bottom:12px}
-.pd-mev-model-panel{padding:18px 18px 12px;border-color:#dbe4f0;border-radius:16px;background:linear-gradient(180deg,#ffffff 0%,#fbfdff 100%);box-shadow:0 12px 30px rgba(15,23,42,.05)}
+.pd-mev-model-group{padding:18px 18px 14px}
+.pd-mev-model-group-heading{position:relative;cursor:pointer;list-style:none;margin-bottom:14px;padding:0 0 12px 22px;border-bottom:2px solid #e8eef6}
+.pd-mev-model-group-heading::-webkit-details-marker{display:none}
+.pd-mev-model-group-heading::before{content:"";position:absolute;left:2px;top:5px;width:7px;height:7px;border-right:2px solid var(--blue);border-bottom:2px solid var(--blue);transform:rotate(45deg);transition:transform .15s ease}
+.pd-mev-model-group:not([open]) .pd-mev-model-group-heading{margin-bottom:0;border-bottom:none}
+.pd-mev-model-group:not([open]) .pd-mev-model-group-heading::before{transform:rotate(-45deg)}
+.pd-mev-model-group-heading h4{margin:0;font-size:18px;font-weight:800;color:var(--text)}
+.pd-mev-model-group-count{margin:3px 0 0;font-size:12px;font-weight:600;color:var(--text-muted)}
+.pd-mev-model-group-shared{margin-top:6px;display:flex;flex-wrap:wrap;gap:4px 16px}
+.pd-mev-model-group-shared .pd-mev-model-attr{margin:0}
+/* Lazy-loaded charts show this until the panel's charts are built on first open. */
+.saas-chart-placeholder{padding:24px 8px;text-align:center;color:var(--text-muted);font-style:italic}
+/* Expand/collapse-all-charts control lives in the secondary filter row (before
+   the toggleable Historical Statistics filter so it never shifts cells) and
+   inherits the pd-mev-filter-reset pill style. */
+.saas-expand-all-filter .saas-expand-all-btn{white-space:nowrap;padding-left:10px;padding-right:10px}
+/* Members are indented under the parent with a guide rail to read as a
+   waterfall of children beneath their parent Descriptive Name. */
+.pd-mev-model-group-members{display:flex;flex-direction:column;gap:12px;margin-left:10px;padding-left:14px;border-left:2px solid #e8eef6}
+.pd-mev-model-panel{padding:14px 16px;border:1px solid #dbe4f0;border-radius:14px;background:linear-gradient(180deg,#ffffff 0%,#fbfdff 100%);box-shadow:0 8px 20px rgba(15,23,42,.04);margin-bottom:0}
+.pd-mev-model-heading-summary{position:relative;cursor:pointer;list-style:none;padding-left:22px}
+.pd-mev-model-heading-summary::-webkit-details-marker{display:none}
+.pd-mev-model-heading-summary::before{content:"";position:absolute;left:3px;top:6px;width:6px;height:6px;border-right:2px solid var(--text-muted);border-bottom:2px solid var(--text-muted);transform:rotate(45deg);transition:transform .15s ease}
+.pd-mev-model-panel:not([open]) .pd-mev-model-heading-summary::before{transform:rotate(-45deg)}
+.pd-mev-model-body{margin-top:14px;padding-top:12px;border-top:1px solid #e8eef6}
+.pd-mev-model-attr{margin:2px 0 0;font-size:13px;color:var(--text-muted)}
 .pd-mev-summary-grid{grid-template-columns:minmax(420px,2.2fr) repeat(4,minmax(150px,1fr));align-items:stretch}
 .pd-mev-summary-grid>.pd-test-card{min-width:0;min-height:158px;padding:12px 13px}
 .pd-mev-summary-grid .pd-test-card-heading span{font-size:9px;letter-spacing:.24px}
@@ -503,6 +606,9 @@ tr:last-child td{border-bottom:none}
 .pd-mev-model-copy p{margin-top:6px;color:var(--text-muted);font-size:12px;line-height:1.6}
 .pd-mev-model-badges{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}
 .pd-mev-model-heading-actions{display:flex;align-items:flex-end;flex-wrap:wrap;gap:10px}
+/* Push the date-range (pd-range-controls) group to the right of each chart's
+   controls row, away from the MEV View / Scenario / MEV pickers. */
+.pd-mev-model-heading-actions .saas-date-range-controls{margin-left:auto}
 .pd-mev-model-badge{display:inline-flex;align-items:center;justify-content:center;min-height:30px;padding:6px 12px;border:1px solid var(--border);border-radius:999px;background:rgba(255,255,255,.92);color:var(--text);font-size:10px;font-weight:800;letter-spacing:.35px;text-transform:uppercase}
 .pd-mev-model-meta{display:flex;align-items:flex-end;gap:20px}
 .pd-mev-model-meta-item{display:flex;flex-direction:column;align-items:flex-end;gap:2px}
@@ -510,11 +616,15 @@ tr:last-child td{border-bottom:none}
 .pd-mev-model-meta-value{font-size:20px;font-weight:800;color:var(--text);line-height:1}
 .pd-mev-model-meta-value-scenario{color:#dc2626}
 .monitoring-shell.theme-dark .pd-mev-model-meta-value-scenario{color:#fb7185}
+/* Breathing room between a panel's filter controls and its chart cards (the
+   per-panel zoom tip used to provide this gap before it moved above the stack). */
+.pd-mev-model-body .pd-mev-chart-grid{margin-top:16px}
 .pd-mev-chart-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
 .pd-mev-chart-family-row{grid-column:1 / -1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
 .pd-mev-chart-card{display:flex;flex-direction:column;gap:14px;padding:18px 18px 14px;border:1px solid #d9e3f0;border-radius:16px;background:linear-gradient(180deg,#ffffff 0%,#f8fbff 100%);box-shadow:0 14px 30px rgba(15,23,42,.05)}
 .pd-mev-chart-header{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
 .pd-mev-chart-title{font-size:14px;font-weight:800;color:var(--text);line-height:1.3}
+.pd-mev-chart-type-tag{display:inline-flex;align-items:center;margin-left:8px;padding:2px 8px;border-radius:999px;border:1px solid rgba(59,130,246,.22);background:rgba(37,99,235,.08);color:var(--blue);font-size:9.5px;font-weight:800;letter-spacing:.3px;text-transform:uppercase;vertical-align:middle}
 .pd-mev-chart-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:5px;color:var(--text-muted);font-size:11px;line-height:1.5}
 .pd-mev-monitoring-summary{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
 .pd-mev-monitoring-summary-row{display:flex;flex-wrap:nowrap;align-items:center;gap:6px;overflow-x:auto;padding-bottom:2px;scrollbar-width:thin;max-width:100%}
@@ -1133,6 +1243,34 @@ tr:last-child td{border-bottom:none}
     linear-gradient(180deg,rgba(8,17,31,.98) 0%,rgba(9,16,29,.98) 100%);
   border-right:1px solid rgba(148,163,184,.10);
 }
+.monitoring-shell.theme-dark .dashboard-loading-card{
+  border-color:rgba(125,211,252,.18);
+  background:
+    radial-gradient(circle at 16% 18%,rgba(56,189,248,.18),transparent 32%),
+    linear-gradient(135deg,rgba(17,28,47,.96) 0%,rgba(12,20,34,.97) 55%,rgba(10,18,32,.98) 100%);
+  box-shadow:0 24px 62px rgba(2,8,23,.44),0 0 0 1px rgba(255,255,255,.03) inset;
+  color:var(--dark-text);
+}
+.monitoring-shell.theme-dark .dashboard-loading-kicker{color:var(--dark-accent)}
+.monitoring-shell.theme-dark .dashboard-loading-title{color:var(--dark-text)}
+.monitoring-shell.theme-dark .dashboard-loading-note{color:var(--dark-muted)}
+.monitoring-shell.theme-dark .dashboard-loading-beacon{
+  background:linear-gradient(135deg,rgba(56,189,248,.16) 0%,rgba(30,41,59,.42) 100%);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 0 0 1px rgba(125,211,252,.10);
+}
+.monitoring-shell.theme-dark .dashboard-loading-beacon::before{
+  background:radial-gradient(circle,rgba(186,230,253,.26) 0%,rgba(186,230,253,.03) 68%,transparent 72%);
+}
+.monitoring-shell.theme-dark .dashboard-loading-orbit{border-color:rgba(125,211,252,.28)}
+.monitoring-shell.theme-dark .dashboard-loading-orbit-inner{border-color:rgba(56,189,248,.34)}
+.monitoring-shell.theme-dark .dashboard-loading-node{
+  background:linear-gradient(180deg,#7dd3fc 0%,#38bdf8 100%);
+  box-shadow:0 0 0 4px rgba(56,189,248,.12),0 8px 18px rgba(8,145,178,.26);
+}
+.monitoring-shell.theme-dark .dashboard-loading-core{
+  background:linear-gradient(180deg,#7dd3fc 0%,#0ea5e9 100%);
+  box-shadow:0 14px 28px rgba(8,145,178,.24);
+}
 .monitoring-shell.theme-dark .sidebar-logo,
 .monitoring-shell.theme-dark .sidebar-footer{
   border-color:rgba(148,163,184,.16);
@@ -1150,6 +1288,7 @@ tr:last-child td{border-bottom:none}
 .monitoring-shell.theme-dark .pd-placeholder-title,
 .monitoring-shell.theme-dark .pd-mev-chart-title,
 .monitoring-shell.theme-dark .pd-mev-model-copy h4,
+.monitoring-shell.theme-dark .pd-mev-model-group-heading h4,
 .monitoring-shell.theme-dark .saas-historical-dispersion-title,
 .monitoring-shell.theme-dark .pd-overview-flow-node-label,
 .monitoring-shell.theme-dark .pd-overview-flow-node-value,
@@ -1320,7 +1459,10 @@ tr:last-child td{border-bottom:none}
 .monitoring-shell.theme-dark .pd-test-footnote,
 .monitoring-shell.theme-dark .pd-performance-comparison,
 .monitoring-shell.theme-dark td,
-.monitoring-shell.theme-dark th{
+.monitoring-shell.theme-dark th,
+.monitoring-shell.theme-dark .pd-mev-model-group-heading,
+.monitoring-shell.theme-dark .pd-mev-model-group-members,
+.monitoring-shell.theme-dark .pd-mev-model-body{
   border-color:var(--dark-border);
 }
 .monitoring-shell.theme-dark .pd-domain-heading p,
@@ -1348,6 +1490,18 @@ tr:last-child td{border-bottom:none}
   border-color:var(--dark-border-strong);
   background:linear-gradient(135deg,rgba(29,78,216,.16) 0%,rgba(20,33,54,.94) 58%,rgba(15,23,42,.96) 100%);
   box-shadow:inset 0 1px 0 rgba(255,255,255,.04);
+}
+.monitoring-shell.theme-dark .saas-zoom-note{
+  background:none;
+  border:none;
+  color:var(--dark-muted);
+  box-shadow:none;
+}
+.monitoring-shell.theme-dark .saas-zoom-note-label{
+  color:#7dd3fc;
+}
+.monitoring-shell.theme-dark .saas-zoom-note-copy{
+  color:#93c5fd;
 }
 .monitoring-shell.theme-dark .saas-getting-started-summary-title{
   color:#93c5fd;
@@ -1488,6 +1642,10 @@ tr:last-child td{border-bottom:none}
   border-color:rgba(125,211,252,.70);
   color:var(--dark-text);
   box-shadow:0 10px 24px rgba(56,189,248,.14);
+}
+.monitoring-shell.theme-dark .pd-mev-chart-type-tag{
+  background:var(--dark-accent-soft);
+  border-color:rgba(125,211,252,.35);
 }
 .monitoring-shell.theme-dark .pd-subnav-group-overview{--pd-subnav-edge-start:#7dd3fc;--pd-subnav-edge-end:#38bdf8;--pd-subnav-label-tone:#93c5fd;--pd-subnav-label-active:#e0f2fe;--pd-subnav-active-bg:linear-gradient(180deg,rgba(59,130,246,.36) 0%,rgba(56,189,248,.22) 100%);--pd-subnav-active-border:rgba(125,211,252,.72);--pd-subnav-active-shadow:0 10px 24px rgba(56,189,248,.14)}
 .monitoring-shell.theme-dark .pd-subnav-group-rag{--pd-subnav-edge-start:#5eead4;--pd-subnav-edge-end:#2dd4bf;--pd-subnav-label-tone:#99f6e4;--pd-subnav-label-active:#ccfbf1;--pd-subnav-active-bg:linear-gradient(180deg,rgba(20,184,166,.34) 0%,rgba(45,212,191,.20) 100%);--pd-subnav-active-border:rgba(94,234,212,.68);--pd-subnav-active-shadow:0 10px 24px rgba(20,184,166,.15)}
@@ -1640,6 +1798,11 @@ tr:last-child td{border-bottom:none}
 .monitoring-shell.theme-dark .saas-modal-overlay{
   background:rgba(3,8,18,.72);
   backdrop-filter:blur(4px);
+}
+.monitoring-shell.theme-dark .dashboard-loading-mask-elevated{
+  background:rgba(2,6,23,.62);
+  backdrop-filter:blur(8px) saturate(.88);
+  -webkit-backdrop-filter:blur(8px) saturate(.88);
 }
 .monitoring-shell.theme-dark .saas-modal{
   background:linear-gradient(180deg,var(--dark-surface-2) 0%,var(--dark-surface) 100%);
@@ -2165,6 +2328,10 @@ tr:last-child td{border-bottom:none}
   .nav-item{white-space:normal}
   .top-bar{padding:14px 16px}
   .content{padding:12px 16px 22px;overflow:visible}
+  .dashboard-loading-card{flex-direction:column;align-items:flex-start;gap:14px;max-width:min(440px,calc(100vw - 32px));padding:16px 17px}
+  .dashboard-loading-beacon{width:58px;height:58px;flex-basis:58px}
+  .dashboard-loading-title{font-size:16px}
+  .dashboard-loading-note{max-width:none}
   .pd-trend-detail-grid,.pd-discrimination-trend-grid,.pd-test-grid,.pd-sensitivity-chart-grid{grid-template-columns:1fr}
   .pd-psi-threshold-mini-grid{grid-template-columns:1fr}
   .pd-mev-summary-grid{grid-template-columns:1fr}

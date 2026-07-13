@@ -22,6 +22,7 @@ def build_model_report_figures(
     *,
     figure_builder,
     primary_run_for: str | None = None,
+    include_model_in_title: bool = True,
 ) -> list[tuple[str, object]]:
     """Build (title, figure) pairs for a model using the default chart selections."""
     normalized_mev_mode = selectors.normalize_selected_mev_mode(selected_mev_mode)
@@ -71,7 +72,8 @@ def build_model_report_figures(
             current_date,
             [mev_name],
         )
-        figures.append((f"{model_name} — {mev_label}", fig))
+        title = f"{model_name} — {mev_label}" if include_model_in_title else mev_label
+        figures.append((title, fig))
     return figures
 
 
@@ -84,6 +86,7 @@ def build_model_report_sections(
     reference_lines: str | None,
     *,
     figure_builder,
+    include_model_in_title: bool = True,
 ) -> list[tuple[str, object]]:
     """Build (title, figure) pairs for a model panel's default view."""
     snapshot_period_value = selectors.normalize_snapshot_period(snapshot_period)
@@ -127,6 +130,7 @@ def build_model_report_sections(
         default_display_mevs,
         figure_builder=figure_builder,
         primary_run_for=primary_run_for,
+        include_model_in_title=include_model_in_title,
     )
 
 
@@ -174,6 +178,120 @@ def build_report_figures(
             )
         )
     return sections
+
+
+# Attribute rows mirrored from the dashboard cards: Segment identifies each
+# child (it renders in the child heading, like the panel summary), while the
+# others roll up to the parent header when every member shares them.
+_ROLLUP_ATTRIBUTES = (
+    ("Region", "model_region_map"),
+    ("Model Group", "model_group_map"),
+    ("Portfolio", "model_portfolio_map"),
+)
+
+
+def _model_segment_label(model_name: str) -> str:
+    segments = SAAS_PAGE_DATA.get("model_segments_map", {}).get(model_name)
+    if not segments:
+        fallback = SAAS_PAGE_DATA.get("model_segments", {}).get(model_name)
+        segments = [fallback] if fallback else []
+    labels = [layout.format_segment_label(value) for value in segments if value]
+    return ", ".join(labels)
+
+
+def _model_rollup_attributes(model_name: str) -> dict[str, str]:
+    attributes: dict[str, str] = {}
+    for label, map_key in _ROLLUP_ATTRIBUTES:
+        values = [value for value in (SAAS_PAGE_DATA.get(map_key, {}).get(model_name) or []) if value]
+        if values:
+            suffix = "" if len(values) == 1 else "s"
+            attributes[label] = f"{label}{suffix}: {', '.join(values)}"
+    return attributes
+
+
+def build_grouped_report_sections(
+    run_for,
+    compare_against,
+    segment,
+    selected_models,
+    snapshot_period,
+    reference_lines,
+    mev_label_mode,
+    *,
+    region=None,
+    model_group=None,
+    portfolio=None,
+    figure_builder,
+) -> list[dict]:
+    """Report sections mirroring the workspace hierarchy: one group per parent
+    Descriptive Name, each holding its child models (identified by segment and
+    GMIS model name) and their (mev_label, figure) pairs. Attributes shared by
+    every child roll up to the group, exactly like the dashboard cards."""
+    selected_run_fors = selectors.normalize_selected_run_fors(run_for)
+    scoped_run_fors = selectors.scoped_run_for_values(run_for, compare_against)
+    grouped = selectors.group_effective_models(
+        segment, selected_models, region=region, model_group=model_group, portfolio=portfolio
+    )
+
+    if not selected_run_fors or not grouped:
+        return []
+
+    time_series_df = SAAS_PAGE_DATA.get("mev_time_series")
+    if time_series_df is None or time_series_df.empty:
+        return []
+
+    all_models = [name for _parent, members in grouped for name in members]
+    filtered_df = time_series_df[time_series_df["Model Name"].isin(all_models)]
+    filtered_df = filtered_df[filtered_df["Run For"].isin(scoped_run_fors)]
+    records_ = filtered_df.to_dict(orient="records")
+
+    groups: list[dict] = []
+    for parent_label, member_models in grouped:
+        per_member = {name: _model_rollup_attributes(name) for name in member_models}
+        shared_keys = {
+            label
+            for label, _map_key in _ROLLUP_ATTRIBUTES
+            if per_member[member_models[0]].get(label)
+            and all(
+                per_member[name].get(label) == per_member[member_models[0]].get(label)
+                for name in member_models
+            )
+        }
+        shared_attributes = [
+            per_member[member_models[0]][label]
+            for label, _map_key in _ROLLUP_ATTRIBUTES
+            if label in shared_keys
+        ]
+
+        models: list[dict] = []
+        for model_name in member_models:
+            model_records = [row for row in records_ if row.get("Model Name") == model_name]
+            figures = build_model_report_sections(
+                model_name,
+                model_records,
+                run_for,
+                snapshot_period,
+                mev_label_mode,
+                reference_lines,
+                figure_builder=figure_builder,
+                include_model_in_title=False,
+            )
+            models.append({
+                "model_name": model_name,
+                "segment_label": _model_segment_label(model_name),
+                "attributes": [
+                    text for label, text in per_member[model_name].items()
+                    if label not in shared_keys
+                ],
+                "figures": figures,
+            })
+
+        groups.append({
+            "parent_label": parent_label,
+            "shared_attributes": shared_attributes,
+            "models": models,
+        })
+    return groups
 
 
 def run_for_filename_prefix(run_for) -> str:

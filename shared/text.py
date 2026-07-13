@@ -19,6 +19,17 @@ def normalize_model_name(value: Any) -> str:
     return str(value).strip()
 
 
+def cell_str(value: Any) -> str:
+    """Return a trimmed string for a workbook/DB cell, or ``""`` when missing.
+
+    NaN-safe: with pandas' string dtype, ``df.where(pd.notna(df), None)`` puts
+    NaN (not None) back into string columns, and ``str(nan)`` is the truthy
+    ``"nan"`` -- so ``str(value or "")`` silently coins a "nan" category."""
+    if value is None or pd.isna(value):
+        return ""
+    return str(value).strip()
+
+
 def ordered_unique_strings(values) -> list[str]:
     """Return trimmed, de-duplicated, non-empty strings in first-seen order."""
     ordered_values: list[str] = []

@@ -8,6 +8,7 @@ from dash import dcc, html
 
 from .....shared.ui import controls as shared_filters
 from .....shared.ui.charts import SAAS_SCENARIO_LABEL_MAP
+from .....shared.ui.loading import build_dashboard_loading_shell
 from .....shared.domain.calculations import get_pd_range_preset, get_pd_range_selection
 from ...data_access import SAAS_PAGE_DATA
 
@@ -53,28 +54,36 @@ FILTER_HELP_ID = "saas-filter-help"
 APPLY_FILTERS_ID = "saas-apply-filters"
 APPLIED_FILTERS_STORE_ID = "saas-applied-filters-store"
 EXPORT_ACTIONS_ID = "saas-export-actions"
+EXPORT_SURFACE_ID = "saas-export-surface"
 DOWNLOAD_REPORT_ID = "saas-download-report"
 DOWNLOAD_DATA_ID = "saas-download-report-data"
+DOWNLOAD_REPORT_STATUS_ID = "saas-download-report-status"
 DOWNLOAD_COMPARE_HELP_ID = "saas-download-compare-help"
 EXCEL_OPEN_ID = "saas-excel-open"
 EXCEL_MODAL_ID = "saas-excel-modal"
+EXCEL_ACTIONS_SURFACE_ID = "saas-excel-actions-surface"
 EXCEL_SCENARIO_ID = "saas-excel-scenario"
 EXCEL_GENERATE_ID = "saas-excel-generate"
 EXCEL_CANCEL_ID = "saas-excel-cancel"
 EXCEL_DOWNLOAD_DATA_ID = "saas-excel-download-data"
+EXCEL_STATUS_ID = "saas-excel-generate-status"
 RECON_OPEN_ID = "saas-recon-open"
 RECON_MODAL_ID = "saas-recon-modal"
+RECON_ACTIONS_SURFACE_ID = "saas-recon-actions-surface"
 RECON_SCENARIO_ID = "saas-recon-scenario"
 RECON_GENERATE_ID = "saas-recon-generate"
 RECON_CANCEL_ID = "saas-recon-cancel"
 RECON_DOWNLOAD_DATA_ID = "saas-recon-download-data"
+RECON_STATUS_ID = "saas-recon-generate-status"
 PROJECTION_OPEN_ID = "saas-projection-open"
 PROJECTION_MODAL_ID = "saas-projection-modal"
+PROJECTION_ACTIONS_SURFACE_ID = "saas-projection-actions-surface"
 PROJECTION_SCENARIO_ID = "saas-projection-scenario"
 PROJECTION_HORIZON_ID = "saas-projection-horizon"
 PROJECTION_GENERATE_ID = "saas-projection-generate"
 PROJECTION_CANCEL_ID = "saas-projection-cancel"
 PROJECTION_DOWNLOAD_DATA_ID = "saas-projection-download-data"
+PROJECTION_STATUS_ID = "saas-projection-generate-status"
 SUBNAV_ID = "saas-subnav"
 SUBNAV_MODELS_ID = "saas-subnav-models"
 MEV_TIME_SERIES_SECTION_ID = "saas-mev-time-series-section"
@@ -149,6 +158,9 @@ MODEL_MEV_SINGLE_OPTION_TYPE = "saas-model-mev-single-option"
 MODEL_MEV_MULTI_SECTION_TYPE = "saas-model-mev-multi-section"
 MODEL_MEV_GRID_TYPE = "saas-model-mev-grid"
 MODEL_DATE_RANGE_CONTROLS_TYPE = "saas-model-date-range-controls"
+# Hidden per-model button the client clicks the first time a (collapsed) child
+# panel is opened, so its charts are built lazily instead of all up front.
+MODEL_CHART_TRIGGER_TYPE = "saas-model-chart-trigger"
 MODEL_DATE_RANGE_WINDOW_TYPE = "saas-model-date-range-window"
 MODEL_DATE_RANGE_FROM_TYPE = "saas-model-date-range-from"
 MODEL_DATE_RANGE_TO_TYPE = "saas-model-date-range-to"
@@ -256,6 +268,32 @@ def _build_date_range_options(periods: list[str], all_label: str) -> list[dict]:
         {"label": _format_range_period_label(period), "value": period}
         for period in periods
     ]
+
+
+def _build_export_loading_shell(
+    *,
+    content_id: str,
+    status_id: str,
+    title: str,
+    note: str,
+    children,
+    parent_class_name: str,
+) -> dcc.Loading:
+    return build_dashboard_loading_shell(
+        content_id=content_id,
+        content_class_name="dashboard-loading-action-surface",
+        scope_label="SAAS Export",
+        title=title,
+        note=note,
+        parent_class_name=parent_class_name,
+        loading_class_name="dashboard-loading-mask dashboard-loading-mask-elevated",
+        spinner_card_class_name="dashboard-loading-card-elevated",
+        target_components={status_id: "children"},
+        children=[
+            children,
+            html.Div(id=status_id, className="dashboard-loading-target", children="idle"),
+        ],
+    )
 
 
 def _build_single_select_filter(
@@ -521,15 +559,6 @@ def _build_top_bar() -> html.Div:
                                 value=DEFAULT_REGION,
                             ),
                             _build_single_select_filter(
-                                "Model Group",
-                                value_id=MODEL_GROUP_ID,
-                                toggle_id=MODEL_GROUP_TOGGLE_ID,
-                                menu_id=MODEL_GROUP_MENU_ID,
-                                filter_key=MODEL_GROUP_FILTER_KEY,
-                                options=MODEL_GROUP_OPTIONS,
-                                value=DEFAULT_MODEL_GROUP,
-                            ),
-                            _build_single_select_filter(
                                 "Portfolio",
                                 value_id=PORTFOLIO_ID,
                                 toggle_id=PORTFOLIO_TOGGLE_ID,
@@ -538,8 +567,17 @@ def _build_top_bar() -> html.Div:
                                 options=PORTFOLIO_OPTIONS,
                                 value=DEFAULT_PORTFOLIO,
                             ),
+                            _build_single_select_filter(
+                                "Model Group",
+                                value_id=MODEL_GROUP_ID,
+                                toggle_id=MODEL_GROUP_TOGGLE_ID,
+                                menu_id=MODEL_GROUP_MENU_ID,
+                                filter_key=MODEL_GROUP_FILTER_KEY,
+                                options=MODEL_GROUP_OPTIONS,
+                                value=DEFAULT_MODEL_GROUP,
+                            ),
                             _build_checklist_filter(
-                                "Specific Models",
+                                "Model",
                                 toggle_id=MODEL_NAME_TOGGLE_ID,
                                 menu_id=MODEL_NAME_MENU_ID,
                                 checklist_id=MODEL_NAME_ID,
@@ -636,6 +674,34 @@ def _build_top_bar() -> html.Div:
                                 value=DEFAULT_MEV_LABEL_MODE,
                                 min_width="220px",
                             ),
+                            # Keep the expand-all button BEFORE the (toggleable)
+                            # Historical Statistics filter so un-hiding it when
+                            # Snapshot Period = History never displaces the button.
+                            # The row's column max is sized so all six items fit
+                            # on one row at typical widths (see styles.css).
+                            html.Div(
+                                className="monitoring-filter saas-top-filter-action saas-expand-all-filter",
+                                children=[
+                                    html.Div(
+                                        className="pd-mev-filter-actions",
+                                        children=[
+                                            html.Button(
+                                                "Expand all charts",
+                                                type="button",
+                                                className="btn pd-mev-filter-reset saas-expand-all-btn",
+                                                title="Open or close every model's chart panel at once.",
+                                                # Hidden until charts are rendered; the client JS
+                                                # shows it once model panels exist.
+                                                style={"display": "none"},
+                                                **{
+                                                    "data-saas-expand-all": "collapsed",
+                                                    "aria-expanded": "false",
+                                                },
+                                            ),
+                                        ],
+                                    ),
+                                ],
+                            ),
                             _build_inline_segmented_filter(
                                 "Historical Statistics",
                                 filter_id=HISTORICAL_STATS_FILTER_ID,
@@ -651,72 +717,79 @@ def _build_top_bar() -> html.Div:
                     _build_section_subnav(),
                 ],
             ),
-            html.Details(
-                id=EXPORT_ACTIONS_ID,
-                className="saas-download-actions is-disabled",
-                title="Apply filters to enable export.",
-                children=[
-                    html.Summary(
-                        [
-                            html.Span("⬇", className="saas-download-report-icon", **{"aria-hidden": "true"}),
-                            html.Span("Export", className="saas-download-toggle-label"),
-                            html.Span("▾", className="saas-download-caret", **{"aria-hidden": "true"}),
-                        ],
-                        className="btn pd-mev-filter-reset saas-download-toggle",
-                    ),
-                    html.Div(
-                        className="saas-download-menu-panel",
-                        children=[
-                            html.Button(
-                                [
-                                    html.Span("Current charts", className="saas-download-item-title"),
-                                    html.Span("HTML / PDF", className="saas-download-item-format"),
-                                ],
-                                id=DOWNLOAD_REPORT_ID,
-                                className="saas-download-menu-item",
-                                n_clicks=0,
-                                type="button",
-                            ),
-                            html.Button(
-                                [
-                                    html.Span("Historical range analysis", className="saas-download-item-title"),
-                                    html.Span("Excel", className="saas-download-item-format"),
-                                ],
-                                id=EXCEL_OPEN_ID,
-                                className="saas-download-menu-item",
-                                n_clicks=0,
-                                type="button",
-                            ),
-                            html.Button(
-                                [
-                                    html.Span("Historical reconciliation", className="saas-download-item-title"),
-                                    html.Span("Excel", className="saas-download-item-format"),
-                                ],
-                                id=RECON_OPEN_ID,
-                                className="saas-download-menu-item",
-                                n_clicks=0,
-                                type="button",
-                                disabled=True,
-                            ),
-                            html.Button(
-                                [
-                                    html.Span("Projection comparison", className="saas-download-item-title"),
-                                    html.Span("Excel", className="saas-download-item-format"),
-                                ],
-                                id=PROJECTION_OPEN_ID,
-                                className="saas-download-menu-item",
-                                n_clicks=0,
-                                type="button",
-                                disabled=True,
-                            ),
-                            html.Div(
-                                "Select a Compare To model use case / cycle to enable the comparison exports.",
-                                id=DOWNLOAD_COMPARE_HELP_ID,
-                                className="saas-download-compare-note",
-                            ),
-                        ],
-                    ),
-                ],
+            _build_export_loading_shell(
+                content_id=EXPORT_SURFACE_ID,
+                status_id=DOWNLOAD_REPORT_STATUS_ID,
+                title="Preparing download...",
+                note="Packaging the current chart set into a shareable browser-ready report.",
+                parent_class_name="dashboard-loading-shell dashboard-loading-shell-inline saas-export-loading-shell",
+                children=html.Details(
+                    id=EXPORT_ACTIONS_ID,
+                    className="saas-download-actions is-disabled",
+                    title="Apply filters to enable export.",
+                    children=[
+                        html.Summary(
+                            [
+                                html.Span("⬇", className="saas-download-report-icon", **{"aria-hidden": "true"}),
+                                html.Span("Export", className="saas-download-toggle-label"),
+                                html.Span("▾", className="saas-download-caret", **{"aria-hidden": "true"}),
+                            ],
+                            className="btn pd-mev-filter-reset saas-download-toggle",
+                        ),
+                        html.Div(
+                            className="saas-download-menu-panel",
+                            children=[
+                                html.Button(
+                                    [
+                                        html.Span("Current charts", className="saas-download-item-title"),
+                                        html.Span("HTML / PDF", className="saas-download-item-format"),
+                                    ],
+                                    id=DOWNLOAD_REPORT_ID,
+                                    className="saas-download-menu-item",
+                                    n_clicks=0,
+                                    type="button",
+                                ),
+                                html.Button(
+                                    [
+                                        html.Span("Historical range analysis", className="saas-download-item-title"),
+                                        html.Span("Excel", className="saas-download-item-format"),
+                                    ],
+                                    id=EXCEL_OPEN_ID,
+                                    className="saas-download-menu-item",
+                                    n_clicks=0,
+                                    type="button",
+                                ),
+                                html.Button(
+                                    [
+                                        html.Span("Historical reconciliation", className="saas-download-item-title"),
+                                        html.Span("Excel", className="saas-download-item-format"),
+                                    ],
+                                    id=RECON_OPEN_ID,
+                                    className="saas-download-menu-item",
+                                    n_clicks=0,
+                                    type="button",
+                                    disabled=True,
+                                ),
+                                html.Button(
+                                    [
+                                        html.Span("Projection comparison", className="saas-download-item-title"),
+                                        html.Span("Excel", className="saas-download-item-format"),
+                                    ],
+                                    id=PROJECTION_OPEN_ID,
+                                    className="saas-download-menu-item",
+                                    n_clicks=0,
+                                    type="button",
+                                    disabled=True,
+                                ),
+                                html.Div(
+                                    "Select a Compare To model use case / cycle to enable the comparison exports.",
+                                    id=DOWNLOAD_COMPARE_HELP_ID,
+                                    className="saas-download-compare-note",
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
             ),
         ],
     )
@@ -744,24 +817,31 @@ def _build_excel_modal() -> html.Div:
                     searchable=False,
                     className="saas-modal-dropdown",
                 ),
-                html.Div(
-                    className="saas-modal-actions",
-                    children=[
-                        html.Button(
-                            "Cancel",
-                            id=EXCEL_CANCEL_ID,
-                            type="button",
-                            n_clicks=0,
-                            className="btn saas-modal-cancel",
-                        ),
-                        html.Button(
-                            "Generate Excel",
-                            id=EXCEL_GENERATE_ID,
-                            type="button",
-                            n_clicks=0,
-                            className="btn btn-primary saas-modal-generate",
-                        ),
-                    ],
+                _build_export_loading_shell(
+                    content_id=EXCEL_ACTIONS_SURFACE_ID,
+                    status_id=EXCEL_STATUS_ID,
+                    title="Preparing download...",
+                    note="Assembling the workbook, charts, and README from your current SAAS scope.",
+                    parent_class_name="dashboard-loading-shell dashboard-loading-shell-inline dashboard-loading-shell-modal",
+                    children=html.Div(
+                        className="saas-modal-actions",
+                        children=[
+                            html.Button(
+                                "Cancel",
+                                id=EXCEL_CANCEL_ID,
+                                type="button",
+                                n_clicks=0,
+                                className="btn saas-modal-cancel",
+                            ),
+                            html.Button(
+                                "Generate Excel",
+                                id=EXCEL_GENERATE_ID,
+                                type="button",
+                                n_clicks=0,
+                                className="btn btn-primary saas-modal-generate",
+                            ),
+                        ],
+                    ),
                 ),
             ],
         ),
@@ -792,24 +872,31 @@ def _build_recon_modal() -> html.Div:
                     searchable=False,
                     className="saas-modal-dropdown",
                 ),
-                html.Div(
-                    className="saas-modal-actions",
-                    children=[
-                        html.Button(
-                            "Cancel",
-                            id=RECON_CANCEL_ID,
-                            type="button",
-                            n_clicks=0,
-                            className="btn saas-modal-cancel",
-                        ),
-                        html.Button(
-                            "Generate Excel",
-                            id=RECON_GENERATE_ID,
-                            type="button",
-                            n_clicks=0,
-                            className="btn btn-primary saas-modal-generate",
-                        ),
-                    ],
+                _build_export_loading_shell(
+                    content_id=RECON_ACTIONS_SURFACE_ID,
+                    status_id=RECON_STATUS_ID,
+                    title="Preparing download...",
+                    note="Comparing overlapping historical records across the selected model use case / cycles.",
+                    parent_class_name="dashboard-loading-shell dashboard-loading-shell-inline dashboard-loading-shell-modal",
+                    children=html.Div(
+                        className="saas-modal-actions",
+                        children=[
+                            html.Button(
+                                "Cancel",
+                                id=RECON_CANCEL_ID,
+                                type="button",
+                                n_clicks=0,
+                                className="btn saas-modal-cancel",
+                            ),
+                            html.Button(
+                                "Generate Excel",
+                                id=RECON_GENERATE_ID,
+                                type="button",
+                                n_clicks=0,
+                                className="btn btn-primary saas-modal-generate",
+                            ),
+                        ],
+                    ),
                 ),
             ],
         ),
@@ -851,24 +938,31 @@ def _build_projection_modal() -> html.Div:
                     searchable=False,
                     className="saas-modal-dropdown",
                 ),
-                html.Div(
-                    className="saas-modal-actions",
-                    children=[
-                        html.Button(
-                            "Cancel",
-                            id=PROJECTION_CANCEL_ID,
-                            type="button",
-                            n_clicks=0,
-                            className="btn saas-modal-cancel",
-                        ),
-                        html.Button(
-                            "Generate Excel",
-                            id=PROJECTION_GENERATE_ID,
-                            type="button",
-                            n_clicks=0,
-                            className="btn btn-primary saas-modal-generate",
-                        ),
-                    ],
+                _build_export_loading_shell(
+                    content_id=PROJECTION_ACTIONS_SURFACE_ID,
+                    status_id=PROJECTION_STATUS_ID,
+                    title="Preparing download...",
+                    note="Aligning projected paths by quarter offset and packaging the workbook for review.",
+                    parent_class_name="dashboard-loading-shell dashboard-loading-shell-inline dashboard-loading-shell-modal",
+                    children=html.Div(
+                        className="saas-modal-actions",
+                        children=[
+                            html.Button(
+                                "Cancel",
+                                id=PROJECTION_CANCEL_ID,
+                                type="button",
+                                n_clicks=0,
+                                className="btn saas-modal-cancel",
+                            ),
+                            html.Button(
+                                "Generate Excel",
+                                id=PROJECTION_GENERATE_ID,
+                                type="button",
+                                n_clicks=0,
+                                className="btn btn-primary saas-modal-generate",
+                            ),
+                        ],
+                    ),
                 ),
             ],
         ),
@@ -918,8 +1012,8 @@ def build_apply_prompt() -> html.Div:
                     ]),
                     html.Li([
                         html.Strong("Choose your model scope. "),
-                        "Select a Segment or a set of Specific Models. Both stay available to pick from, but if a "
-                        "Segment is active it takes priority over any Specific Models selection.",
+                        "Select a Segment or a set of Models. Both stay available to pick from, but if a "
+                        "Segment is active it takes priority over any Models selection.",
                     ]),
                     html.Li([
                         html.Strong("Set the view options. "),
@@ -969,7 +1063,7 @@ def build_apply_prompt() -> html.Div:
                             ],
                         ),
                         html.Span(
-                            "Note: Export uses the last applied top-bar filters. If you change Model Use Case / Cycle, Compare To, Segment, Specific Models, Snapshot Period, Reference Lines, or MEV Label, click Apply filters again before exporting. The two comparison exports also need at least one Compare To cycle, and each Excel starts with a README tab explaining its columns.",
+                            "Note: Export uses the last applied top-bar filters. If you change Model Use Case / Cycle, Compare To, Segment, Models, Snapshot Period, Reference Lines, or MEV Label, click Apply filters again before exporting. The two comparison exports also need at least one Compare To cycle, and each Excel starts with a README tab explaining its columns.",
                             className="saas-getting-started-note",
                         ),
                     ]),
@@ -995,9 +1089,26 @@ def _build_chart_canvas() -> html.Section:
                     "The Scenario Analysis as a Service (SAAS) dashboard is a self-service tool for reviewing the macro-economic variables (MEVs) that drive credit risk models under stress scenarios, across model use case / cycles. By bringing each MEV's history and forward projections together, it helps users understand the drivers behind the models and sense-check the scenario projections.",
                 ],
             ),
+            # One global zoom tip above the panel stack (instead of repeating it
+            # inside every model panel). Hidden until charts are rendered; the
+            # client JS shows it alongside the expand-all button.
             html.Div(
-                id=MEV_MODEL_PANELS_ID,
-                className="saas-model-panel-stack",
+                className="pd-mev-chart-meta saas-zoom-note",
+                style={"display": "none"},
+                children=[
+                    html.Span("Tip:", className="saas-zoom-note-label"),
+                    html.Span(
+                        "drag on a chart to zoom in; double-click the chart to return to the original view.",
+                        className="saas-zoom-note-copy",
+                    ),
+                ],
+            ),
+            build_dashboard_loading_shell(
+                content_id=MEV_MODEL_PANELS_ID,
+                content_class_name="saas-model-panel-stack",
+                scope_label="SAAS Workspace",
+                title="Refreshing dashboard",
+                note="Updating scoped metrics, charts, and summary insights.",
                 children=build_apply_prompt(),
             ),
         ],

@@ -27,27 +27,291 @@ from ..data_access import SAAS_PAGE_DATA
 from ..domain.metrics import BASELINE_SCENARIO_VALUE
 
 
-def build_saas_report_html(sections: list[tuple[str, object]], meta_lines: list[str]) -> str:
-    generated_at = datetime.now().strftime("%Y-%m-%d %H:%M")
-    meta_items = "".join(f"<li>{html_escape(line)}</li>" for line in meta_lines)
+def _report_anchor(text: str) -> str:
+    slug = "".join(ch if ch.isalnum() else "-" for ch in str(text or "").lower()).strip("-")
+    while "--" in slug:
+        slug = slug.replace("--", "-")
+    return f"saas-group-{slug or 'model'}"
 
-    if sections:
-        chart_blocks = []
-        for index, (title, fig) in enumerate(sections):
-            # Fixed pixel size keeps the chart from being laid out at the on-screen
-            # viewport width and then clipped when the browser paginates for print.
-            fig = fig.update_layout(autosize=False, width=900, height=420)
-            chart_html = fig.to_html(
-                full_html=False,
-                include_plotlyjs="cdn" if index == 0 else False,
-                config={"responsive": False},
+
+def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
+    """Standalone HTML report mirroring the workspace hierarchy: one section per
+    parent Descriptive Name (shared attributes in its header), one subsection per
+    child model (segment + GMIS name), and that model's charts in a two-up grid.
+    Groups come from ``reports.build_grouped_report_sections``."""
+    generated_at = datetime.now().strftime("%B %d, %Y at %H:%M")
+
+    # Cover-page parameters grid: meta lines arrive as "Label: value" strings.
+    meta_cells = []
+    for line in meta_lines:
+        label, _, value = str(line).partition(": ")
+        if value:
+            meta_cells.append(
+                '<div class="saas-report-param">'
+                f'<div class="saas-report-param-label">{html_escape(label)}</div>'
+                f'<div class="saas-report-param-value">{html_escape(value)}</div></div>'
             )
-            chart_blocks.append(
-                f'<section class="saas-report-chart"><h2>{html_escape(title)}</h2>{chart_html}</section>'
+        else:
+            meta_cells.append(
+                f'<div class="saas-report-param"><div class="saas-report-param-value">{html_escape(line)}</div></div>'
             )
-        body = "\n".join(chart_blocks)
+    params_html = f'<div class="saas-report-params">{"".join(meta_cells)}</div>' if meta_cells else ""
+
+    include_plotlyjs = "cdn"
+    group_blocks: list[str] = []
+    toc_items: list[str] = []
+    for group_index, group in enumerate(groups, start=1):
+        parent_label = group.get("parent_label") or "Model"
+        anchor = _report_anchor(parent_label)
+        models = group.get("models") or []
+        chart_count = sum(len(model.get("figures") or []) for model in models)
+        toc_items.append(
+            f'<li><a href="#{anchor}">{html_escape(parent_label)}</a>'
+            f'<span class="saas-report-toc-count">{len(models)} model{"s" if len(models) != 1 else ""}'
+            f" &middot; {chart_count} chart{'s' if chart_count != 1 else ''}</span></li>"
+        )
+
+        shared = " &nbsp;&middot;&nbsp; ".join(
+            html_escape(line) for line in (group.get("shared_attributes") or [])
+        )
+        shared_html = f'<div class="saas-report-attrs">{shared}</div>' if shared else ""
+
+        model_blocks: list[str] = []
+        for model in models:
+            segment_label = model.get("segment_label") or model.get("model_name") or ""
+            gmis_name = model.get("model_name") or ""
+            extra = " &nbsp;&middot;&nbsp; ".join(
+                html_escape(line) for line in (model.get("attributes") or [])
+            )
+            extra_html = f'<div class="saas-report-attrs">{extra}</div>' if extra else ""
+
+            chart_cells: list[str] = []
+            for title, fig in model.get("figures") or []:
+                # Fixed pixel size keeps each chart from being laid out at the
+                # on-screen viewport width and then clipped when the browser
+                # paginates for print.
+                fig = fig.update_layout(autosize=False, width=765, height=438)
+                # Legend sits below the axis title with just enough clearance
+                # to avoid overlap (closer than -0.48 crowds the title).
+                fig.update_layout(legend_y=-0.34)
+                # The figure builder lays the legend out full-width and
+                # left-aligned but floors entries at half-width for the
+                # responsive dashboard cards. The report's fixed 520px charts
+                # fit three entries per row, so relax the floor here (and
+                # shrink the font a step so labels clear the third-width slots).
+                legend_entry_count = sum(
+                    1
+                    for trace in fig.data
+                    if getattr(trace, "showlegend", None) is not False and getattr(trace, "name", None)
+                )
+                fig.update_layout(
+                    legend=dict(
+                        entrywidth=max(1 / legend_entry_count if legend_entry_count else 1, 0.25),
+                        font=dict(size=9.5),
+                    )
+                )
+                chart_html = fig.to_html(
+                    full_html=False,
+                    include_plotlyjs=include_plotlyjs,
+                    config={"responsive": False},
+                )
+                include_plotlyjs = False
+                chart_cells.append(
+                    f'<figure class="saas-report-chart"><figcaption>{html_escape(title)}</figcaption>{chart_html}</figure>'
+                )
+            charts_html = (
+                f'<div class="saas-report-chart-grid">{"".join(chart_cells)}</div>'
+                if chart_cells
+                else '<p class="saas-report-empty">No charts match the current filters for this model.</p>'
+            )
+            model_blocks.append(
+                '<section class="saas-report-model">'
+                f'<h3>{html_escape(segment_label)}'
+                f'<span class="saas-report-gmis">GMIS Name: {html_escape(gmis_name)}</span></h3>'
+                f"{extra_html}{charts_html}</section>"
+            )
+
+        group_blocks.append(
+            f'<section class="saas-report-group" id="{anchor}">'
+            f'<div class="saas-report-group-kicker">{group_index}. Model</div>'
+            f"<h2>{html_escape(parent_label)}</h2>{shared_html}"
+            f'{"".join(model_blocks)}</section>'
+        )
+
+    # Cover page: branded title block, report parameters, headline counts and
+    # the table of contents -- designed to read cleanly even when the browser
+    # prints without background graphics (typography, rules and borders only).
+    parent_count = len(groups)
+    model_count = sum(len(group.get("models") or []) for group in groups)
+    chart_count = sum(
+        len(model.get("figures") or [])
+        for group in groups
+        for model in (group.get("models") or [])
+    )
+    all_child_names = [
+        model.get("model_name")
+        for group in groups
+        for model in (group.get("models") or [])
+        if model.get("model_name")
+    ]
+    segments_map = SAAS_PAGE_DATA.get("model_segments_map", {})
+    unique_segments = {
+        segment
+        for name in all_child_names
+        for segment in (segments_map.get(name) or [])
+        if segment
+    }
+    unique_regions = {
+        region
+        for name in all_child_names
+        for region in (SAAS_PAGE_DATA.get("model_region_map", {}).get(name) or [])
+        if region
+    }
+    unique_portfolios = {
+        portfolio
+        for name in all_child_names
+        for portfolio in (SAAS_PAGE_DATA.get("model_portfolio_map", {}).get(name) or [])
+        if portfolio
+    }
+    # Parent-model counts per Model Group, in the canonical taxonomy order. A
+    # parent counts under every group its children belong to.
+    group_map = SAAS_PAGE_DATA.get("model_group_map", {})
+    parents_by_group: dict[str, set] = {}
+    for group in groups:
+        parent_label = group.get("parent_label") or "Model"
+        for model in group.get("models") or []:
+            for model_group in group_map.get(model.get("model_name"), []) or []:
+                parents_by_group.setdefault(model_group, set()).add(parent_label)
+    canonical_groups = ["PD", "EAD", "LGD", "Loss"]
+    breakdown_labels = canonical_groups + sorted(
+        set(parents_by_group) - set(canonical_groups)
+    )
+
+    def _stat(value, label) -> str:
+        return (
+            f'<div class="saas-report-stat"><div class="saas-report-stat-value">{value}</div>'
+            f'<div class="saas-report-stat-label">{html_escape(str(label))}</div></div>'
+        )
+
+    # Headline tiles mirror the structure-tree hierarchy (region -> group ->
+    # portfolio -> model -> use case) plus the chart total.
+    stats_html = (
+        '<div class="saas-report-stats">'
+        + _stat(len(unique_regions), f"Region{'s' if len(unique_regions) != 1 else ''}")
+        + _stat(len(unique_portfolios), f"Portfolio{'s' if len(unique_portfolios) != 1 else ''}")
+        + _stat(parent_count, f"Model{'s' if parent_count != 1 else ''}")
+        + _stat(len(unique_segments), f"Segment{'s' if len(unique_segments) != 1 else ''}")
+        + _stat(model_count, f"Use case{'s' if model_count != 1 else ''}")
+        + _stat(chart_count, f"Chart{'s' if chart_count != 1 else ''}")
+        + "</div>"
+        + '<div class="saas-report-cover-heading">Models by group</div>'
+        + '<div class="saas-report-stats">'
+        + "".join(
+            _stat(len(parents_by_group.get(label, ())), f"{label} model{'s' if len(parents_by_group.get(label, ())) != 1 else ''}")
+            for label in breakdown_labels
+        )
+        + "</div>"
+    )
+    cover = (
+        '<header class="saas-report-cover">'
+        '<div class="saas-report-brand">Wholesale Credit Risk Analytics</div>'
+        "<h1>Scenario Analysis as a Service</h1>"
+        '<div class="saas-report-subtitle">Macro-Economic Variable (MEV) Scenario Report</div>'
+        f'<div class="saas-report-generated">Generated {html_escape(generated_at)}</div>'
+        '<div class="saas-report-cover-rule"></div>'
+        '<div class="saas-report-cover-heading">Report parameters</div>'
+        f"{params_html}"
+        f"{stats_html if groups else ''}"
+        + (
+            '<div class="saas-report-cover-heading">Contents</div>'
+            f'<nav class="saas-report-toc"><ol>{"".join(toc_items)}</ol></nav>'
+            if toc_items
+            else ""
+        )
+        + "</header>"
+    )
+
+    # Page 2: model-structure tree following the filter waterfall --
+    # Region -> Portfolio -> Model Group -> model -> use case (segment + GMIS
+    # name). Built from the same attribute maps that drive the filters; a
+    # model missing a level files under a muted placeholder.
+    region_map = SAAS_PAGE_DATA.get("model_region_map", {})
+    portfolio_map = SAAS_PAGE_DATA.get("model_portfolio_map", {})
+    NO_PORTFOLIO = "(no portfolio)"
+    tree: dict = {}
+    for group in groups:
+        parent_label = group.get("parent_label") or "Model"
+        for model in group.get("models") or []:
+            name = model.get("model_name")
+            child = (
+                model.get("segment_label") or name or "",
+                name or "",
+            )
+            for region in region_map.get(name) or ["(no region)"]:
+                for portfolio in portfolio_map.get(name) or [NO_PORTFOLIO]:
+                    for model_group in group_map.get(name) or ["(no group)"]:
+                        children = (
+                            tree.setdefault(region, {})
+                            .setdefault(portfolio, {})
+                            .setdefault(model_group, {})
+                            .setdefault(parent_label, [])
+                        )
+                        if child not in children:
+                            children.append(child)
+
+    def _ordered(keys, preferred: list[str]) -> list[str]:
+        preferred_present = [key for key in preferred if key in keys]
+        return preferred_present + [key for key in keys if key not in preferred_present]
+
+    region_order = [value for value in (SAAS_PAGE_DATA.get("region_values") or []) if value]
+    portfolio_order = [value for value in (SAAS_PAGE_DATA.get("portfolio_values") or []) if value] + [NO_PORTFOLIO]
+
+    tree_columns = []
+    for region in _ordered(tree, region_order):
+        portfolio_items_outer = []
+        for portfolio in _ordered(tree[region], portfolio_order):
+            group_items = []
+            for model_group in _ordered(tree[region][portfolio], canonical_groups):
+                parent_items = []
+                for parent_label, children in tree[region][portfolio][model_group].items():
+                    child_items = "".join(
+                        "<li>"
+                        f'<span class="saas-report-tree-segment">{html_escape(segment)}</span>'
+                        f'<span class="saas-report-tree-gmis">{html_escape(gmis)}</span>'
+                        "</li>"
+                        for segment, gmis in children
+                    )
+                    parent_items.append(
+                        f'<li><span class="saas-report-tree-parent">{html_escape(parent_label)}</span>'
+                        f"<ul>{child_items}</ul></li>"
+                    )
+                group_items.append(
+                    f'<li><span class="saas-report-tree-l3">{html_escape(model_group)}</span>'
+                    f'<ul>{"".join(parent_items)}</ul></li>'
+                )
+            portfolio_class = "saas-report-tree-l2-muted" if portfolio == NO_PORTFOLIO else "saas-report-tree-l2"
+            portfolio_items_outer.append(
+                f'<li><span class="{portfolio_class}">{html_escape(portfolio)}</span>'
+                f'<ul>{"".join(group_items)}</ul></li>'
+            )
+        tree_columns.append(
+            '<div class="saas-report-tree-group">'
+            f'<div class="saas-report-tree-root">{html_escape(region)}</div>'
+            f'<ul>{"".join(portfolio_items_outer)}</ul></div>'
+        )
+    tree_page = (
+        '<section class="saas-report-tree-page">'
+        '<div class="saas-report-cover-heading">Model structure</div>'
+        '<p class="saas-report-tree-note">Region &rarr; portfolio &rarr; model group &rarr; model &rarr; use case (segment, with its GMIS model name).</p>'
+        f'<div class="saas-report-tree">{"".join(tree_columns)}</div></section>'
+        if tree_columns
+        else ""
+    )
+
+    if group_blocks:
+        body = cover + tree_page + "\n".join(group_blocks)
     else:
-        body = "<p>No charts match the current filters.</p>"
+        body = cover + "<p>No charts match the current filters.</p>"
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -56,26 +320,78 @@ def build_saas_report_html(sections: list[tuple[str, object]], meta_lines: list[
 <title>SAAS MEV Report</title>
 <style>
   body {{ font-family: -apple-system, Helvetica, Arial, sans-serif; margin: 24px; color: #1f2933; }}
-  h1 {{ font-size: 20px; margin-bottom: 4px; }}
-  .saas-report-meta {{ font-size: 13px; color: #52606d; margin-bottom: 24px; }}
-  .saas-report-meta ul {{ margin: 4px 0 0; padding-left: 18px; }}
-  .saas-report-chart {{ margin-bottom: 32px; page-break-inside: avoid; }}
-  .saas-report-chart h2 {{ font-size: 15px; margin-bottom: 8px; }}
+  /* --- Cover page --- */
+  .saas-report-cover {{ max-width: 980px; }}
+  .saas-report-brand {{ font-size: 11px; font-weight: 800; letter-spacing: 1.4px; text-transform: uppercase; color: #2563eb; margin-bottom: 14px; }}
+  .saas-report-cover h1 {{ font-size: 30px; margin: 0 0 2px; letter-spacing: -.3px; color: #0f1d35; }}
+  .saas-report-subtitle {{ font-size: 15px; color: #52606d; }}
+  .saas-report-generated {{ font-size: 12px; color: #829ab1; margin-top: 6px; }}
+  .saas-report-cover-rule {{ height: 3px; width: 64px; background: #2563eb; border-radius: 2px; margin: 18px 0 20px; }}
+  .saas-report-cover-heading {{ font-size: 11px; font-weight: 800; letter-spacing: .8px; text-transform: uppercase; color: #52606d; margin: 20px 0 8px; }}
+  .saas-report-params {{ display: grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); gap: 10px 24px; }}
+  .saas-report-param-label {{ font-size: 10px; font-weight: 800; letter-spacing: .5px; text-transform: uppercase; color: #829ab1; }}
+  .saas-report-param-value {{ font-size: 13.5px; font-weight: 600; color: #1f2933; margin-top: 1px; }}
+  .saas-report-stats {{ display: flex; gap: 14px; margin-top: 20px; }}
+  .saas-report-stat {{ min-width: 110px; padding: 10px 16px; border: 1px solid #dbe4f0; border-radius: 10px; }}
+  .saas-report-stat-value {{ font-size: 22px; font-weight: 800; color: #0f1d35; line-height: 1.1; }}
+  .saas-report-stat-label {{ font-size: 11px; color: #52606d; margin-top: 2px; }}
+  /* --- Model structure tree (page 2) --- */
+  .saas-report-tree-page {{ margin: 28px 0; }}
+  .saas-report-tree-note {{ font-size: 12.5px; color: #52606d; margin: 0 0 14px; }}
+  .saas-report-tree {{ display: flex; flex-wrap: wrap; gap: 20px 48px; align-items: flex-start; }}
+  .saas-report-tree-root {{ display: inline-block; font-size: 12px; font-weight: 800; letter-spacing: .6px; text-transform: uppercase; color: #2563eb; border: 1.5px solid #2563eb; border-radius: 999px; padding: 4px 14px; margin-bottom: 4px; }}
+  .saas-report-tree ul {{ list-style: none; margin: 0; padding-left: 18px; }}
+  .saas-report-tree li {{ position: relative; padding: 5px 0 0 14px; border-left: 1.5px solid #c3d2e8; }}
+  .saas-report-tree li:last-child {{ border-left-color: transparent; }}
+  .saas-report-tree li::before {{ content: ""; position: absolute; left: -1.5px; top: 0; height: 17px; width: 14px; border-left: 1.5px solid #c3d2e8; border-bottom: 1.5px solid #c3d2e8; border-bottom-left-radius: 6px; }}
+  .saas-report-tree-l2 {{ font-size: 11.5px; font-weight: 800; letter-spacing: .5px; text-transform: uppercase; color: #2563eb; }}
+  .saas-report-tree-l2-muted {{ font-size: 12px; font-style: italic; color: #a3b2c6; }}
+  .saas-report-tree-l3 {{ font-size: 12.5px; font-weight: 700; color: #52606d; }}
+  .saas-report-tree-parent {{ font-size: 13px; font-weight: 700; color: #0f1d35; }}
+  .saas-report-tree-segment {{ font-size: 12.5px; font-weight: 600; color: #1f2933; }}
+  .saas-report-tree-gmis {{ font-size: 11.5px; color: #829ab1; margin-left: 8px; }}
+  .saas-report-toc {{ margin: 0 0 24px; padding: 12px 16px; border: 1px solid #dbe4f0; border-radius: 10px; background: #f8fbff; }}
+  .saas-report-toc ol {{ margin: 0; padding-left: 20px; font-size: 13px; columns: 2; column-gap: 40px; }}
+  .saas-report-toc li {{ break-inside: avoid; margin-bottom: 3px; }}
+  .saas-report-toc a {{ color: #2563eb; text-decoration: none; font-weight: 600; }}
+  .saas-report-toc-count {{ color: #829ab1; margin-left: 8px; font-size: 12px; }}
+  .saas-report-group {{ margin-bottom: 28px; padding: 18px 20px; border: 1px solid #dbe4f0; border-radius: 12px; }}
+  .saas-report-group-kicker {{ font-size: 11px; font-weight: 800; letter-spacing: .65px; text-transform: uppercase; color: #2563eb; }}
+  .saas-report-group h2 {{ font-size: 18px; margin: 2px 0 4px; }}
+  .saas-report-attrs {{ font-size: 12.5px; color: #52606d; margin-bottom: 6px; }}
+  .saas-report-model {{ margin-top: 14px; padding-top: 12px; border-top: 1px solid #e8eef6; }}
+  .saas-report-model h3 {{ font-size: 14px; margin: 0 0 6px; }}
+  .saas-report-gmis {{ font-weight: 500; font-size: 12px; color: #829ab1; margin-left: 10px; }}
+  .saas-report-chart-grid {{ display: grid; grid-template-columns: repeat(2, max-content); gap: 18px 24px; }}
+  .saas-report-chart {{ margin: 0; page-break-inside: avoid; break-inside: avoid; }}
+  .saas-report-chart figcaption {{ font-size: 12.5px; font-weight: 700; margin-bottom: 4px; }}
   .saas-report-chart .plotly-graph-div {{ margin: 0; }}
+  .saas-report-empty {{ font-size: 13px; color: #829ab1; }}
   @media print {{
-    @page {{ size: landscape; margin: 12mm; }}
-    .saas-report-chart {{ page-break-after: always; }}
+    @page {{ size: landscape; margin: 10mm; }}
+    body {{ margin: 0; }}
+    .saas-report-cover {{ page-break-after: always; }}
+    .saas-report-tree-page {{ margin: 0; page-break-after: always; }}
+    .saas-report-toc {{ margin-bottom: 0; }}
+    .saas-report-print-hint {{ display: none; }}
+    /* Every parent model section starts on a fresh page (no orphaned headers
+       at page bottoms), and everything is tightened so the section header
+       plus two ~290px chart rows fit the ~718px printable height. */
+    .saas-report-group {{ border: none; padding: 0; margin-bottom: 10px; page-break-before: always; }}
+    .saas-report-group:first-of-type {{ page-break-before: auto; }}
+    .saas-report-group h2 {{ font-size: 16px; margin: 1px 0 2px; page-break-after: avoid; }}
+    .saas-report-group-kicker {{ font-size: 10px; page-break-inside: avoid; page-break-after: avoid; }}
+    .saas-report-attrs {{ font-size: 11.5px; margin-bottom: 4px; }}
+    .saas-report-model {{ margin-top: 6px; padding-top: 4px; }}
+    .saas-report-model h3 {{ font-size: 13px; margin: 0 0 4px; page-break-after: avoid; }}
+    .saas-report-chart-grid {{ gap: 8px 14px; }}
+    .saas-report-chart figcaption {{ font-size: 11.5px; margin-bottom: 2px; }}
   }}
 </style>
 </head>
 <body>
-  <h1>Scenario Analysis as a Service (SAAS) &mdash; MEV Report</h1>
-  <div class="saas-report-meta">
-    Generated {generated_at}
-    <ul>{meta_items}</ul>
-  </div>
   {body}
-  <p class="saas-report-print-hint">To save this report as a PDF, open this file in a browser and use Print &rarr; Save as PDF.</p>
+  <p class="saas-report-print-hint">To save this report as a PDF, open this file in a browser and use Print &rarr; Save as PDF (landscape). Enable "Background graphics" for the full styling.</p>
 </body>
 </html>"""
 

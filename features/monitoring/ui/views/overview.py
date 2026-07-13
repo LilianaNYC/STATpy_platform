@@ -20,6 +20,7 @@ from .....shared.ui.charts import (
     build_pd_time_series_xaxis,
 )
 from .....shared.ui.controls import build_chart_header
+from .....shared.ui.loading import build_dashboard_loading_shell
 from ...domain.overview import (
     FINAL_RAG_COLUMN,
     FINAL_RAG_PLACEHOLDER,
@@ -111,7 +112,7 @@ def _default_scenario(data: dict) -> str:
 
 def _pd_post_subjective_rag(data: dict, models: set[str], segment: str, reporting_cycle: str, scenario: str) -> dict[str, str]:
     """``models`` is a set so the Segments chapter can pool every PD model
-    (matching the tab's "Specific Models: All models" default) while the
+    (matching the tab's "Models: All models" default) while the
     Models chapter passes a single-model set for its per-model verdict."""
     from .pd_performance import _pd_post_review_summaries
     from .....shared.domain.calculations import PdFilterContext, get_pd_crr_master_scale, set_precomputed_metrics
@@ -1689,8 +1690,11 @@ def page_layout(data: dict) -> list:
             children=[
                 html.Div(
                     className="tab-panel active pd-performance-app",
-                    children=html.Div(
-                        id=CONTENT_ID,
+                    children=build_dashboard_loading_shell(
+                        content_id=CONTENT_ID,
+                        scope_label="Monitoring Dashboard",
+                        title="Refreshing dashboard",
+                        note="Updating scoped metrics, charts, and summary insights.",
                         children=build_overview_apply_prompt(),
                     ),
                 ),
