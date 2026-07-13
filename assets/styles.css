@@ -131,6 +131,10 @@ body{background:#f8fafc;overflow:hidden}
 #tab-pd_models,.pd-performance-app{max-width:1760px;margin:0 auto}
 .dashboard-loading-shell{position:relative;width:100%}
 .dashboard-loading-mask{min-height:0}
+/* Invisible status marker: dcc.Loading's target_components watches this
+   element's `children` text (e.g. "idle"/"loading") to know when to show the
+   spinner. It must exist in the DOM but was never meant to be seen. */
+.dashboard-loading-target{display:none}
 .dashboard-loading-card{display:flex;align-items:center;gap:16px;max-width:min(520px,calc(100vw - 64px));padding:18px 20px;border:1px solid rgba(148,163,184,.22);border-radius:20px;background:linear-gradient(135deg,rgba(255,255,255,.97) 0%,rgba(248,250,252,.98) 55%,rgba(239,246,255,.98) 100%);box-shadow:0 22px 56px rgba(15,23,42,.16),0 0 0 1px rgba(255,255,255,.72) inset;color:var(--text)}
 .dashboard-loading-copy{display:flex;flex-direction:column;gap:4px;min-width:0}
 .dashboard-loading-kicker{font-size:10px;font-weight:800;letter-spacing:.72px;text-transform:uppercase;color:var(--blue)}
