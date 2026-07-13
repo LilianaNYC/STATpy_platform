@@ -504,12 +504,17 @@ def group_effective_models(
     model_group: str | None = None,
     portfolio: str | None = None,
 ) -> list[tuple[str, list[str]]]:
-    """The in-scope models grouped under their parent Descriptive Name, in
-    first-appearance order. Each entry is ``(parent_label, [member Model Names])``.
+    """The in-scope models grouped under their parent Descriptive Name, ordered
+    by Model Group (in the workbook's natural group order, i.e.
+    ``model_group_values``) and then by first-appearance within that group.
+    Each entry is ``(parent_label, [member Model Names])``.
 
     Members are restricted to the models :func:`effective_model_names` keeps in
     scope, so a parent surfaces only the children the current filters allow --
-    the UI renders one card per parent with every in-scope child inside it.
+    the UI renders one card per parent with every in-scope child inside it. A
+    parent's Model Group is taken from its first member model; this ordering
+    also drives the subnav chips and the exported report's section order, so
+    all three stay in the same sequence (card "N." numbering matches chip N).
     """
     effective = effective_model_names(
         segment, selected_models, region=region, model_group=model_group, portfolio=portfolio
@@ -522,7 +527,18 @@ def group_effective_models(
             groups[parent] = []
             order.append(parent)
         groups[parent].append(model_name)
-    return [(parent, groups[parent]) for parent in order]
+
+    model_group_map = SAAS_PAGE_DATA.get("model_group_map", {})
+    group_rank = {value: index for index, value in enumerate(SAAS_PAGE_DATA.get("model_group_values") or [])}
+    appearance_rank = {parent: index for index, parent in enumerate(order)}
+
+    def _sort_key(parent: str) -> tuple[int, int]:
+        first_member = groups[parent][0]
+        primary_group = next(iter(model_group_map.get(first_member) or []), None)
+        return (group_rank.get(primary_group, len(group_rank)), appearance_rank[parent])
+
+    ordered_parents = sorted(order, key=_sort_key)
+    return [(parent, groups[parent]) for parent in ordered_parents]
 
 
 def primary_run_for_value(run_for) -> str | None:

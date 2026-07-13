@@ -112,7 +112,9 @@ body{background:#f8fafc;overflow:hidden}
 .saas-download-compare-note{margin:5px 4px 2px;padding:7px 9px;border-left:3px solid #cbd5e1;border-radius:6px;background:#f8fafc;color:var(--text-muted);font-size:10.5px;line-height:1.4}
 .saas-download-compare-note.is-hidden{display:none}
 /* Global zoom tip above the model panel stack (shown once, not per panel). */
-.saas-zoom-note{margin:0 2px 8px;justify-content:flex-end;font-style:italic}
+.saas-zoom-note{margin:0 2px 8px auto;align-items:flex-start;justify-content:flex-start;max-width:min(540px,100%);padding:8px 12px;border:1px solid #bfdbfe;border-left:4px solid #2563eb;border-radius:10px;background:linear-gradient(135deg,#eff6ff 0%,#f8fbff 100%);color:#1e3a8a;font-style:normal;box-shadow:0 8px 18px rgba(37,99,235,.08)}
+.saas-zoom-note-label{color:#1d4ed8;font-weight:800;letter-spacing:.2px}
+.saas-zoom-note-copy{color:#1e3a8a}
 .saas-modal-overlay{position:fixed;inset:0;background:rgba(15,23,42,.45);display:none;align-items:center;justify-content:center;z-index:1000}
 .saas-modal-overlay.is-open{display:flex}
 .saas-modal{background:#fff;border-radius:12px;padding:22px 24px;width:380px;max-width:92vw;box-shadow:0 18px 48px rgba(15,23,42,.28)}
@@ -1407,6 +1409,19 @@ tr:last-child td{border-bottom:none}
   border-color:var(--dark-border-strong);
   background:linear-gradient(135deg,rgba(29,78,216,.16) 0%,rgba(20,33,54,.94) 58%,rgba(15,23,42,.96) 100%);
   box-shadow:inset 0 1px 0 rgba(255,255,255,.04);
+}
+.monitoring-shell.theme-dark .saas-zoom-note{
+  border-color:rgba(96,165,250,.38);
+  border-left-color:#7dd3fc;
+  background:linear-gradient(135deg,rgba(14,116,144,.24) 0%,rgba(16,24,40,.95) 100%);
+  color:#dbeafe;
+  box-shadow:0 12px 26px rgba(2,8,23,.28);
+}
+.monitoring-shell.theme-dark .saas-zoom-note-label{
+  color:#7dd3fc;
+}
+.monitoring-shell.theme-dark .saas-zoom-note-copy{
+  color:#dbeafe;
 }
 .monitoring-shell.theme-dark .saas-getting-started-summary-title{
   color:#93c5fd;

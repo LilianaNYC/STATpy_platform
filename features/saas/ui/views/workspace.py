@@ -1030,9 +1030,15 @@ def _build_chart_canvas() -> html.Section:
             # inside every model panel). Hidden until charts are rendered; the
             # client JS shows it alongside the expand-all button.
             html.Div(
-                "Tip: drag on a chart to zoom in; double-click the chart to return to the original view.",
                 className="pd-mev-chart-meta saas-zoom-note",
                 style={"display": "none"},
+                children=[
+                    html.Span("Tip:", className="saas-zoom-note-label"),
+                    html.Span(
+                        "drag on a chart to zoom in; double-click the chart to return to the original view.",
+                        className="saas-zoom-note-copy",
+                    ),
+                ],
             ),
             html.Div(
                 id=MEV_MODEL_PANELS_ID,
