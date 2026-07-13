@@ -987,7 +987,7 @@ def build_apply_prompt() -> html.Div:
                     html.Div(
                         className="saas-getting-started-highlights",
                         children=[
-                            html.Span("1. Choose Model Use Case / Cycle, scope, and view options.", className="saas-getting-started-highlight"),
+                            html.Span("1. Narrow by Region / Portfolio / Model Group, choose your Segment or Model scope, then set Model Use Case / Cycle and view options.", className="saas-getting-started-highlight"),
                             html.Span("2. Click Apply filters to load charts and unlock Export.", className="saas-getting-started-highlight"),
                             html.Span("3. Use Compare To only when you want cycle-to-cycle comparisons.", className="saas-getting-started-highlight"),
                         ],
@@ -1011,9 +1011,15 @@ def build_apply_prompt() -> html.Div:
                         "Compare To also powers the Historical Reconciliation and Projection Comparison exports.",
                     ]),
                     html.Li([
-                        html.Strong("Choose your model scope. "),
-                        "Select a Segment or a set of Models. Both stay available to pick from, but if a "
-                        "Segment is active it takes priority over any Models selection.",
+                        html.Strong("(Optional) Narrow by Region, Portfolio, or Model Group. "),
+                        "Each narrows which models are offered in the filters to its right — set any of "
+                        "them to focus on a subset before picking Segment or Model. Leave them at “All” "
+                        "to keep every model in scope.",
+                    ]),
+                    html.Li([
+                        html.Strong("Choose your scope. "),
+                        "Select a Segment or one or more models via the Model filter. Both stay available to "
+                        "pick from, but if a Segment is active it takes priority over any Model selection.",
                     ]),
                     html.Li([
                         html.Strong("Set the view options. "),
@@ -1063,7 +1069,7 @@ def build_apply_prompt() -> html.Div:
                             ],
                         ),
                         html.Span(
-                            "Note: Export uses the last applied top-bar filters. If you change Model Use Case / Cycle, Compare To, Segment, Models, Snapshot Period, Reference Lines, or MEV Label, click Apply filters again before exporting. The two comparison exports also need at least one Compare To cycle, and each Excel starts with a README tab explaining its columns.",
+                            "Note: Export uses the last applied top-bar filters. If you change Region, Portfolio, Model Group, Model Use Case / Cycle, Compare To, Segment, Model, Snapshot Period, Reference Lines, or MEV Label, click Apply filters again before exporting. The two comparison exports also need at least one Compare To cycle, and each Excel starts with a README tab explaining its columns.",
                             className="saas-getting-started-note",
                         ),
                     ]),
