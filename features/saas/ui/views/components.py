@@ -1037,16 +1037,7 @@ def build_model_panel(
         )
     )
     default_model_mevs = [option["value"] for option in transformed_mev_options]
-    default_display_mevs = records.active_selected_mevs(
-        model_name,
-        default_model_mev_mode,
-        default_family_mev,
-        default_model_mevs,
-        visible_records,
-        mev_label_mode=mev_label_mode,
-    )
     date_periods = records.available_date_periods(visible_records)
-    selected_run_fors = selectors.normalize_selected_run_fors(run_for)
     attribute_lines = model_attribute_lines(model_name, skip=suppress_attributes)
     # The child summary shows the model's segment(s); the underlying Model Name
     # (its GMIS name) moves into the info-chip tooltip.

@@ -355,8 +355,6 @@ body{background:#f8fafc;overflow:hidden}
 .saas-subnav-model-chip:hover,.saas-subnav-model-chip:focus{background:#eff6ff;border-color:#bfdbfe;color:var(--navy);outline:none;transform:translateY(-1px)}
 .saas-subnav-model-chip.active{background:var(--navy);border-color:var(--navy);color:#fff;box-shadow:0 6px 16px rgba(15,29,53,.14)}
 .saas-subnav-model-chip.active:hover,.saas-subnav-model-chip.active:focus{background:var(--navy);border-color:var(--navy);color:#fff;transform:none}
-.saas-subnav-segment-chip{cursor:default}
-.saas-subnav-segment-chip:hover,.saas-subnav-segment-chip:focus{background:rgba(255,255,255,.96);border-color:#dbe4f0;color:#475569;transform:none}
 .saas-model-panel-stack{margin-top:16px}
 .saas-secondary-filter-row{margin-top:8px}
 .saas-date-range-controls{display:flex;align-items:flex-end}
@@ -1559,13 +1557,6 @@ tr:last-child td{border-bottom:none}
   border-color:rgba(125,211,252,.62);
   color:var(--dark-text);
   box-shadow:0 0 0 3px rgba(125,211,252,.12);
-}
-.monitoring-shell.theme-dark .saas-subnav-segment-chip:hover,
-.monitoring-shell.theme-dark .saas-subnav-segment-chip:focus{
-  background:rgba(27,43,69,.82);
-  border-color:var(--dark-border);
-  color:var(--dark-text-soft);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.035);
 }
 .monitoring-shell.theme-dark .btn:disabled,
 .monitoring-shell.theme-dark .pd-mev-filter-reset:disabled,

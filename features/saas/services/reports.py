@@ -134,52 +134,6 @@ def build_model_report_sections(
     )
 
 
-def build_report_figures(
-    run_for,
-    compare_against,
-    segment,
-    selected_models,
-    snapshot_period,
-    reference_lines,
-    mev_label_mode,
-    *,
-    region=None,
-    model_group=None,
-    portfolio=None,
-    figure_builder,
-) -> list[tuple[str, object]]:
-    selected_run_fors = selectors.normalize_selected_run_fors(run_for)
-    scoped_run_fors = selectors.scoped_run_for_values(run_for, compare_against)
-    effective_models = selectors.effective_model_names(segment, selected_models, region=region, model_group=model_group, portfolio=portfolio)
-
-    if not selected_run_fors or not effective_models:
-        return []
-
-    time_series_df = SAAS_PAGE_DATA.get("mev_time_series")
-    if time_series_df is None or time_series_df.empty:
-        return []
-
-    filtered_df = time_series_df[time_series_df["Model Name"].isin(effective_models)]
-    filtered_df = filtered_df[filtered_df["Run For"].isin(scoped_run_fors)]
-    records_ = filtered_df.to_dict(orient="records")
-
-    sections: list[tuple[str, object]] = []
-    for model_name in effective_models:
-        model_records = [row for row in records_ if row.get("Model Name") == model_name]
-        sections.extend(
-            build_model_report_sections(
-                model_name,
-                model_records,
-                run_for,
-                snapshot_period,
-                mev_label_mode,
-                reference_lines,
-                figure_builder=figure_builder,
-            )
-        )
-    return sections
-
-
 # Attribute rows mirrored from the dashboard cards: Segment identifies each
 # child (it renders in the child heading, like the panel summary), while the
 # others roll up to the parent header when every member shares them.
