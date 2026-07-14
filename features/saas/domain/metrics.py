@@ -3,14 +3,96 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import datetime
 import statistics
 
 from ....shared.domain.calculations import is_finite_number
+from ....shared.domain.mev_range import format_pd_mev_value
+from ....shared.ui.charts import SAAS_SCENARIO_LABEL_MAP, compute_saas_monitoring_band_spec
 from ..data_access import SAAS_PAGE_DATA
 from . import records as record_filters
 from . import selectors
 
 BASELINE_SCENARIO_VALUE = "baseline"
+
+_MONITORING_SCENARIO_COLORS = {
+    "light": {"baseline": "#16a34a", "intsevere": "#dc2626", "_default": "#1e3a8a"},
+    "dark": {"baseline": "#86efac", "intsevere": "#fb7185", "_default": "#93c5fd"},
+}
+
+
+def format_monitoring_quarter(date_value) -> str:
+    """Render a date (or ISO string) as its calendar quarter, e.g. "2024Q2"."""
+    if date_value is None:
+        return "—"
+    if hasattr(date_value, "year") and hasattr(date_value, "month"):
+        year = int(date_value.year)
+        month = int(date_value.month)
+    else:
+        text = str(date_value).strip()
+        parsed_date = None
+        for candidate in (text[:10], text):
+            try:
+                parsed_date = datetime.fromisoformat(candidate)
+                break
+            except ValueError:
+                continue
+        if parsed_date is None:
+            return text
+        year = parsed_date.year
+        month = parsed_date.month
+    quarter = ((month - 1) // 3) + 1
+    return f"{year}Q{quarter}"
+
+
+def compute_monitoring_summary_data(
+    records_: list[dict],
+    selected_scenarios,
+    selected_mevs,
+    primary_run_for: str | None,
+    development_date,
+    current_date,
+    theme_value: str | None = None,
+) -> dict | None:
+    """Threshold bands and marker legend entries for a monitoring-mode MEV chart,
+    as plain data: mirrors the chart's shaded bands and vertical marker lines so
+    both the live dashboard card and the exported report can render the same
+    legend from one source of truth."""
+    monitoring_records = record_filters.filter_records_by_mevs(
+        record_filters.filter_records_by_scenarios(records_, selected_scenarios),
+        selected_mevs,
+    )
+    band_spec = compute_saas_monitoring_band_spec(
+        monitoring_records,
+        primary_run_for=primary_run_for,
+        development_date=development_date,
+    )
+
+    thresholds = []
+    if band_spec:
+        thresholds = [
+            {"label": "Green", "value": f"{format_pd_mev_value(band_spec['green_low'])} to {format_pd_mev_value(band_spec['green_high'])}", "tone": "green"},
+            {"label": "Amber low", "value": f"{format_pd_mev_value(band_spec['amber_low_low'])} to {format_pd_mev_value(band_spec['amber_low_high'])}", "tone": "amber"},
+            {"label": "Amber high", "value": f"{format_pd_mev_value(band_spec['amber_high_low'])} to {format_pd_mev_value(band_spec['amber_high_high'])}", "tone": "amber"},
+            {"label": "Red", "value": f"< {format_pd_mev_value(band_spec['red_low_cutoff'])} or > {format_pd_mev_value(band_spec['red_high_cutoff'])}", "tone": "red"},
+        ]
+
+    markers = []
+    normalized_scenarios = selectors.normalize_selected_scenarios(selected_scenarios)
+    if normalized_scenarios:
+        scenario_value = normalized_scenarios[0]
+        scenario_label = SAAS_SCENARIO_LABEL_MAP.get(scenario_value, scenario_value.replace("_", " ").title())
+        palette = _MONITORING_SCENARIO_COLORS.get(selectors.normalize_theme_value(theme_value), _MONITORING_SCENARIO_COLORS["light"])
+        scenario_color = palette.get(scenario_value, palette["_default"])
+        markers.append({"label": "Scenario", "value": scenario_label, "tone": "series", "color": scenario_color})
+    if development_date is not None:
+        markers.append({"label": "Development Date", "value": format_monitoring_quarter(development_date), "tone": "development", "color": None})
+    if current_date is not None:
+        markers.append({"label": "Scenario Date", "value": format_monitoring_quarter(current_date), "tone": "current", "color": None})
+
+    if not thresholds and not markers:
+        return None
+    return {"thresholds": thresholds, "markers": markers}
 
 
 def compute_historical_dispersion_stats(records: list[dict], selected_scenarios) -> dict | None:
