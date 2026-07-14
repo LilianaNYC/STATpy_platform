@@ -6,7 +6,7 @@ import re
 
 from ..data_access import SAAS_PAGE_DATA
 from ..ui.views import workspace as layout
-from ..domain import records, selectors
+from ..domain import metrics, records, selectors
 
 
 def build_model_report_figures(
@@ -23,8 +23,8 @@ def build_model_report_figures(
     figure_builder,
     primary_run_for: str | None = None,
     include_model_in_title: bool = True,
-) -> list[tuple[str, object]]:
-    """Build (title, figure) pairs for a model using the default chart selections."""
+) -> list[tuple[str, object, str, dict | None]]:
+    """Build (title, figure, mev_type, monitoring_summary) tuples for a model using the default chart selections."""
     normalized_mev_mode = selectors.normalize_selected_mev_mode(selected_mev_mode)
     scenario_options = records.build_scenario_options(records_)
     visible_mev_names = {
@@ -46,7 +46,7 @@ def build_model_report_figures(
     development_date = selectors.model_development_date(model_name, primary_run_for)
     current_date = selectors.current_date_for_run_for(primary_run_for)
 
-    figures: list[tuple[str, object]] = []
+    figures: list[tuple[str, object, str, dict | None]] = []
     for mev_name in effective_mev_values:
         mev_records = [
             row for row in records_
@@ -57,6 +57,17 @@ def build_model_report_figures(
             if str(row.get("MEV Name") or "").strip() == mev_name
         ]
         mev_label = selectors.resolve_mev_label(mev_name, mev_label_mode)
+        mev_type = selectors.mev_type_label(mev_name)
+        monitoring_summary = None
+        if reference_lines == "monitoring":
+            monitoring_summary = metrics.compute_monitoring_summary_data(
+                mev_reference_records,
+                effective_scenarios,
+                [mev_name],
+                primary_run_for,
+                development_date,
+                current_date,
+            )
         fig = figure_builder(
             model_name,
             mev_records,
@@ -73,7 +84,7 @@ def build_model_report_figures(
             [mev_name],
         )
         title = f"{model_name} — {mev_label}" if include_model_in_title else mev_label
-        figures.append((title, fig))
+        figures.append((title, fig, mev_type, monitoring_summary))
     return figures
 
 
@@ -87,8 +98,8 @@ def build_model_report_sections(
     *,
     figure_builder,
     include_model_in_title: bool = True,
-) -> list[tuple[str, object]]:
-    """Build (title, figure) pairs for a model panel's default view."""
+) -> list[tuple[str, object, str, dict | None]]:
+    """Build (title, figure, mev_type, monitoring_summary) tuples for a model panel's default view."""
     snapshot_period_value = selectors.normalize_snapshot_period(snapshot_period)
     visible_records = records.filter_records_by_snapshot_period(records_, snapshot_period_value)
     scenario_options = records.build_scenario_options(visible_records)

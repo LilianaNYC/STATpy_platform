@@ -11,6 +11,7 @@ from .....shared.ui.charts import SAAS_SCENARIO_LABEL_MAP
 from .....shared.ui.loading import build_dashboard_loading_shell
 from .....shared.domain.calculations import get_pd_range_preset, get_pd_range_selection
 from ...data_access import SAAS_PAGE_DATA
+from ...domain import selectors
 
 RUN_FOR_ID = "saas-run-for"
 RUN_FOR_TOGGLE_ID = "saas-run-for-toggle"
@@ -1025,6 +1026,22 @@ def build_apply_prompt() -> html.Div:
                         html.Strong("Set the view options. "),
                         "Adjust Snapshot Period (History, Projection, or History & Projection), Reference Lines "
                         "(None, Min-Max, or Monitoring), and the MEV Label convention.",
+                        html.Ul(
+                            className="saas-getting-started-substeps",
+                            children=[
+                                html.Li([
+                                    html.Strong("Min-Max — "),
+                                    "the historical minimum and maximum of the primary cycle's MEV values (Quarter ≤ 0) "
+                                    "within the current date window. Projected values and any Compare To cycles are excluded.",
+                                ]),
+                                html.Li([
+                                    html.Strong("Monitoring — "),
+                                    "Green marks the historical min/max as of the model's development date; Amber extends "
+                                    "that range by ±2 standard deviations (population std. dev. of the same historical "
+                                    "values); Red is anything beyond the Amber bounds.",
+                                ]),
+                            ],
+                        ),
                         html.Span(
                             "Note: the Monitoring reference lines describe a single model use case / cycle, so they "
                             "can't be combined with Compare To. To use Monitoring, set Compare To back to "
@@ -1092,7 +1109,7 @@ def _build_chart_canvas() -> html.Section:
                 className="pd-performance-note",
                 children=[
                     html.Strong("Executive summary: "),
-                    "The Scenario Analysis as a Service (SAAS) dashboard is a self-service tool for reviewing the macro-economic variables (MEVs) that drive credit risk models under stress scenarios, across model use case / cycles. By bringing each MEV's history and forward projections together, it helps users understand the drivers behind the models and sense-check the scenario projections.",
+                    selectors.EXECUTIVE_SUMMARY_TEXT,
                 ],
             ),
             # One global zoom tip above the panel stack (instead of repeating it

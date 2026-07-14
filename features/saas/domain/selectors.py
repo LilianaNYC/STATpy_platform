@@ -38,6 +38,14 @@ DEFAULT_MEV_TYPE = "family"
 
 DATE_RANGE_PRESET_COUNTS = {"last-4": 4, "last-8": 8, "last-12": 12}
 
+EXECUTIVE_SUMMARY_TEXT = (
+    "The Scenario Analysis as a Service (SAAS) dashboard is a self-service tool for "
+    "reviewing the macro-economic variables (MEVs) that drive credit risk models under "
+    "stress scenarios, across model use case / cycles. By bringing each MEV's history "
+    "and forward projections together, it helps users understand the drivers behind the "
+    "models and sense-check the scenario projections."
+)
+
 RUN_FOR_OPTIONS = [
     {"label": value, "value": value}
     for value in (SAAS_PAGE_DATA.get("run_for_values") or [])
