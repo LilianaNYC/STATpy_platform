@@ -409,6 +409,9 @@ def register_callbacks(app) -> None:
     # -----------------------------------------------------------------
     @app.callback(
         Output(layout.APPLIED_FILTERS_STORE_ID, "data"),
+        Output(layout.CONCLUSIONS_NOTES_STORE_ID, "data", allow_duplicate=True),
+        Output(layout.PD_REVIEW_FLOW_PENDING_STORE_ID, "data", allow_duplicate=True),
+        Output(layout.PD_REVIEW_FLOW_STATUS_STORE_ID, "data", allow_duplicate=True),
         Input(layout.APPLY_FILTERS_ID, "n_clicks"),
         State(controls.MONITORING_POINT_ID, "value"),
         State(controls.PORTFOLIO_SEGMENT_ID, "value"),
@@ -420,18 +423,27 @@ def register_callbacks(app) -> None:
     def apply_pd_filters(_n_clicks, monitoring_point, segment, models, reporting_cycle, scenario):
         """Snapshot the current top filters so the content renders only on Apply.
 
+        Also discards the scope-specific review-flow state: the unsaved
+        reviewer sign-off draft, any staged (not-yet-saved) RAG picks, and the
+        last save-status message. All three describe the scope that was on
+        screen before the click, so carrying them across an Apply would show
+        them against a different model/segment/quarter. Clearing them here
+        (same callback as the applied-filters snapshot) guarantees the
+        re-render reads the cleared values and falls back to the new scope's
+        saved values from the portfolio file.
+
         Guard against spurious fires when the page is (re)inserted by the router:
         only snapshot once the button has actually been clicked.
         """
         if not _n_clicks:
-            return no_update
+            return no_update, no_update, no_update, no_update
         return {
             "monitoring_point": monitoring_point,
             "segment": segment,
             "models": models,
             "reporting_cycle": reporting_cycle,
             "scenario": scenario,
-        }
+        }, "", {}, ""
 
     # -----------------------------------------------------------------
     # Master re-render: applied store + per-chart stores -> pd-performance-content

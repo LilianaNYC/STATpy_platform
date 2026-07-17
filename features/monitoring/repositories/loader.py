@@ -543,6 +543,50 @@ def load_pd_sensitivity_projections() -> list[dict[str, Any]]:
     return load_sensitivity_projections(PD_SENSITIVITY_SHEET_NAME, "projected_pd")
 
 
+MONITORING_ACTIONS_SHEET_NAME = "monitoring_actions"
+
+# Workbook column -> normalized record key for the governance action playbook.
+_MONITORING_ACTIONS_COLUMN_MAP = {
+    "Stage": "stage",
+    "Trigger": "trigger",
+    "RAG": "rag",
+    "Description": "description",
+    "Required Action": "required_action",
+    "Additional Requirements": "additional_requirements",
+    "Escalation / Discussion": "escalation",
+    "Sponsor Approval Required": "sponsor_approval",
+    "Deep Dive Required": "deep_dive",
+    "Redevelopment Considered": "redevelopment",
+    "Action Owner": "owner",
+    "Due in Report": "due_in_report",
+}
+
+
+def load_monitoring_actions() -> list[dict[str, Any]]:
+    """Load the governance action playbook from ``monitoring.xlsx``.
+
+    One row per ``(Stage, Trigger, RAG)``; blank cells become empty strings so
+    the domain/UI layers never see NaN. Missing file or sheet -> ``[]`` (the
+    Conclusion section then simply renders without a Required Actions panel).
+    """
+    try:
+        df = pd.read_excel(settings.monitoring_actions_file, sheet_name=MONITORING_ACTIONS_SHEET_NAME)
+    except (FileNotFoundError, ValueError, KeyError):
+        log.warning("Monitoring actions file %s not readable; playbook disabled", settings.monitoring_actions_file)
+        return []
+
+    df = df.dropna(how="all")
+    records = []
+    for _, row in df.iterrows():
+        record = {
+            key: str(row[col]).strip() if col in df.columns and pd.notna(row.get(col)) else ""
+            for col, key in _MONITORING_ACTIONS_COLUMN_MAP.items()
+        }
+        if record["stage"] and record["rag"]:
+            records.append(record)
+    return records
+
+
 def _build_observations_from_aggregated(agg_df: pd.DataFrame) -> tuple[dict, list[dict], list[str], list[dict]]:
     """Deprecated facility synthesis.
 
@@ -773,6 +817,7 @@ def load_pd_performance_data_from_aggregated() -> dict[str, Any]:
         "mev_mnemonic_map": mev_mnemonic_map,
         "mev_description_map": mev_description_map,
         "sensitivity_projections": load_pd_sensitivity_projections(),
+        "monitoring_actions": load_monitoring_actions(),
         "lgd_sensitivity_projections": load_sensitivity_projections(
             LGD_SENSITIVITY_SHEET_NAME, "projected_lgd",
             model_relabel={"PD Model A": "LGD Model A", "PD Model B": "LGD Model A"},

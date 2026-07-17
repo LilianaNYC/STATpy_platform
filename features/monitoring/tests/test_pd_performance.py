@@ -60,7 +60,7 @@ def _collect_nodes_with_class(node, class_token: str) -> list[Component]:
     return matches
 
 
-def _render_pd_content():
+def _render_pd_content_with(**overrides):
     """Render the live dashboard content (post-Apply), not the getting-started prompt."""
     from STATpy_platform.features.monitoring.data_access import PD_PERFORMANCE_DATA as data
     from STATpy_platform.shared.domain.calculations import PdFilterContext, set_precomputed_metrics
@@ -83,14 +83,50 @@ def _render_pd_content():
             {},
             reporting_cycle="CCAR 2026",
             scenario="intsevere",
+            **overrides,
         )
     finally:
         set_precomputed_metrics(None)
 
 
+def _render_pd_content():
+    return _render_pd_content_with()
+
+
 def test_pd_performance_layout_builds():
     layout = page.build_layout()
     assert isinstance(layout, list) and layout
+
+
+def test_apply_filters_clears_the_reviewer_signoff_draft(monkeypatch):
+    from dash import no_update
+
+    import STATpy_platform.features.monitoring.callbacks.pd_performance as cb
+
+    captured: dict = {}
+
+    class StubApp:
+        def callback(self, *args, **kwargs):
+            def decorator(fn):
+                captured[fn.__name__] = fn
+                return fn
+
+            return decorator
+
+    monkeypatch.setattr(cb, "already_registered", lambda app, key: False)
+    cb.register_callbacks(StubApp())
+
+    apply_fn = captured["apply_pd_filters"]
+    applied, notes, pending, save_status = apply_fn(1, "2026Q3", "all", "", "CCAR 2026", "intsevere")
+    assert applied["monitoring_point"] == "2026Q3"
+    assert notes == "", "an Apply click must discard the unsaved sign-off draft"
+    assert pending == {}, "an Apply click must discard staged review-flow RAG picks"
+    assert save_status == "", "an Apply click must discard the stale save-status message"
+
+    # Spurious fire (router re-insert, n_clicks=0) must touch no store.
+    assert apply_fn(0, "2026Q3", "all", "", "CCAR 2026", "intsevere") == (
+        no_update, no_update, no_update, no_update,
+    )
 
 
 def test_pd_performance_build_stores():

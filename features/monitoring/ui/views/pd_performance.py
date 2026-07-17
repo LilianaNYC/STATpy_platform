@@ -49,6 +49,7 @@ from .....shared.ui.controls import (
     build_section_filter_item,
     build_trend_horizon_control,
 )
+from ...domain.actions import select_pd_monitoring_actions
 from .cards import (
     build_pd_chapter_heading,
     build_pd_ead_card,
@@ -2252,6 +2253,211 @@ def _build_pd_conclusions_signoff_chip(post_mitigation_rag: str) -> html.Div:
     )
 
 
+def _build_pd_collapsible_card(card_id: str, title: str, subtitle: str, body: list, extra_class: str = "") -> html.Details:
+    """A section-card that folds via native ``<details>``/``<summary>`` (no callbacks).
+
+    Starts collapsed; the open/closed state lives in the DOM only, so a full
+    content re-render (e.g. staging a review-flow RAG) folds it again —
+    acceptable here since the summary header always stays visible.
+    """
+    return html.Details(
+        id=card_id,
+        className=f"section-card pd-collapsible-card {extra_class}".strip(),
+        open=False,
+        children=[
+            html.Summary(
+                className="pd-collapsible-summary",
+                children=[
+                    html.Span(
+                        className="pd-collapsible-summary-copy",
+                        children=[
+                            html.Span(title, className="section-title"),
+                            html.Span(subtitle, className="pd-section-subtitle"),
+                        ],
+                    ),
+                    html.Span("▾", className="pd-collapsible-chevron", **{"aria-hidden": "true"}),
+                ],
+            ),
+            *body,
+        ],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Required Actions panel (governance playbook, driven by the review-flow RAGs)
+# ---------------------------------------------------------------------------
+
+_PD_ACTION_STAGE_KICKERS = {
+    "Pre Mitigation": "Pre mitigation playbook",
+    "Post Mitigation": "Post mitigation playbook",
+}
+
+
+def _pd_action_empty_hint(selection: dict) -> str:
+    labels = [
+        PD_REVIEW_FLOW_FIELD_LABELS.get(field, field)
+        for field, _ in selection["drivers"]
+    ]
+    named = " or ".join(labels) if labels else "review-flow RAG"
+    return f"Set the {named} above to surface its required action."
+
+
+def _build_pd_action_governance_pill(label: str, value: str) -> html.Span:
+    required = str(value or "").strip().lower() == "yes"
+    return html.Span(
+        className=f"pd-action-gov-pill{' pd-action-gov-pill-required' if required else ''}",
+        children=[html.Span(label), html.Strong("Yes" if required else "No")],
+    )
+
+
+def _build_pd_action_driver_chips(selection: dict, pending_fields: set[str]) -> html.Div:
+    chips = []
+    for field, rag in selection["drivers"]:
+        label = PD_REVIEW_FLOW_FIELD_LABELS.get(field, field)
+        chip_children = [pd_rag_dot(rag), html.Span(f"{label}: "), html.Strong(rag)]
+        if field in pending_fields:
+            chip_children.append(html.Span("unsaved", className="pd-action-driver-chip-unsaved"))
+        chips.append(html.Span(chip_children, className="pd-action-driver-chip"))
+    return html.Div(
+        className="pd-action-driver-row",
+        children=[html.Span("Driven by", className="pd-action-driver-label"), *chips],
+    )
+
+
+def _build_pd_action_card(selection: dict, pending_fields: set[str]) -> html.Article:
+    stage = selection["stage"]
+    kicker = _PD_ACTION_STAGE_KICKERS.get(stage, stage)
+    action = selection.get("action")
+
+    if not action:
+        return html.Article(
+            className="pd-test-card pd-test-neutral pd-action-card pd-action-card-empty",
+            children=[
+                html.Div(
+                    className="pd-test-card-heading",
+                    children=[html.Div([
+                        html.Span(kicker),
+                        html.Div([html.H4(f"{stage} action")], className="pd-card-title-row"),
+                    ])],
+                ),
+                _build_pd_action_driver_chips(selection, pending_fields),
+                html.Div("No action defined", className="pd-test-value"),
+                html.Div(_pd_action_empty_hint(selection), className="pd-test-meta"),
+            ],
+        )
+
+    tone = _rag_tone(selection["rag"])
+    detail_blocks = [
+        html.Div(
+            className="pd-action-detail pd-action-detail-primary",
+            children=[html.Span("Required action"), html.P(action["required_action"])],
+        ),
+    ]
+    if action.get("additional_requirements"):
+        detail_blocks.append(
+            html.Div(
+                className="pd-action-detail",
+                children=[html.Span("Additional requirements"), html.P(action["additional_requirements"])],
+            )
+        )
+    if action.get("escalation"):
+        detail_blocks.append(
+            html.Div(
+                className="pd-action-detail",
+                children=[html.Span("Escalation / discussion"), html.P(action["escalation"])],
+            )
+        )
+
+    children = [
+        html.Div(
+            className="pd-test-card-heading",
+            children=[
+                html.Div([
+                    html.Span(kicker),
+                    html.Div([html.H4(action.get("trigger") or f"{stage} action")], className="pd-card-title-row"),
+                ]),
+                html.Span(
+                    [pd_rag_dot(selection["rag"]), html.Strong(selection["rag"])],
+                    className="pd-action-card-rag",
+                ),
+            ],
+        ),
+    ]
+    if selection.get("persistent_breach"):
+        children.append(
+            html.Div(
+                "Persistent breach — two consecutive Red quarters",
+                className="pd-action-breach-ribbon",
+            )
+        )
+    children.extend([
+        _build_pd_action_driver_chips(selection, pending_fields),
+        html.Div(action.get("description", ""), className="pd-action-description"),
+        *detail_blocks,
+        html.Div(
+            className="pd-action-gov-row",
+            children=[
+                _build_pd_action_governance_pill("Sponsor approval", action.get("sponsor_approval")),
+                _build_pd_action_governance_pill("Deep dive", action.get("deep_dive")),
+                _build_pd_action_governance_pill("Redevelopment", action.get("redevelopment")),
+            ],
+        ),
+        html.Div(
+            " · ".join(
+                part for part in (
+                    f"Owner: {action.get('owner')}" if action.get("owner") else "",
+                    f"Due in: {action.get('due_in_report')}" if action.get("due_in_report") else "",
+                ) if part
+            ),
+            className="pd-test-footnote",
+        ),
+    ])
+    return html.Article(
+        className=f"pd-test-card pd-test-{tone} pd-action-card"
+                  f"{' pd-action-card-breach' if selection.get('persistent_breach') else ''}",
+        children=children,
+    )
+
+
+def _build_pd_required_actions_panel(
+    monitoring_actions: list[dict],
+    effective_rags: dict[str, str],
+    previous_post_mitigation_rag: str,
+    pending_fields: set[str],
+) -> html.Div | None:
+    """Governance playbook actions for the effective review-flow RAGs.
+
+    Rebuilt on every content render, so staging a different RAG in the
+    lifecycle pickers above updates the selected actions immediately (the
+    ``unsaved`` chip marks actions driven by a not-yet-saved pick).
+    """
+    if not monitoring_actions:
+        return None
+    selections = select_pd_monitoring_actions(
+        monitoring_actions, effective_rags, previous_post_mitigation_rag,
+    )
+
+    return _build_pd_collapsible_card(
+        "pd-conclusions-action-plan",
+        "Required actions",
+        "Governance playbook actions matched to the review-flow RAGs above. Changing a RAG — even before "
+        "saving — updates these actions immediately.",
+        [
+            html.Div(
+                className="pd-action-plan-grid",
+                children=[_build_pd_action_card(selection, pending_fields) for selection in selections],
+            ),
+            html.Div(
+                "Source: monitoring.xlsx · monitoring_actions. Each action keys off the review-flow RAG named in "
+                "its Trigger column; two consecutive Red Post Mitigation quarters escalate to the persistent-breach "
+                "protocol.",
+                className="pd-test-footnote",
+            ),
+        ],
+        extra_class="pd-action-plan-card",
+    )
+
+
 def _build_pd_conclusions_verdict_section(
     chapter_1_rag: str,
     chapter_2_summaries: list[dict],
@@ -2260,25 +2466,35 @@ def _build_pd_conclusions_verdict_section(
     pending_edits: dict | None = None,
     review_flow_save_status: str | None = None,
     saved_commentary: str = "",
+    monitoring_actions: list[dict] | None = None,
+    previous_post_mitigation_rag: str = "",
 ) -> html.Section:
     lifecycle_diagram = _build_pd_rag_lifecycle_diagram(
         chapter_1_rag, chapter_2_summaries,
         review_flow_rags["post_subjective"], review_flow_rags["pre_mitigation"], review_flow_rags["post_mitigation"],
         pending_edits=pending_edits,
     )
+    effective_rags = {
+        field: (pending_edits or {}).get(field) or review_flow_rags[field]
+        for field in ("post_subjective", "pre_mitigation", "post_mitigation")
+    }
+    pending_fields = {
+        field for field, value in (pending_edits or {}).items()
+        if value in ("Green", "Amber", "Red") and value != review_flow_rags.get(field)
+    }
+    actions_panel = _build_pd_required_actions_panel(
+        monitoring_actions or [], effective_rags, previous_post_mitigation_rag, pending_fields,
+    )
     commentary_changed = (conclusions_notes or "") != (saved_commentary or "")
     save_bar = build_pd_review_flow_save_bar(
         pending_edits or {}, review_flow_rags, review_flow_save_status, commentary_changed,
     )
 
-    reviewer_signoff = html.Div(
-        id="pd-conclusions-reviewer",
-        className="section-card pd-conclusions-notes-card",
-        children=[
-            build_chart_header(
-                "Reviewer sign-off",
-                "Record the reviewer's conclusions, caveats, or rationale for the Post Mitigation RAG shown above.",
-            ),
+    reviewer_signoff = _build_pd_collapsible_card(
+        "pd-conclusions-reviewer",
+        "Reviewer sign-off",
+        "Record the reviewer's conclusions, caveats, or rationale for the Post Mitigation RAG shown above.",
+        [
             _build_pd_conclusions_signoff_chip(review_flow_rags["post_mitigation"]),
             dcc.Textarea(
                 id=CONCLUSIONS_NOTES_ID,
@@ -2291,6 +2507,7 @@ def _build_pd_conclusions_verdict_section(
                 className="pd-test-footnote",
             ),
         ],
+        extra_class="pd-conclusions-notes-card",
     )
 
     return html.Section(
@@ -2304,6 +2521,7 @@ def _build_pd_conclusions_verdict_section(
                 "N/A", options={"show_rag": False},
             ),
             lifecycle_diagram,
+            *([actions_panel] if actions_panel is not None else []),
             reviewer_signoff,
             html.Div(
                 id=PD_REVIEW_FLOW_SAVE_BAR_ID,
@@ -3174,12 +3392,15 @@ def render_pd_performance_content(
     )
     review_flow_rags = pd_review_flow_rags(ctx, cq)
     saved_commentary = pd_reviewer_commentary(ctx, cq)
+    previous_review_flow_rags = pd_review_flow_rags(ctx, get_previous_pd_quarter(cq))
     section_3_1 = _build_pd_conclusions_verdict_section(
         performance_pd_overview["rag"], post_review_summaries, review_flow_rags,
         conclusions_notes=conclusions_notes if conclusions_notes else saved_commentary,
         pending_edits=review_flow_pending_edits,
         review_flow_save_status=review_flow_save_status,
         saved_commentary=saved_commentary,
+        monitoring_actions=data.get("monitoring_actions") or [],
+        previous_post_mitigation_rag=previous_review_flow_rags["post_mitigation"],
     )
     chapter_3_body = html.Div(
         className="pd-chapter-body pd-chapter-body-conclusions",

@@ -153,6 +153,9 @@ bands) live in `shared/domain/constants.py`.
   LGD / Loss / scenario-test threshold tables.
 - `dummy_mev_data.xlsx` – the MEV catalog (descriptions, time series, model
   characteristics) used by the PD MEV Range section and the SAAS workspace.
+- `monitoring.xlsx` – the governance action playbook (`monitoring_actions`
+  sheet): one required-action row per stage/RAG, surfaced in the PD
+  Conclusion's Required Actions panel and keyed off the review-flow RAGs.
 
 Each dashboard's `data_access.py` reads its source once at import time (through
 its `services` layer) and exposes the in-memory payload.
