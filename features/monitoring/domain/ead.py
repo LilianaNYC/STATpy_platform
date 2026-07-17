@@ -18,9 +18,6 @@ from ....shared.domain.calculations import calculate_pd_metric_rag, get_worst_pd
 EAD_METRICS = ["ME", "RMSE", "Kendall's Tau"]
 EAD_CALIBRATION_METRICS = ["ME", "RMSE"]
 EAD_DISCRIMINATION_METRICS = ["Kendall's Tau"]
-EAD_ALL_MODELS_LABEL = "All models"
-
-
 # ---------------------------------------------------------------------------
 # Precomputed-metrics store
 # ---------------------------------------------------------------------------
@@ -49,9 +46,9 @@ def _ead_store_key(selected_model, selected_segment) -> tuple[str, str]:
         model = models[0] if len(models) == 1 else None
     else:
         model = selected_model
-    if model and model not in ("all", "All", EAD_ALL_MODELS_LABEL, ""):
+    if model and model not in ("all", "All", ""):
         return "model", str(model)
-    return "model", "All Models"
+    return "model", ""
 
 
 def _ead_store_rows(selected_model, selected_segment) -> list[dict] | None:
@@ -138,7 +135,7 @@ def resolve_ead_models(data: dict, selected_model: str | list[str] | tuple[str, 
     if isinstance(selected_model, (list, tuple, set)):
         selected = [str(value) for value in selected_model if value in models]
         return selected
-    if selected_model in {EAD_ALL_MODELS_LABEL, "All", None, ""}:
+    if selected_model in {"All", None, ""}:
         return []
     if selected_model in models:
         return [str(selected_model)]

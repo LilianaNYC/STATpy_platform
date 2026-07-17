@@ -31,6 +31,7 @@ import logging
 from typing import Any
 
 import numpy as np
+import openpyxl
 import pandas as pd
 
 from ....shared.domain import constants as config
@@ -383,6 +384,11 @@ _LOSS_METRIC_COLUMN_MAP = {
     "acl_predicted": "Predicted ACL",
     "acl_actual": "Actual ACL",
 }
+_OPTIONAL_REVIEW_TEXT_COLUMNS = (
+    "rag_post_sr",
+    "rag_pre_mitig",
+    "rag_post_mitig",
+)
 
 
 def _build_metric_rows_store(sheet_name: str, column_map: dict[str, str]) -> dict[str, Any]:
@@ -416,6 +422,9 @@ def _build_metric_rows_store(sheet_name: str, column_map: dict[str, str]) -> dic
             metric_row = {"Monitoring Period": quarter}
             for col, key in column_map.items():
                 metric_row[key] = _num(row.get(col)) if col in cycle_df.columns else None
+            for col in _OPTIONAL_REVIEW_TEXT_COLUMNS:
+                if col in cycle_df.columns and pd.notna(row.get(col)) and str(row.get(col)).strip():
+                    metric_row[col] = str(row.get(col)).strip()
             for count_key in ("Observations", "Defaults"):
                 if metric_row.get(count_key) is not None:
                     metric_row[count_key] = int(metric_row[count_key])
@@ -455,11 +464,10 @@ def load_sensitivity_projections(
     ``model_relabel`` re-tags ``level == "model"`` rows whose ``model_or_segment``
     is a key in the mapping to that key's value, then drops duplicate
     ``(reporting_cycle, quarter, scenario_variant)`` rows the relabel produces.
-    The LGD/EAD workbook sheets carry the PD model names ("PD Model A" /
-    "PD Model B") and "All Models" on their model-level rows -- copy-paste
-    leftovers from a template shared with PD_Sensitivity_Projections -- even
-    though LGD/EAD each have exactly one model; all three labels carry
-    identical values, confirming they're the same entity under the wrong name.
+    The LGD/EAD workbook sheets still carry PD model names ("PD Model A" /
+    "PD Model B") on their model-level rows -- copy-paste leftovers from a
+    template shared with PD_Sensitivity_Projections -- even though LGD/EAD
+    each have exactly one model.
     """
     try:
         df = pd.read_excel(settings.portfolio_file, sheet_name=sheet_name)
@@ -568,6 +576,13 @@ _PD_METRIC_COLUMNS = (
     "default_count_1y",
 )
 
+_PD_TEXT_COLUMNS = (
+    "rag_post_sr",
+    "rag_pre_mitig",
+    "rag_post_mitig",
+    "reviewer_commentary",
+)
+
 # The horizons each per-horizon row is replicated to when its ``horizon`` cell
 # is left blank (i.e. the metric is horizon-agnostic, e.g. discrimination).
 _PD_HORIZONS = ("1y", "2y", "nco_1y")
@@ -600,6 +615,11 @@ def _build_metrics_store(cycle_df: pd.DataFrame) -> dict:
         if not quarter or not level or not value:
             continue
         metrics = {col: _num(row.get(col)) for col in _PD_METRIC_COLUMNS if col in cycle_df.columns}
+        metrics.update({
+            col: str(row.get(col)).strip()
+            for col in _PD_TEXT_COLUMNS
+            if col in cycle_df.columns and pd.notna(row.get(col)) and str(row.get(col)).strip()
+        })
         bucket = grouped.setdefault((level, value, quarter), {"shared": {}, "horizons": {}})
         if horizon in ("", "nan", "all"):
             bucket["shared"].update({k: v for k, v in metrics.items() if v is not None})
@@ -618,6 +638,62 @@ def _build_metrics_store(cycle_df: pd.DataFrame) -> dict:
     return store
 
 
+def update_pd_review_flow_rag(
+    reporting_cycle: str, level: str, model_or_segment: str, quarter: str, field: str, new_value: str,
+) -> int:
+    """Write ``new_value`` for ``field`` into the portfolio file, in place.
+
+    ``field`` is one of ``rag_post_sr`` / ``rag_pre_mitig`` / ``rag_post_mitig`` / ``reviewer_commentary``.
+    Every horizon row (blank/1y/2y/nco_1y) for a given ``(reporting_cycle, level, model_or_segment,
+    quarter)`` carries the same value in this sheet (see :func:`_build_metrics_store`), so all matching
+    rows are updated together to keep the file internally consistent. Returns the number of rows
+    written; 0 means no matching rows were found (nothing was written, so the file is untouched).
+    """
+    if field not in _PD_TEXT_COLUMNS:
+        raise ValueError(f"Unknown PD review-flow RAG field: {field!r}")
+
+    workbook = openpyxl.load_workbook(settings.portfolio_file)
+    sheet = workbook[PD_AGGREGATED_SHEET_NAME]
+
+    header_row = next(sheet.iter_rows(min_row=1, max_row=1))
+    col_index = {cell.value: cell.column for cell in header_row if cell.value}
+    base_columns = ("reporting_cycle", "quarter", "level", "model_or_segment")
+    if any(name not in col_index for name in base_columns):
+        log.warning("PD_Performance_Metrics is missing a required column for the RAG write-back; skipped.")
+        return 0
+
+    if field not in col_index:
+        # Self-healing schema: e.g. reviewer_commentary may not exist in the sheet yet on first use --
+        # add the column header once instead of silently failing every save attempt.
+        new_col = sheet.max_column + 1
+        sheet.cell(row=1, column=new_col, value=field)
+        col_index[field] = new_col
+        log.info("Added missing column %r to %s in %s", field, PD_AGGREGATED_SHEET_NAME, settings.portfolio_file)
+
+    def _cell_text(row, name: str) -> str:
+        value = row[col_index[name] - 1].value
+        return str(value).strip() if value is not None else ""
+
+    updated = 0
+    for row in sheet.iter_rows(min_row=2):
+        if (
+            _cell_text(row, "reporting_cycle") == reporting_cycle
+            and _cell_text(row, "quarter") == quarter
+            and _cell_text(row, "level").lower() == level.lower()
+            and _cell_text(row, "model_or_segment") == model_or_segment
+        ):
+            row[col_index[field] - 1].value = new_value
+            updated += 1
+
+    if updated:
+        workbook.save(settings.portfolio_file)
+        log.info(
+            "Updated %s to %r for %s %s %s %s (%d row(s)) in %s",
+            field, new_value, reporting_cycle, level, model_or_segment, quarter, updated, settings.portfolio_file,
+        )
+    return updated
+
+
 def load_pd_performance_data_from_aggregated() -> dict[str, Any]:
     """Load from the PD_Performance_Metrics sheet instead of facility-level data."""
     log.info("Loading PD aggregated metrics from %s [%s]", settings.portfolio_file, PD_AGGREGATED_SHEET_NAME)
@@ -631,8 +707,8 @@ def load_pd_performance_data_from_aggregated() -> dict[str, Any]:
     latest_quarter = quarters[-1] if quarters else ""
     previous_quarter = quarters[-2] if len(quarters) > 1 else ""
 
-    # Models/segments are the entities under each ``level`` in the sheet. The
-    # "All Models" portfolio entity is the implicit default, not a pickable model.
+    # Models/segments are the entities under each ``level`` in the sheet. We
+    # still ignore any legacy "All Models" rows if they exist in older files.
     is_model = agg_df["level"].astype(str).str.lower() == "model"
     is_segment = agg_df["level"].astype(str).str.lower() == "segment"
     data_model_names = sorted({
@@ -699,11 +775,11 @@ def load_pd_performance_data_from_aggregated() -> dict[str, Any]:
         "sensitivity_projections": load_pd_sensitivity_projections(),
         "lgd_sensitivity_projections": load_sensitivity_projections(
             LGD_SENSITIVITY_SHEET_NAME, "projected_lgd",
-            model_relabel={"PD Model A": "LGD Model A", "PD Model B": "LGD Model A", "All Models": "LGD Model A"},
+            model_relabel={"PD Model A": "LGD Model A", "PD Model B": "LGD Model A"},
         ),
         "ead_sensitivity_projections": load_sensitivity_projections(
             EAD_SENSITIVITY_SHEET_NAME, "projected_ead",
-            model_relabel={"PD Model A": "EAD Model A", "PD Model B": "EAD Model A", "All Models": "EAD Model A"},
+            model_relabel={"PD Model A": "EAD Model A", "PD Model B": "EAD Model A"},
         ),
         "rank_ordering_facilities": {},
         "lgd_observations_by_cycle": load_lgd_performance_metrics(),

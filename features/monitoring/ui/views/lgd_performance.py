@@ -669,6 +669,10 @@ def render_lgd_performance_content(
     scenario_ranking_store: dict | None = None,
     theme_value: str | None = None,
 ) -> list:
+    model_options = get_lgd_model_options(data)
+    if (not selected_model or selected_model == "all") and (selected_segment in (None, "", "All", "all")):
+        selected_model = model_options[0] if model_options else selected_model
+
     theme = normalize_theme_value(theme_value)
     range_store = range_store or {}
     summary = build_lgd_period_summary(data, selected_model, selected_segment, selected_monitoring_point)
@@ -1053,7 +1057,7 @@ def page_layout(data: dict) -> list:
     monitoring_options = cycle_quarters if cycle_quarters else get_lgd_monitoring_point_options(data, None, "All")
     default_monitoring_point = shared_filters.resolve_monitoring_point_value(monitoring_options, None)
 
-    model_select_options = [{"label": "All models", "value": "all"}] + [{"label": name, "value": name} for name in model_options]
+    model_select_options = [{"label": "Select model", "value": ""}] + [{"label": name, "value": name} for name in model_options]
 
     return [
         dcc.Store(id=RANGE_STORE_ID, data={}),
@@ -1121,7 +1125,7 @@ def page_layout(data: dict) -> list:
                                         menu_id=MODEL_MENU_ID,
                                         filter_key=MODEL_FILTER_KEY,
                                         options=model_select_options,
-                                        value="all",
+                                        value="",
                                     ),
                                 ),
                                 _build_lgd_apply_button(),

@@ -202,7 +202,8 @@ per-chart store changes. Section builders are pure functions of that state.
 - **Model Use Case / Cycle / Scenario / Monitoring Point** drive which precomputed
   metrics and projection quarters are shown.
 - **Segment vs Specific Model** are mutually exclusive (single-select); leaving
-  both at "All" reads the portfolio-level (`All Models`) metrics.
+  the model unselected lets you drill into a segment instead, and leaving both
+  unselected defaults PD to the first available model.
 - **Per-chart range controls** (`Window / From / To`) window a chart's history
   via a `range_key` entry in `pd-range-store`; **trend horizon** controls share
   one entry per section in `pd-trend-horizon-store`.

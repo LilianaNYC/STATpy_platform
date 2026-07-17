@@ -80,13 +80,11 @@ def resolve_entity(selected_model, selected_segment) -> tuple[str, str]:
         return "segment", selected_segment
     if isinstance(selected_model, (list, tuple, set)):
         models = sorted(str(m) for m in selected_model if m)
-        if len(models) == 1:
-            return "model", models[0]
-        return "model", "All Models"
+        return "model", (models[0] if models else "")
     model = str(selected_model or "").strip()
     if model and model.lower() not in {"all", "all models"}:
         return "model", selected_model
-    return "model", "All Models"
+    return "model", ""
 
 
 def _projection_rows(rows, reporting_cycle, level, entity) -> list[dict]:
@@ -234,7 +232,7 @@ def build_getting_started_prompt(label: str, full_name: str) -> html.Section:
                                     html.Li([
                                         html.Strong("Choose your population. "),
                                         "Select a Segment or a single Specific Model — these two filters are mutually "
-                                        "exclusive. Leaving both at “All” reads the portfolio-level (All Models) metrics.",
+                                        "exclusive. If no segment is selected, the page uses the current model selection.",
                                     ]),
                                     html.Li([
                                         html.Strong("Click “Apply filters”. "),

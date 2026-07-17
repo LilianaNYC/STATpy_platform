@@ -68,6 +68,7 @@ SUBNAV_ID = "pd-subnav"
 # (port of MONITORING_PD_SECTION_IDS / updateMonitoringPdSubnavActiveState).
 OVERVIEW_LINKS = [
     ("pd-dashboard-overview", "Main Overview"),
+    ("pd-conclusions-verdict", "Conclusion"),
 ]
 RAG_ASSIGNMENT_LINKS = [
     ("pd-analysis-scope", "RAG Assignment Overview"),
@@ -247,8 +248,8 @@ def build_global_filters(data: dict, extra_controls=None) -> html.Div:
                     toggle_id=MODELS_TOGGLE_ID,
                     menu_id=MODELS_MENU_ID,
                     filter_key="specific-models",
-                    options=[{"label": "All models", "value": "all"}] + [{"label": name, "value": name} for name in model_names],
-                    value="all",
+                    options=[{"label": "Select model", "value": ""}] + [{"label": name, "value": name} for name in model_names],
+                    value="",
                 ),
             ],
         ),
@@ -303,7 +304,7 @@ def build_section_subnav() -> html.Div:
             html.Div(
                 className="monitoring-section-subnav-group pd-subnav-group pd-subnav-group-overview active",
                 children=[
-                    html.Div("Executive Overview", className="monitoring-section-subnav-label"),
+                    html.Div("Overview & Conclusion", className="monitoring-section-subnav-label"),
                     html.Div(
                         className="monitoring-section-subnav-links",
                         children=[
@@ -316,7 +317,7 @@ def build_section_subnav() -> html.Div:
             html.Div(
                 className="monitoring-section-subnav-group pd-subnav-group pd-subnav-group-rag",
                 children=[
-                    html.Div("RAG Assignment", className="monitoring-section-subnav-label"),
+                    html.Div("Chapter 1: RAG Assignment", className="monitoring-section-subnav-label"),
                     html.Div(
                         className="monitoring-section-subnav-links",
                         children=[
@@ -329,7 +330,7 @@ def build_section_subnav() -> html.Div:
             html.Div(
                 className="monitoring-section-subnav-group pd-subnav-group pd-subnav-group-post-review",
                 children=[
-                    html.Div("Post Subjective Review Analysis", className="monitoring-section-subnav-label"),
+                    html.Div("Chapter 2: Post Subjective Review Analysis", className="monitoring-section-subnav-label"),
                     html.Div(
                         className="monitoring-section-subnav-links",
                         children=[

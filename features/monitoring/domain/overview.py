@@ -29,6 +29,7 @@ from ....shared.domain.calculations import (
     get_pd_performance_context_for_horizon,
     get_pd_thresholds,
     get_worst_pd_rag,
+    precomputed_row,
     precomputed_notching_components,
     set_precomputed_metrics,
 )
@@ -58,6 +59,11 @@ POST_SUBJECTIVE_COLUMNS = [
     "Sensitivity Analysis RAG",
     "MEV Range RAG",
 ]
+HEATMAP_FINAL_COLUMNS = [
+    "Post Subjective Review RAG",
+    "Pre Mitigation RAG",
+    "Post Mitigation RAG",
+]
 RAG_COLUMNS = RAG_ASSIGNMENT_COLUMNS + POST_SUBJECTIVE_COLUMNS
 # Importance ranking for a "driver" finding, most important first: Overall RAG
 # leads since it's the roll-up verdict everything else feeds into; then the
@@ -80,6 +86,9 @@ RAG_COLUMN_DESCRIPTIONS = {
     "Scenario Ranking RAG": "Whether projected values keep a consistent rank order across scenarios for the model use case / cycle.",
     "Sensitivity Analysis RAG": "Whether the baseline-vs-shocked projection stays within the sensitivity threshold.",
     "MEV Range RAG": "Worst-case RAG across in-scope MEVs outside their development range for the scenario.",
+    "Post Subjective Review RAG": "Reflects the impact of any subjective overlays and considers the post-subjective review.",
+    "Pre Mitigation RAG": "Pre-Overlay RAG obtained from the trend of the post-subjective-review model RAG.",
+    "Post Mitigation RAG": "Post-Overlay RAG based on the residual risk of the model, including compensating controls.",
 }
 # The Final RAG column is a placeholder verdict shown only in the RAG Heatmap
 # tables -- deliberately excluded from RAG_COLUMNS so it doesn't leak into the
@@ -88,7 +97,7 @@ RAG_COLUMN_DESCRIPTIONS = {
 # the actual methodology is defined.
 FINAL_RAG_COLUMN = "Final RAG"
 FINAL_RAG_PLACEHOLDER = "Amber"
-HEATMAP_COLUMNS = RAG_COLUMNS + [FINAL_RAG_COLUMN]
+HEATMAP_COLUMNS = RAG_COLUMNS + HEATMAP_FINAL_COLUMNS
 RAG_COLUMN_DESCRIPTIONS[FINAL_RAG_COLUMN] = "Placeholder for the model's final RAG verdict. Methodology is still to be defined; the value shown is a static placeholder, not a real assessment."
 # Worst-case ranking used for aggregation (max()) -- N/A is treated as Amber
 # for counting purposes (an untested model still needs review), but is always
@@ -207,6 +216,39 @@ def _pd_cycle_data(data: dict, reporting_cycle: str) -> tuple[list[str], Any, An
     return data["quarters"], data["performance_observations"], data["rating_migration_observations"], None
 
 
+def _pd_review_flow_rags(ctx: PdFilterContext, quarter: str) -> dict[str, str]:
+    row = (
+        precomputed_row(ctx, quarter, "1y")
+        or precomputed_row(ctx, quarter, "2y")
+        or precomputed_row(ctx, quarter, "nco_1y")
+        or {}
+    )
+
+    def _text(key: str) -> str:
+        value = str(row.get(key, "") or "").strip()
+        return value or "N/A"
+
+    return {
+        "Post Subjective Review RAG": _text("rag_post_sr"),
+        "Pre Mitigation RAG": _text("rag_pre_mitig"),
+        "Post Mitigation RAG": _text("rag_post_mitig"),
+    }
+
+
+def _review_flow_rags_from_metric_row(metric_row: dict[str, Any] | None) -> dict[str, str]:
+    row = metric_row or {}
+
+    def _text(key: str) -> str:
+        value = str(row.get(key, "") or "").strip()
+        return value or "N/A"
+
+    return {
+        "Post Subjective Review RAG": _text("rag_post_sr"),
+        "Pre Mitigation RAG": _text("rag_pre_mitig"),
+        "Post Mitigation RAG": _text("rag_post_mitig"),
+    }
+
+
 def _pd_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
     quarters, performance_observations, rating_migration_observations, metrics_store = _pd_cycle_data(data, reporting_cycle)
     set_precomputed_metrics(metrics_store)
@@ -217,21 +259,14 @@ def _pd_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
     performance_horizons = data["performance_horizons"]
     pd_model_names = data.get("model_names", [])
 
-    # "All Models" is PD's pooled, portfolio-level verdict across every named
-    # model -- the same default the PD Performance tab itself shows when its
-    # Models filter is left at "All models" (see _pd_scope_label /
-    # _resolve_pd_sensitivity_entity in ui/views/pd_performance.py). Only
-    # worth its own row when there's more than one model to pool; with a
-    # single model it would just duplicate that model's row.
-    model_entities = (["All Models"] if len(pd_model_names) > 1 else []) + pd_model_names
+    model_entities = pd_model_names
 
     rows: list[dict[str, Any]] = []
     for quarter in quarters:
         for model_name in model_entities:
-            # Pooled across every segment, matching the tab's default
-            # Segment: All filter -- the Models chapter no longer offers a
-            # per-segment drill-down (see the Segments chapter instead).
-            models = set(pd_model_names) if model_name == "All Models" else {model_name}
+            # Metrics stay pooled across segments here, matching the Models
+            # chapter on the PD Performance tab.
+            models = {model_name}
             ctx = PdFilterContext(quarters=quarters, models=models, segment="all", monitoring_point=quarter)
             metrics = _pd_chapter1_metrics(
                 performance_observations, rating_migration_observations, performance_horizons,
@@ -243,6 +278,7 @@ def _pd_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
                 "Model": model_name,
                 "Segment": "All",
                 **metrics,
+                **_pd_review_flow_rags(ctx, quarter),
             })
     return rows
 
@@ -280,7 +316,7 @@ def _lgd_segment_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
     """LGD's segment-level equivalent of ``_lgd_rows``: LGD's precomputed
     metrics store carries its own ``("segment", segment)`` bucket per
     segment (see lgd._lgd_store_key), sourced straight from the portfolio
-    workbook -- same convention as its "All Models" bucket."""
+    workbook."""
     from . import lgd as lgd_domain
 
     cycle_data = (data.get("lgd_observations_by_cycle") or {}).get(reporting_cycle)
@@ -311,6 +347,7 @@ def _lgd_segment_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
                 "Overall RAG": get_worst_pd_rag([calibration_rag, discrimination_rag]),
                 "PSI RAG": lgd_domain.lgd_metric_rag(data, "Population Stability Index", psi_value),
                 "PSI Metric": f"{psi_value:.3f}" if psi_value is not None else "—",
+                **_review_flow_rags_from_metric_row(metric_by_quarter.get(quarter)),
             })
     return rows
 
@@ -347,6 +384,7 @@ def _ead_segment_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
                 "Overall RAG": get_worst_pd_rag([calibration_rag, discrimination_rag]),
                 "PSI RAG": ead_domain.ead_metric_rag(data, "Population Stability Index", psi_value),
                 "PSI Metric": f"{psi_value:.3f}" if psi_value is not None else "—",
+                **_review_flow_rags_from_metric_row(metric_by_quarter.get(quarter)),
             })
     return rows
 
@@ -386,12 +424,8 @@ def _lgd_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
         cycle_data.get("quarters") if cycle_data else [],
     )
 
-    # "All Models" is its own bucket in the precomputed metrics store (see
-    # lgd._lgd_store_key), sourced straight from the portfolio workbook --
-    # not a live pool of the named model(s) -- so it's always its own row,
-    # even when there's only one named LGD model.
     rows: list[dict[str, Any]] = []
-    for model_name in ["All Models"] + model_names("lgd"):
+    for model_name in model_names("lgd"):
         metric_rows = lgd_domain.lgd_metrics_by_period(data, model_name, "All")
         if not metric_rows:
             continue
@@ -413,6 +447,7 @@ def _lgd_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
                 "Overall RAG": get_worst_pd_rag([calibration_rag, discrimination_rag]),
                 "PSI RAG": lgd_domain.lgd_metric_rag(data, "Population Stability Index", psi_value),
                 "PSI Metric": f"{psi_value:.3f}" if psi_value is not None else "—",
+                **_review_flow_rags_from_metric_row(metric_by_quarter.get(quarter)),
             })
     return rows
 
@@ -426,12 +461,8 @@ def _ead_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
         cycle_data.get("quarters") if cycle_data else [],
     )
 
-    # "All Models" is its own bucket in the precomputed metrics store (see
-    # ead._ead_store_key), sourced straight from the portfolio workbook --
-    # not a live pool of the named model(s) -- so it's always its own row,
-    # even when there's only one named EAD model.
     rows: list[dict[str, Any]] = []
-    for model_name in ["All Models"] + model_names("ead"):
+    for model_name in model_names("ead"):
         metric_rows = ead_domain.ead_metrics_by_period(data, model_name, "All")
         if not metric_rows:
             continue
@@ -453,6 +484,7 @@ def _ead_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
                 "Overall RAG": get_worst_pd_rag([calibration_rag, discrimination_rag]),
                 "PSI RAG": ead_domain.ead_metric_rag(data, "Population Stability Index", psi_value),
                 "PSI Metric": f"{psi_value:.3f}" if psi_value is not None else "—",
+                **_review_flow_rags_from_metric_row(metric_by_quarter.get(quarter)),
             })
     return rows
 
@@ -663,7 +695,7 @@ def heatmap_rows(current_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "Model Group": model_key[0],
             "Model": model_key[1],
             **{column: _worst_rag_from_rows(model_rows, column) for column in RAG_COLUMNS},
-            FINAL_RAG_COLUMN: FINAL_RAG_PLACEHOLDER,
+            **{column: _worst_rag_from_rows(model_rows, column) for column in HEATMAP_FINAL_COLUMNS},
         }
         # The headline metric behind each Post Subjective Review RAG (e.g. peak
         # migration gap, latest PSI, peak shock impact) -- pulled from whichever
@@ -691,7 +723,7 @@ def segment_heatmap_rows(current_rows: list[dict[str, Any]]) -> list[dict[str, A
             "Model Group": group,
             "Segment": segment,
             **{column: _worst_rag_from_rows(segment_rows, column) for column in RAG_COLUMNS},
-            FINAL_RAG_COLUMN: FINAL_RAG_PLACEHOLDER,
+            **{column: _worst_rag_from_rows(segment_rows, column) for column in HEATMAP_FINAL_COLUMNS},
         }
         for column in POST_SUBJECTIVE_COLUMNS:
             metric_key = column.replace(" RAG", " Metric")

@@ -53,3 +53,17 @@ def test_monitoring_pages_wrap_live_content_in_loading_shell():
     for layout, content_id in pages:
         assert any(_contains_loading(node) for node in layout)
         assert any(_find_component_by_id(node, content_id) is not None for node in layout)
+
+
+def test_overview_loading_indicator_appears_promptly_after_apply():
+    layout = overview_page.build_layout()
+    loading = next(
+        component
+        for node in layout
+        if (component := _find_component_by_id(node, f"{overview_page.CONTENT_ID}-loading")) is not None
+    )
+
+    assert isinstance(loading, Loading)
+    assert loading.show_initially is False
+    assert loading.delay_show == 60
+    assert loading.custom_spinner is not None

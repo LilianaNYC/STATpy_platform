@@ -18,11 +18,43 @@ from ..ui import common as filter_shell
 from ..ui.views import pd_performance as layout
 from ....shared.ui import controls
 from ....shared.theme import APP_THEME_ID
-from ....shared.domain.calculations import PdFilterContext, set_precomputed_metrics
+from ....shared.domain.calculations import PdFilterContext, ctx_store_keys, set_precomputed_metrics
 from ....shared.registration import already_registered
 from ..data_access import PD_PERFORMANCE_DATA
+from ..services import data_service
 
 _RANGE_PRESET_COUNTS = {"last-4": 4, "last-8": 8, "last-12": 12}
+
+
+def _resolve_pd_scope(data: dict, applied: dict | None) -> tuple[PdFilterContext, str, str]:
+    """Resolve (filter_ctx, reporting_cycle, monitoring_point) from the applied-filters store.
+
+    Shared by the review-flow Save callback and the save-bar sync callback so both always agree on
+    which portfolio-file row a read/write targets (the master render callback resolves this itself
+    inline, since it also needs the cycle's observations/metrics_store alongside it).
+    """
+    from ....shared.repositories.filters_config import load_filter_config
+    cfg = load_filter_config()
+    default_cycle = cfg["reporting_cycles"][0]["value"] if cfg["reporting_cycles"] else "CCAR 2026"
+
+    applied = applied or {}
+    reporting_cycle = applied.get("reporting_cycle") or default_cycle
+    cycle_data = (data.get("observations_by_cycle") or {}).get(reporting_cycle) or {}
+    quarters = cycle_data.get("quarters") or data["quarters"]
+
+    segment = applied.get("segment") or "all"
+    models_value = applied.get("models") or ""
+    if models_value:
+        models = {models_value}
+    elif segment == "all":
+        models = {data["model_names"][0]} if data["model_names"] else set()
+    else:
+        models = set()
+    monitoring_point = applied.get("monitoring_point") or (quarters[-1] if quarters else "")
+    filter_ctx = PdFilterContext(
+        quarters=quarters, models=models, segment=segment, monitoring_point=monitoring_point,
+    )
+    return filter_ctx, reporting_cycle, monitoring_point
 
 
 def register_callbacks(app) -> None:
@@ -66,7 +98,7 @@ def register_callbacks(app) -> None:
     )
     def sync_pd_segment_model_exclusivity(segment, model):
         has_segment_selection = segment != "all"
-        has_specific_model_selection = model not in ("all", None, "")
+        has_specific_model_selection = model not in (None, "")
 
         return (
             has_specific_model_selection,  # disable Segment when a specific model is chosen
@@ -265,7 +297,7 @@ def register_callbacks(app) -> None:
             return no_update, no_update
         return triggered["value"], "checkbox-dropdown-menu single-select-menu"
 
-    model_labels = {"all": "All models", **{name: name for name in data["model_names"]}}
+    model_labels = {"": "Select model", **{name: name for name in data["model_names"]}}
 
     @app.callback(
         Output(controls.MODELS_TOGGLE_ID, "children"),
@@ -411,11 +443,15 @@ def register_callbacks(app) -> None:
         Input(layout.TREND_HORIZON_STORE_ID, "data"),
         Input(layout.MEV_FILTER_STORE_ID, "data"),
         Input(layout.SCENARIO_RANKING_STORE_ID, "data"),
+        Input(layout.PD_REVIEW_FLOW_PENDING_STORE_ID, "data"),
         Input(APP_THEME_ID, "value"),
+        State(layout.CONCLUSIONS_NOTES_STORE_ID, "data"),
+        State(layout.PD_REVIEW_FLOW_STATUS_STORE_ID, "data"),
         prevent_initial_call=True,
     )
     def render_pd_performance_content(
-        applied, range_store, trend_horizon_store, mev_filter_store, scenario_ranking_store, theme_value,
+        applied, range_store, trend_horizon_store, mev_filter_store, scenario_ranking_store,
+        review_flow_pending_edits, theme_value, conclusions_notes, review_flow_save_status,
     ):
         # Until the user clicks "Apply filters", keep the getting-started guide
         # that ``page_layout`` rendered into the content container.
@@ -450,11 +486,13 @@ def register_callbacks(app) -> None:
 
         monitoring_point = applied.get("monitoring_point") or (quarters[-1] if quarters else "")
         segment = applied.get("segment") or "all"
-        models_value = applied.get("models") or "all"
-        if models_value == "all" or not models_value:
-            models = set(data["model_names"])
-        else:
+        models_value = applied.get("models") or ""
+        if models_value:
             models = {models_value}
+        elif segment == "all":
+            models = {data["model_names"][0]} if data["model_names"] else set()
+        else:
+            models = set()
         filter_ctx = PdFilterContext(
             quarters=quarters,
             models=models,
@@ -465,4 +503,125 @@ def register_callbacks(app) -> None:
             render_data, filter_ctx, range_store or {}, trend_horizon_store or {}, mev_filter_store or {},
             scenario_ranking_store or {},
             theme_value=theme_value, reporting_cycle=reporting_cycle, scenario=scenario,
+            conclusions_notes=conclusions_notes or "",
+            review_flow_pending_edits=review_flow_pending_edits or {},
+            review_flow_save_status=review_flow_save_status or "",
         )
+
+    # -----------------------------------------------------------------
+    # Reviewer conclusions textarea -> pd-conclusions-notes-store
+    # -----------------------------------------------------------------
+    @app.callback(
+        Output(layout.CONCLUSIONS_NOTES_STORE_ID, "data"),
+        Input(layout.CONCLUSIONS_NOTES_ID, "value"),
+        prevent_initial_call=True,
+    )
+    def save_pd_conclusions_notes(value):
+        return value or ""
+
+    # -----------------------------------------------------------------
+    # Review-flow RAG pickers (Post Subjective Review / Pre-/Post-Mitigation)
+    # -> pd-review-flow-pending-store (staged only, not yet written to disk)
+    # -----------------------------------------------------------------
+    @app.callback(
+        Output(layout.PD_REVIEW_FLOW_PENDING_STORE_ID, "data"),
+        Input({"type": layout.PD_REVIEW_FLOW_OPTION_ID, "field": ALL}, "value"),
+        State(layout.PD_REVIEW_FLOW_PENDING_STORE_ID, "data"),
+        prevent_initial_call=True,
+    )
+    def stage_pd_review_flow_rag(_values, pending):
+        # These dropdowns live inside the re-rendered content area, so they get torn down and
+        # recreated on every master re-render -- which, per a Dash quirk, fires this callback once as
+        # a "component just appeared" reconciliation even with prevent_initial_call=True. They always
+        # mount with value=None (a "Change RAG to..." action, not a live display), so that
+        # reconciliation firing always reports a None value and is caught by the guard below; only a
+        # genuine pick ever sets a real Green/Amber/Red value.
+        triggered = ctx.triggered_id
+        if not triggered or not ctx.triggered:
+            return no_update
+        new_value = ctx.triggered[0]["value"]
+        if not new_value:
+            return no_update
+        pending = dict(pending or {})
+        pending[triggered["field"]] = new_value
+        return pending
+
+    # -----------------------------------------------------------------
+    # Save staged review-flow RAG edits -> portfolio.xlsx (source of truth),
+    # then clear the pending store so the master re-render above shows the
+    # newly-saved values as "current" instead of "staged".
+    # -----------------------------------------------------------------
+    @app.callback(
+        Output(layout.PD_REVIEW_FLOW_PENDING_STORE_ID, "data", allow_duplicate=True),
+        Output(layout.PD_REVIEW_FLOW_STATUS_STORE_ID, "data"),
+        Input(layout.PD_REVIEW_FLOW_SAVE_ID, "n_clicks"),
+        State(layout.PD_REVIEW_FLOW_PENDING_STORE_ID, "data"),
+        State(layout.APPLIED_FILTERS_STORE_ID, "data"),
+        State(layout.CONCLUSIONS_NOTES_STORE_ID, "data"),
+        prevent_initial_call=True,
+    )
+    def save_pd_review_flow_rag_changes(n_clicks, pending, applied, conclusions_notes):
+        # Same dynamic-mount quirk as the picker above: the Save button only exists once there's a
+        # pending edit or commentary change, so it "just appeared" at least once and could fire
+        # without a real click.
+        if not n_clicks:
+            return no_update, no_update
+
+        filter_ctx, reporting_cycle, monitoring_point = _resolve_pd_scope(data, applied)
+        level, value = ctx_store_keys(filter_ctx)
+
+        saved_fields = []
+        for field, new_value in (pending or {}).items():
+            if new_value not in ("Green", "Amber", "Red"):
+                continue
+            column = layout.PD_REVIEW_FLOW_COLUMNS.get(field)
+            if not column:
+                continue
+            ok = data_service.save_pd_review_flow_rag(
+                data, reporting_cycle, level, value, monitoring_point, column, new_value,
+            )
+            if ok:
+                saved_fields.append(field)
+
+        saved_commentary = layout.pd_reviewer_commentary(filter_ctx, monitoring_point)
+        if (conclusions_notes or "") != (saved_commentary or ""):
+            ok = data_service.save_pd_review_flow_rag(
+                data, reporting_cycle, level, value, monitoring_point,
+                layout.REVIEWER_COMMENTARY_COLUMN, conclusions_notes or "",
+            )
+            if ok:
+                saved_fields.append("reviewer_commentary")
+
+        if not saved_fields:
+            return no_update, (
+                "Could not save -- no matching rows were found in the portfolio file for the current scope."
+            )
+
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        count = len(saved_fields)
+        return {}, f"Saved {count} change{'s' if count != 1 else ''} to portfolio.xlsx at {timestamp}."
+
+    # -----------------------------------------------------------------
+    # Keep the "Unsaved changes" bar in sync with commentary keystrokes without
+    # rebuilding the whole tab (which would drop the textarea's cursor/focus).
+    # RAG picks already rebuild the whole tab (layout.PD_REVIEW_FLOW_PENDING_STORE_ID
+    # is an Input there), so this callback only needs to add live text typing to the mix.
+    # -----------------------------------------------------------------
+    @app.callback(
+        Output(layout.PD_REVIEW_FLOW_SAVE_BAR_ID, "children"),
+        Input(layout.CONCLUSIONS_NOTES_ID, "value"),
+        Input(layout.PD_REVIEW_FLOW_PENDING_STORE_ID, "data"),
+        State(layout.APPLIED_FILTERS_STORE_ID, "data"),
+        State(layout.PD_REVIEW_FLOW_STATUS_STORE_ID, "data"),
+        prevent_initial_call=True,
+    )
+    def sync_pd_review_flow_save_bar(conclusions_notes, pending, applied, save_status):
+        filter_ctx, _reporting_cycle, monitoring_point = _resolve_pd_scope(data, applied)
+        review_flow_rags = layout.pd_review_flow_rags(filter_ctx, monitoring_point)
+        saved_commentary = layout.pd_reviewer_commentary(filter_ctx, monitoring_point)
+        commentary_changed = (conclusions_notes or "") != (saved_commentary or "")
+        save_bar = layout.build_pd_review_flow_save_bar(
+            pending or {}, review_flow_rags, save_status, commentary_changed,
+        )
+        return [save_bar] if save_bar is not None else []

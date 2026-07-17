@@ -101,6 +101,9 @@ def test_pd_performance_build_stores():
         "pd-mev-filter-store",
         "pd-scenario-ranking-store",
         "pd-applied-filters-store",
+        "pd-conclusions-notes-store",
+        "pd-review-flow-pending-store",
+        "pd-review-flow-status-store",
     }
 
 
@@ -135,7 +138,7 @@ def test_pd_main_overview_summarizes_both_chapters_before_the_deep_dive():
         aria_labels.extend(_collect_prop_values(node, "aria-label"))
 
     assert "Dashboard Main Overview" in text
-    assert "Before the deep dive" in text
+    assert "Overall posture" in text
     assert "How the dashboard story splits across the two chapters" in text
     assert "Recommended deep dive" in text
     assert "1. RAG Assignment" in text
@@ -162,7 +165,7 @@ def test_pd_subnav_keeps_main_overview_without_adding_a_dashboard_summary_row():
     layout = page.build_layout()
     text = " ".join(_collect_text(node) for node in layout)
 
-    assert "Executive Overview" in text
+    assert "Overview & Conclusion" in text
     assert "Main Overview" in text
     assert "RAG Assignment" in text
     assert text.index("Main Overview") < text.index("RAG Assignment")
@@ -178,7 +181,7 @@ def test_pd_subnav_keeps_main_overview_without_adding_a_dashboard_summary_row():
     assert "Scenario Ranking" in text
     assert "Sensitivity Analysis" in text
     assert "MEV Range" in text
-    assert text.index("Executive Overview") < text.index("Main Overview")
+    assert text.index("Overview & Conclusion") < text.index("Main Overview")
     assert text.index("RAG Assignment") < text.index("RAG Assignment Overview")
     assert text.index("Post Subjective Review Analysis") < text.index("Post Subjective Review Analysis Overview")
     assert "Dashboard Summary" not in text

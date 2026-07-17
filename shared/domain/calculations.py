@@ -112,26 +112,33 @@ def set_precomputed_metrics(store: dict | None) -> None:
     _PRECOMPUTED_METRICS = store
 
 
-def _ctx_store_keys(ctx: "PdFilterContext") -> tuple[str, str]:
+def ctx_store_keys(ctx: "PdFilterContext") -> tuple[str, str]:
     """Resolve the (level, value) the precomputed store is keyed by.
 
     The PD filters are mutually exclusive (a portfolio segment OR specific
     models, never both), so the selection collapses to a single entity:
-    a chosen segment, a single model, or the all-models portfolio.
+    a chosen segment or a single model. If multiple models leak through,
+    pick the first deterministically because pooled PD workbook rows are no
+    longer in use.
+
+    Public (not just used by :func:`precomputed_row`): callers that need to
+    write back to the same row a read resolved -- e.g. saving an edited
+    review-flow RAG to the portfolio file -- reuse this so the write always
+    targets the exact row the read came from.
     """
     if ctx.segment and ctx.segment != "all":
         return "segment", ctx.segment
     models = sorted(m for m in ctx.models if m)
-    if len(models) == 1:
+    if models:
         return "model", models[0]
-    return "model", "All Models"
+    return "model", ""
 
 
 def precomputed_row(ctx: "PdFilterContext", quarter, horizon_key):
     """Return the precomputed sheet row for ``(ctx, quarter, horizon)`` or ``None``."""
     if _PRECOMPUTED_METRICS is None:
         return None
-    level, value = _ctx_store_keys(ctx)
+    level, value = ctx_store_keys(ctx)
     return _PRECOMPUTED_METRICS.get((level, value, quarter, horizon_key))
 
 

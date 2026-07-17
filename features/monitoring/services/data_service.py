@@ -15,7 +15,10 @@ import polars as pl
 from ....config.settings import settings
 from ..repositories.loader import (
     load_pd_performance_data_from_aggregated as _load_source_snapshot,
+    update_pd_review_flow_rag as _update_pd_review_flow_rag,
 )
+
+_PD_REVIEW_FLOW_HORIZONS = ("1y", "2y", "nco_1y")
 
 
 def _with_app_meta(data: dict) -> dict:
@@ -37,6 +40,35 @@ def _with_polars_portfolio(data: dict) -> dict:
 def load_monitoring_data() -> dict:
     """Load and enrich the monitoring snapshot used by every page."""
     return _with_polars_portfolio(_with_app_meta(_load_source_snapshot()))
+
+
+def save_pd_review_flow_rag(
+    data: dict,
+    reporting_cycle: str,
+    level: str,
+    model_or_segment: str,
+    quarter: str,
+    field: str,
+    new_value: str,
+) -> bool:
+    """Persist an edited Post Subjective Review / Pre-/Post-Mitigation RAG to the portfolio file.
+
+    Writes the change to ``portfolio.xlsx`` first (the source of truth), then -- only if that
+    succeeded -- mutates the matching entries in ``data``'s already-loaded ``metrics_store`` in place,
+    so the running app reflects the edit immediately without a process restart.
+    """
+    updated_rows = _update_pd_review_flow_rag(reporting_cycle, level, model_or_segment, quarter, field, new_value)
+    if not updated_rows:
+        return False
+
+    cycle_data = (data.get("observations_by_cycle") or {}).get(reporting_cycle) or {}
+    metrics_store = cycle_data.get("metrics_store")
+    if metrics_store is not None:
+        for horizon in _PD_REVIEW_FLOW_HORIZONS:
+            row = metrics_store.get((level, model_or_segment, quarter, horizon))
+            if row is not None:
+                row[field] = new_value
+    return True
 
 
 def get_app_meta(data: dict) -> dict:
