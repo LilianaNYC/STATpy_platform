@@ -34,28 +34,26 @@ from ...domain.overview import (
     RAG_ASSIGNMENT_COLUMNS,
     RAG_COLUMNS,
     RAG_COLUMN_DESCRIPTIONS,
+    REVIEW_FLOW_STAGES,
     available_periods,
     build_overview_rows,
     build_overview_segment_rows,
-    category_breakdown,
-    category_green_count,
     display_rag,
     effective_rag,
-    governance_summary,
+    escalation_next_steps,
     heatmap_rows,
     models_by_overall_rag,
     overview_summary,
     periods_through,
     resolve_current_rows,
     resolve_current_segment_rows,
-    segment_governance_summary,
     segment_heatmap_rows,
     segment_overview_summary,
     segments_by_overall_rag,
     segment_top_findings,
     top_findings,
 )
-from .cards import build_pd_chapter_heading, build_pd_section_heading
+from .cards import build_pd_chapter_heading, build_pd_section_heading, pd_rag_dot
 from .post_subjective import build_executive_summary
 
 CONTENT_ID = "overview-content"
@@ -97,6 +95,7 @@ RAG_FLOW_MODEL_BROWSER_ID = "overview-rag-flow-model-browser"
 RAG_FLOW_SEGMENT_BROWSER_ID = "overview-rag-flow-segment-browser"
 RAG_FLOW_ENTITY_BUTTON_TYPE = "overview-rag-flow-entity-button"
 RAG_FLOW_RESET_BUTTON_TYPE = "overview-rag-flow-reset-button"
+RAG_FLOW_SHOW_ALL_BUTTON_TYPE = "overview-rag-flow-show-all-button"
 RAG_TREND_RANGE_KEY = "overview_rag_trend"
 SEGMENT_RAG_TREND_RANGE_KEY = "overview_segment_rag_trend"
 
@@ -630,7 +629,7 @@ def _rag_flow_selection_rows(
     flow_rows: list[dict[str, object]],
     selection: dict[str, object] | None,
 ) -> list[dict[str, object]]:
-    if not selection:
+    if not selection or selection.get("all"):
         return flow_rows
     try:
         stage_index = int(selection.get("stage_index", -1))
@@ -667,13 +666,18 @@ def _rag_flow_entity_browser(
                 html.P(
                     f"The chart will focus on that bucket and open a scrollable list of {entity_label} journeys below."
                 ),
+                html.Button(
+                    f"See all {len(flow_rows)} {entity_label}{'' if len(flow_rows) == 1 else 's'}",
+                    id={"type": RAG_FLOW_SHOW_ALL_BUTTON_TYPE, "scope": scope},
+                    n_clicks=0,
+                    type="button",
+                    className="overview-rag-flow-show-all",
+                ) if flow_rows else None,
             ],
         )
 
-    stage_index = int(selection.get("stage_index", 0))
-    tone = str(selection.get("tone", "N/A"))
+    is_all = bool(selection.get("all"))
     active_entity = str(selection.get("entity", "") or "")
-    stage_label = _RAG_FLOW_STAGES[stage_index][1]
     ordered_rows = sorted(selected_rows, key=lambda row: str(row.get("Entity Label", "")).lower())
     periods = sorted({
         str(row.get("Monitoring Period", "") or "").strip()
@@ -681,6 +685,42 @@ def _rag_flow_entity_browser(
         if str(row.get("Monitoring Period", "") or "").strip()
     })
     period_copy = periods[0] if len(periods) == 1 else (", ".join(periods) if periods else "current selection")
+
+    if is_all:
+        heading_title = f"All {entity_label}s"
+        heading_copy = (
+            f"Every complete {entity_label} journey in the current filtered data. "
+            f"Select a {entity_label} below to highlight its recorded path, or click a RAG count in the chart to focus one bucket."
+        )
+    else:
+        stage_index = int(selection.get("stage_index", 0))
+        tone = str(selection.get("tone", "N/A"))
+        heading_title = f"{_RAG_FLOW_STAGES[stage_index][1]} · {tone}"
+        heading_copy = (
+            f"Only complete journeys available in the current filtered data are shown. "
+            f"Select a {entity_label} below to highlight its recorded path."
+        )
+
+    heading_actions = []
+    if not is_all and flow_rows:
+        heading_actions.append(
+            html.Button(
+                f"See all {len(flow_rows)} {entity_label}s",
+                id={"type": RAG_FLOW_SHOW_ALL_BUTTON_TYPE, "scope": scope},
+                n_clicks=0,
+                type="button",
+                className="overview-rag-flow-show-all",
+            )
+        )
+    heading_actions.append(
+        html.Button(
+            "Back to portfolio view",
+            id={"type": RAG_FLOW_RESET_BUTTON_TYPE, "scope": scope},
+            n_clicks=0,
+            type="button",
+            className="overview-rag-flow-reset",
+        )
+    )
 
     return html.Div(
         className="overview-rag-flow-browser-panel",
@@ -694,20 +734,11 @@ def _rag_flow_entity_browser(
                                 f"{len(ordered_rows)} {entity_label}{'' if len(ordered_rows) == 1 else 's'} · {period_copy}",
                                 className="overview-rag-flow-browser-kicker",
                             ),
-                            html.Strong(f"{stage_label} · {tone}"),
-                            html.P(
-                                f"Only complete journeys available in the current filtered data are shown. "
-                                f"Select a {entity_label} below to highlight its recorded path."
-                            ),
+                            html.Strong(heading_title),
+                            html.P(heading_copy),
                         ],
                     ),
-                    html.Button(
-                        "Back to portfolio view",
-                        id={"type": RAG_FLOW_RESET_BUTTON_TYPE, "scope": scope},
-                        n_clicks=0,
-                        type="button",
-                        className="overview-rag-flow-reset",
-                    ),
+                    html.Div(heading_actions, className="overview-rag-flow-browser-actions"),
                 ],
             ),
             html.Div(
@@ -1101,6 +1132,19 @@ def _rag_flow_sankey_figure(
             showlegend=False,
         ))
 
+    # Bottom caption: "all" lists everything (no bucket focus); a valid bucket
+    # names the focused stage/tone; anything else (no selection) shows nothing.
+    if selection and selection.get("all"):
+        focus_caption = f"Showing all {len(selected_rows)} {entity_label}(s)"
+    elif selection and int(selection.get("stage_index", -1)) in range(len(_RAG_FLOW_STAGES)) \
+            and str(selection.get("tone", "")) in _RAG_FLOW_VALID_TONES:
+        focus_caption = (
+            f"Focused view · {len(selected_rows)} {entity_label}(s) from "
+            f"{_RAG_FLOW_STAGES[int(selection['stage_index'])][1]} · {selection['tone']}"
+        )
+    else:
+        focus_caption = ""
+
     fig.update_layout(
         height=height,
         margin=margin,
@@ -1135,15 +1179,12 @@ def _rag_flow_sankey_figure(
                     y=0.015,
                     xref="x",
                     yref="paper",
-                    text=(
-                        f"Focused view · {len(selected_rows)} {entity_label}(s) from "
-                        f"{_RAG_FLOW_STAGES[int(selection['stage_index'])][1]} · {selection['tone']}"
-                    ),
+                    text=focus_caption,
                     showarrow=False,
                     font=dict(size=10 if compact else 11, color=palette["focus_text"]),
                 )
             ]
-            if selection
+            if focus_caption
             else []
         ),
         shapes=[
@@ -1845,116 +1886,39 @@ def _build_segment_trend_section(rows: list[dict], rag_trend_metric: str, range_
     )
 
 
-def _governance_posture(gov: dict, entity_label: str) -> tuple[str, str, str]:
-    total = gov["total"]
-    escalation_count = len(gov["escalations"])
-    plural = entity_label if escalation_count == 1 else f"{entity_label}s"
-    if total == 0:
-        return "No data in scope", f"No {entity_label}s match the selected filters.", "neutral"
-    if escalation_count:
-        return "Escalation required", f"{escalation_count} {plural} Red on at least one test", "red"
-    if gov["breaches"]:
-        return "Review required", f"{gov['breaches']} {entity_label}s have a Red or Amber Overall RAG", "amber"
-    return "In tolerance", f"All {total} {entity_label}s are Green", "green"
+def _esc_posture(esc: dict, entity_noun: str) -> tuple[str, str]:
+    """(posture title, tone) for the escalation board, derived from the tiers
+    themselves so the headline can never disagree with the cards below it."""
+    counts = esc["counts"]
+    if esc["total"] == 0:
+        return f"No {entity_noun}s in scope", "neutral"
+    if counts["escalate"]:
+        return "Escalation required", "red"
+    if counts["watch"]:
+        return "Review required", "amber"
+    return "In tolerance", "green"
 
 
-def _governance_stat_row(title: str, count_text: str, bar_segments: list, meta_children: list, aria_label: str) -> html.Div:
-    """One row of the governance stats strip -- label + count heading, a
-    colored bar, and a muted meta line. Shared shape for both the plain
-    entity-level facts (Immediate escalation, Clear models) and the RAG
-    Assignment / Post Subjective Review severity comparison, so the whole
-    strip reads as one consistent block instead of two different styles."""
-    return html.Div(
-        className="overview-governance-stat-row",
-        children=[
-            html.Div(
-                className="overview-governance-stat-heading",
-                children=[
-                    html.Span(title, className="overview-governance-stat-label"),
-                    html.Strong(count_text, className="overview-governance-stat-count"),
-                ],
-            ),
-            html.Div(bar_segments, className="overview-governance-stat-bar", role="img", **{"aria-label": aria_label}),
-            html.Div(meta_children, className="overview-governance-stat-meta"),
-        ],
-    )
+_ESC_TIER_LABELS = {"escalate": "require escalation", "watch": "on watch", "clear": "in tolerance"}
+_ESC_TIER_TONES = {"escalate": "red", "watch": "amber", "clear": "green"}
+_ESC_STAGE_KICKERS = {"Pre Mitigation": "Pre mitigation", "Post Mitigation": "Post mitigation"}
+_ESC_RAG_RANK = {"N/A": -1, "Green": 0, "Amber": 1, "Red": 2}
+# Short labels for the collapsed-row review-flow dots, so each dot names its
+# stage without needing a hover. Keyed by the REVIEW_FLOW_STAGES field key.
+_ESC_FLOW_SHORT_LABELS = {
+    "post_subjective": "Post SR",
+    "pre_mitigation": "Pre Mit",
+    "post_mitigation": "Post Mit",
+}
 
 
-def _governance_hero_stat_row(title: str, count_text: str, description: str, tone: str) -> html.Div:
-    """Immediate escalation / Clear models(-segments) -- a big headline
-    number rather than a bar, since each is a single count with no Red:Amber
-    mix to visualize; kept in the same row wrapper as the severity rows below
-    so the whole strip still shares one bordered block and grid rhythm."""
-    return html.Div(
-        className="overview-governance-stat-row overview-governance-stat-row-hero",
-        children=[
-            html.Span(title, className="overview-governance-stat-label"),
-            html.Strong(count_text, className=f"overview-governance-hero-value overview-governance-hero-value-{tone}"),
-            html.Span(description, className="overview-governance-stat-meta"),
-        ],
-    )
-
-
-def _governance_severity_stat_row(title: str, breakdown: dict, green: int | None = None) -> html.Div:
-    """RAG Assignment / Post Subjective Review -- bar fill is the Red:Amber
-    mix *within that column family's own breaches* (not a share of all
-    models), so it reads as "how severe are this category's findings",
-    paired with its leading driver. ``green`` is optional: when given, a
-    Green segment is added to the bar so the mix reflects every check run in
-    this category, not just the ones that came back Red/Amber."""
-    red, amber, breaches = breakdown["red"], breakdown["amber"], breakdown["breaches"]
-    top_metric = breakdown["top_metric"] if breakdown["top_metric"] != "None" else "No findings"
-    driver_count = breakdown["top_metric_count"]
-    total = breaches + (green or 0)
-
-    if total:
-        bar_segments = [
-            html.Span(
-                className=f"overview-governance-stat-segment overview-governance-stat-segment-{tone}",
-                style={"width": f"{100 * count / total:.2f}%"},
-            )
-            for tone, count in (("red", red), ("amber", amber), ("green", green or 0))
-            if count
-        ]
-        breakdown_text = f"{red} Red · {amber} Amber" + (f" · {green} Green" if green is not None else "")
-    else:
-        bar_segments = [html.Span(className="overview-governance-stat-segment overview-governance-stat-segment-empty")]
-        breakdown_text = "No breaches this period"
-
-    meta_children = [
-        html.Span(breakdown_text),
-        html.Span(
-            [
-                "Leading driver ",
-                html.Strong(top_metric),
-                f" · {driver_count} open finding{'' if driver_count == 1 else 's'}" if driver_count else "",
-            ],
+def _esc_tier_chip(tier: str, count: int) -> html.Span:
+    return html.Span(
+        [html.Strong(str(count)), html.Span(_ESC_TIER_LABELS[tier])],
+        className=(
+            f"overview-esc-tier-chip overview-esc-tier-chip-{_ESC_TIER_TONES[tier]}"
+            + ("" if count else " overview-esc-tier-chip-zero")
         ),
-    ]
-    aria_label = f"{title}: {red} Red, {amber} Amber" + (f", {green} Green" if green is not None else "") + "."
-    return _governance_stat_row(
-        title, f"{breaches} breach{'' if breaches == 1 else 'es'}", bar_segments, meta_children, aria_label,
-    )
-
-
-def _final_rag_distribution_row(total_entities: int, entity_label: str = "model") -> html.Div:
-    """Final RAG is a static placeholder (see FINAL_RAG_PLACEHOLDER) until the
-    real methodology is defined -- every model/segment currently carries the
-    same value, so this bar is a single segment until that changes."""
-    tone = pd_tone_class(FINAL_RAG_PLACEHOLDER)
-    if total_entities:
-        bar_segments = [html.Span(className=f"overview-governance-stat-segment overview-governance-stat-segment-{tone}")]
-        breakdown_text = f"{total_entities} {FINAL_RAG_PLACEHOLDER}"
-    else:
-        bar_segments = [html.Span(className="overview-governance-stat-segment overview-governance-stat-segment-empty")]
-        breakdown_text = f"No {entity_label}s in scope"
-
-    return _governance_stat_row(
-        "Final RAG distribution",
-        f"{total_entities} {entity_label}{'' if total_entities == 1 else 's'}",
-        bar_segments,
-        [html.Span(breakdown_text), html.Span("Placeholder verdict -- methodology not yet defined")],
-        f"Final RAG distribution: {breakdown_text}.",
     )
 
 
@@ -1965,201 +1929,347 @@ def _governance_driver_chip(driver: str, driver_rags: dict[str, str]) -> html.Sp
     )
 
 
-def _escalation_table(rows_by_group: dict[str, list[dict]], entity_label: str) -> html.Div:
-    """A CSS-grid table: MODEL GROUP | {MODEL/SEGMENT} | RAG ASSIGNMENT | POST
-    SUBJECTIVE REVIEW. Each group's sidebar cell uses ``gridRow: span N`` so it visually
-    spans all of that group's rows -- CSS Grid auto-placement then flows the remaining
-    three cells per entity into the columns beside it, group by group."""
-    entity_col_label = "MODEL" if entity_label == "model" else "SEGMENT"
-    cells = [
-        html.Div("MODEL GROUP", className="overview-escalation-th"),
-        html.Div(entity_col_label, className="overview-escalation-th"),
-        html.Div("RAG ASSIGNMENT", className="overview-escalation-th"),
-        html.Div("POST SUBJECTIVE REVIEW", className="overview-escalation-th"),
+def _esc_review_flow_strip(record: dict) -> html.Div:
+    """The entity's Post Subjective Review -> Pre Mitigation -> Post Mitigation
+    verdicts as a mini pipeline -- the same lifecycle each tab's 3.1 Conclusion
+    diagram shows, compressed to fit an escalation card."""
+    children = []
+    for index, (field, column, _label) in enumerate(REVIEW_FLOW_STAGES):
+        rag = record["Review Flow"].get(field, "N/A")
+        if index:
+            children.append(html.Span("→", className="overview-esc-flow-arrow", **{"aria-hidden": "true"}))
+        children.append(
+            html.Div(
+                className=f"overview-esc-flow-stage overview-esc-flow-stage-{pd_tone_class(rag)}",
+                children=[
+                    html.Span(column, className="overview-esc-flow-stage-label"),
+                    html.Span([pd_rag_dot(rag), html.Strong(rag)], className="overview-esc-flow-stage-value"),
+                ],
+            )
+        )
+    aria = "Review flow: " + ", ".join(
+        f"{column} {record['Review Flow'].get(field, 'N/A')}" for field, column, _label in REVIEW_FLOW_STAGES
+    )
+    return html.Div(children, className="overview-esc-flow", role="img", **{"aria-label": aria})
+
+
+def _esc_next_step_row(selection: dict) -> html.Div:
+    """One playbook stage's prescription: driving RAG, required action, and the
+    governance flags/owner/due that matter -- the Overview's compressed version
+    of the tab Conclusion's Required Actions card."""
+    action = selection.get("action")
+    stage = selection["stage"]
+    rag = selection["rag"]
+    kicker = _ESC_STAGE_KICKERS.get(stage, stage)
+    heading = html.Div(
+        className="overview-esc-step-heading",
+        children=[
+            html.Span(kicker, className="overview-esc-step-kicker"),
+            html.Span([pd_rag_dot(rag), html.Strong(rag)], className="overview-esc-step-rag"),
+        ],
+    )
+
+    if not action:
+        return html.Div(
+            className="overview-esc-step overview-esc-step-na",
+            children=[
+                heading,
+                html.Div(
+                    "No playbook action matches this stage yet — set its RAG in the tab's Conclusion section.",
+                    className="overview-esc-step-action",
+                ),
+            ],
+        )
+
+    children = [heading]
+    if selection.get("persistent_breach"):
+        children.append(
+            html.Div("Persistent breach — two consecutive Red quarters", className="overview-esc-step-breach")
+        )
+    # Labeled detail blocks matching the tab Conclusion's Required Actions card:
+    # a description line, then Required action / Additional requirements /
+    # Escalation-discussion, reusing that card's own CSS classes so the two
+    # views read identically.
+    if action.get("description"):
+        children.append(html.Div(action["description"], className="pd-action-description"))
+    children.append(
+        html.Div(
+            className="pd-action-detail pd-action-detail-primary",
+            children=[html.Span("Required action"), html.P(action["required_action"])],
+        )
+    )
+    if action.get("additional_requirements"):
+        children.append(
+            html.Div(
+                className="pd-action-detail",
+                children=[html.Span("Additional requirements"), html.P(action["additional_requirements"])],
+            )
+        )
+    if action.get("escalation"):
+        children.append(
+            html.Div(
+                className="pd-action-detail",
+                children=[html.Span("Escalation / discussion"), html.P(action["escalation"])],
+            )
+        )
+
+    flags = [
+        label
+        for key, label in (("sponsor_approval", "Sponsor approval"), ("deep_dive", "Deep dive"), ("redevelopment", "Redevelopment"))
+        if str(action.get(key, "")).strip().lower() == "yes"
     ]
-    for group in MODEL_GROUPS:
-        group_rows = rows_by_group.get(group)
-        if not group_rows:
-            continue
-        cells.append(
-            html.Div(
-                className="overview-escalation-sidebar",
-                style={"gridRow": f"span {len(group_rows)}"},
+    footer = []
+    if flags:
+        footer.append(
+            html.Span([html.Span(flag, className="overview-esc-step-flag") for flag in flags], className="overview-esc-step-flags")
+        )
+    meta = " · ".join(
+        part for part in (
+            f"Owner: {action['owner']}" if action.get("owner") else "",
+            f"Due in: {action['due_in_report']}" if action.get("due_in_report") else "",
+        ) if part
+    )
+    if meta:
+        footer.append(html.Span(meta, className="overview-esc-step-meta"))
+    if footer:
+        children.append(html.Div(footer, className="overview-esc-step-footer"))
+    return html.Div(children, className=f"overview-esc-step overview-esc-step-{pd_tone_class(rag)}")
+
+
+def _esc_flow_summary_dots(record: dict) -> html.Span:
+    """Compact review-flow readout for the collapsed summary row -- one labeled
+    dot per stage (Post SR / Pre Mit / Post Mit), each naming its RAG type and
+    carrying a full-name hover title, so the collapsed list shows each entity's
+    governance verdicts at a glance without expanding it."""
+    if not record["Has Review Flow"]:
+        return html.Span("No review flow", className="overview-esc-row-flow-empty")
+    items = []
+    for field, column, _label in REVIEW_FLOW_STAGES:
+        rag = record["Review Flow"].get(field, "N/A")
+        items.append(
+            html.Span(
+                className="overview-esc-row-flow-item",
+                title=f"{column}: {rag}",
                 children=[
-                    html.Strong(group, className="overview-escalation-sidebar-code"),
+                    html.Span(_ESC_FLOW_SHORT_LABELS.get(field, field), className="overview-esc-row-flow-label"),
+                    html.Span(pd_rag_dot(rag), className="overview-esc-row-flow-dot"),
                 ],
             )
         )
-        for row in group_rows:
-            entity_name = row["Model"] if entity_label == "model" else row["Segment"]
-            drivers = [driver.strip() for driver in row["Drivers"].split(",") if driver.strip()]
-            driver_rags = row.get("DriverRags", {})
-            # Drivers already arrive in priority order (Overall RAG, then the
-            # RAG Assignment tests that derive it, then Post Subjective
-            # Review) -- split by column instead of by visual tier now that
-            # each has its own dedicated column.
-            assignment_drivers = [d for d in drivers if d not in POST_SUBJECTIVE_COLUMNS]
-            review_drivers = [d for d in drivers if d in POST_SUBJECTIVE_COLUMNS]
-            cells.append(
-                html.Div(
-                    children=[html.Strong(entity_name)],
-                    className="overview-escalation-cell overview-escalation-model-cell",
-                )
-            )
-            cells.append(
-                html.Div(
-                    [_governance_driver_chip(driver, driver_rags) for driver in assignment_drivers] or "—",
-                    className="overview-escalation-cell overview-escalation-chip-cell",
-                )
-            )
-            cells.append(
-                html.Div(
-                    [_governance_driver_chip(driver, driver_rags) for driver in review_drivers] or "—",
-                    className="overview-escalation-cell overview-escalation-chip-cell",
-                )
-            )
-    return html.Div(cells, className="overview-escalation-table")
+    aria = "Review flow: " + ", ".join(
+        f"{column} {record['Review Flow'].get(field, 'N/A')}" for field, column, _label in REVIEW_FLOW_STAGES
+    )
+    return html.Span(items, className="overview-esc-row-flow", role="img", **{"aria-label": aria})
 
 
-def _governance_action_register(gov: dict, entity_label: str) -> html.Div:
-    rows = gov["escalations"]
+def _esc_row(record: dict) -> html.Details:
+    """One escalating entity as a native collapsible row: the summary shows the
+    identity, severity, and a glanceable review-flow readout; expanding reveals
+    the full review-flow pipeline, drivers, playbook next steps, the reviewer's
+    sign-off, and a link to the source tab. Native ``<details>`` so no callback
+    is needed and each row survives a full content re-render."""
+    ribbon = "Persistent breach" if record["Persistent Breach"] else "Escalation required"
+    row_class = "overview-esc-row" + (" overview-esc-row-breach" if record["Persistent Breach"] else "")
 
-    # Grouped by Model Group (PD, LGD, EAD, Loss -- whichever have escalations
-    # this period), each rendered as its own "tier" in the table below.
-    rows_by_group: dict[str, list[dict]] = {}
-    for row in rows:
-        rows_by_group.setdefault(row["Model Group"], []).append(row)
-
-    if rows:
-        periods = {row["Monitoring Period"] for row in rows}
-        title_text = (
-            f"Escalation Register — {next(iter(periods))}"
-            if len(periods) == 1
-            else "Escalation Register"
-        )
-        body = [_escalation_table(rows_by_group, entity_label)]
-    else:
-        title_text = "Escalation Register"
-        body = [
-            html.Div(
-                className="overview-governance-all-clear",
-                children=[
-                    html.Span(className="overview-governance-all-clear-mark", **{"aria-hidden": "true"}),
-                    html.Div(
-                        children=[
-                            html.Strong("No immediate escalations"),
-                            html.Span(f"No {entity_label}s are Red on an underlying test for the selected period."),
-                        ],
-                    ),
-                ],
-            )
-        ]
-
-    return html.Div(
-        className="overview-governance-actions",
+    summary = html.Summary(
+        className="overview-esc-row-summary",
         children=[
+            html.Span("▸", className="overview-esc-row-chevron", **{"aria-hidden": "true"}),
+            html.Span(record["Model Group"], className="overview-esc-card-group"),
+            html.Strong(record["Entity Label"], className="overview-esc-row-name"),
+            html.Span(ribbon, className="overview-esc-row-ribbon"),
+            _esc_flow_summary_dots(record),
+            html.Span(record["Monitoring Period"], className="overview-esc-row-period"),
+        ],
+    )
+
+    body_children = []
+    if record["Has Review Flow"]:
+        body_children.append(_esc_review_flow_strip(record))
+    if record["Drivers"]:
+        driver_rags = dict(record["Drivers"])
+        body_children.append(
             html.Div(
-                className="overview-escalation-banner",
+                className="overview-esc-card-drivers",
                 children=[
-                    html.Span("Required action", className="overview-escalation-banner-kicker"),
-                    html.Strong(title_text, className="overview-escalation-banner-title"),
+                    html.Span("Driven by", className="overview-esc-card-drivers-label"),
+                    *[_governance_driver_chip(metric, driver_rags) for metric, _rag in record["Drivers"]],
                 ],
-            ),
-            *body,
+            )
+        )
+    if record["Selections"]:
+        body_children.append(
+            html.Div(
+                className="overview-esc-card-steps",
+                children=[_esc_next_step_row(selection) for selection in record["Selections"]],
+            )
+        )
+    elif not record["Has Review Flow"]:
+        body_children.append(
+            html.Div(
+                f"The {record['Model Group']} workstream does not track review-flow RAGs yet — investigate the "
+                "Red findings above directly on its tab.",
+                className="overview-esc-card-note",
+            )
+        )
+    if record["Commentary"]:
+        body_children.append(
+            html.Div(
+                className="overview-esc-card-commentary",
+                children=[
+                    html.Span("Reviewer sign-off", className="overview-esc-card-commentary-label"),
+                    html.Blockquote(record["Commentary"], className="overview-esc-card-commentary-text"),
+                ],
+            )
+        )
+    body_children.append(
+        html.A(f"Open {record['Model Group']} Performance →", href=record["Tab Path"], className="overview-esc-card-link")
+    )
+
+    return html.Details(
+        className=row_class,
+        children=[summary, html.Div(body_children, className="overview-esc-row-body")],
+    )
+
+
+def _esc_watch_row(record: dict) -> html.Div:
+    """Compact watch-list row: the worst stage (or finding) and its one-line
+    playbook action -- enough to document without a full escalation card."""
+    selections = record["Selections"]
+    if selections:
+        worst = max(selections, key=lambda selection: _ESC_RAG_RANK.get(selection["rag"], -1))
+        rag = worst["rag"]
+        context = f"{_ESC_STAGE_KICKERS.get(worst['stage'], worst['stage'])} · {rag}"
+        line = (worst.get("action") or {}).get("required_action") or "No playbook action matches this stage yet."
+    elif record["Drivers"]:
+        metric, rag = record["Drivers"][0]
+        context = f"{metric} · {rag}"
+        line = f"{rag} finding on {metric} — review on the tab."
+    else:
+        rag = record["Overall RAG"]
+        context = f"Overall RAG · {rag}"
+        line = "Review on the tab."
+    return html.Div(
+        className="overview-esc-watch-row",
+        children=[
+            pd_rag_dot(rag),
+            html.Strong(record["Entity Label"], className="overview-esc-watch-name"),
+            html.Span(context, className="overview-esc-watch-context"),
+            html.Span(line, className="overview-esc-watch-action"),
+            html.A("Open tab →", href=record["Tab Path"], className="overview-esc-watch-link"),
         ],
     )
 
 
-def _governance_board(
-    gov: dict, entity_label: str, clean_key: str, clean_label: str, clean_unit_plural: str, show_amber_stat: bool = False,
-) -> html.Div:
-    posture_title, _, tone = _governance_posture(gov, entity_label)
-    clean_entities = gov[clean_key]
-    clean_description = ", ".join(clean_entities) if clean_entities else "None fully clear"
-    # clean_unit_plural is passed explicitly (e.g. "models", "workstreams",
-    # "segments") rather than derived from clean_label's wording, since the
-    # label is just a display title and shouldn't have to literally name the
-    # counted entity (e.g. "No findings" as a label still counts models).
-    clean_unit = clean_unit_plural[:-1] if len(clean_entities) == 1 and clean_unit_plural.endswith("s") else clean_unit_plural
-
-    if show_amber_stat:
-        amber_count = gov["amber"]
-        second_stat = _governance_hero_stat_row(
-            "Amber findings",
-            f"{amber_count} {entity_label}{'' if amber_count == 1 else 's'}",
-            "Amber on Overall RAG, not yet Red",
-            "amber" if amber_count else "green",
-        )
-    else:
-        second_stat = _governance_hero_stat_row(clean_label, f"{len(clean_entities)} {clean_unit}", clean_description, "green")
-
-    return html.Div(
-        className=f"section-card overview-governance-board overview-governance-board-{tone}",
-        children=[
+def _governance_next_steps_board(esc: dict, entity_noun: str) -> html.Div:
+    posture_title, tone = _esc_posture(esc, entity_noun)
+    tiers, counts = esc["tiers"], esc["counts"]
+    children = [
+        html.Div(
+            className="overview-governance-posture",
+            children=[
+                html.Div(
+                    className="overview-governance-posture-heading",
+                    children=[
+                        html.Span("Current governance posture"),
+                        html.H4(posture_title),
+                    ],
+                ),
+                html.Div(
+                    [_esc_tier_chip(tier, counts[tier]) for tier in ("escalate", "watch", "clear")],
+                    className="overview-esc-tier-chips",
+                ),
+                html.P(esc["narrative"]),
+            ],
+        ),
+    ]
+    if tiers["escalate"]:
+        children.append(
             html.Div(
-                className="overview-governance-posture",
+                className="overview-esc-rows",
                 children=[
                     html.Div(
-                        className="overview-governance-posture-heading",
+                        className="overview-esc-rows-head",
                         children=[
-                            html.Span("Current governance posture"),
-                            html.H4(posture_title),
+                            html.Div(
+                                f"Click a {entity_noun} to see its review flow and next steps",
+                                className="overview-esc-rows-hint",
+                            ),
+                            # Toggles every row in this board open/closed. Handled by the
+                            # overview_expand_all.js asset (native <details>, no callback).
+                            html.Button(
+                                "Expand all",
+                                type="button",
+                                className="overview-esc-expand-all",
+                                **{"aria-label": "Expand or collapse all escalation cards"},
+                            ),
                         ],
                     ),
-                    html.P(gov["narrative"]),
+                    *[_esc_row(record) for record in tiers["escalate"]],
                 ],
-            ),
+            )
+        )
+    if tiers["watch"]:
+        children.append(
             html.Div(
-                className="overview-governance-stats",
+                className="overview-esc-watch",
                 children=[
-                    _governance_hero_stat_row(
-                        "Immediate escalation",
-                        f"{len(gov['escalations'])} {entity_label}{'' if len(gov['escalations']) == 1 else 's'}",
-                        "Red on any test",
-                        "red" if gov["escalations"] else "green",
-                    ),
-                    second_stat,
-                    _governance_severity_stat_row("RAG Assignment", gov["rag_assignment"]),
-                    _governance_severity_stat_row("Post Subjective Review", gov["post_subjective_review"]),
+                    html.Div("Watch list — action to document, no escalation", className="overview-esc-strip-title"),
+                    *[_esc_watch_row(record) for record in tiers["watch"]],
                 ],
-            ),
-            _governance_action_register(gov, entity_label),
-        ],
-    )
+            )
+        )
+    if tiers["clear"]:
+        children.append(
+            html.Div(
+                className="overview-esc-clear",
+                children=[
+                    html.Span("In tolerance — continue normal monitoring:", className="overview-esc-clear-label"),
+                    *[html.Span(record["Entity Label"], className="overview-esc-clear-chip") for record in tiers["clear"]],
+                ],
+            )
+        )
+    return html.Div(children, className=f"section-card overview-governance-board overview-governance-board-{tone}")
 
 
-def _build_governance_section(current_rows: list[dict], findings: list[dict]) -> html.Section:
-    gov = governance_summary(current_rows, findings)
+def _build_governance_section(
+    current_rows: list[dict], scoped_rows: list[dict], findings: list[dict], monitoring_actions: list[dict],
+) -> html.Section:
+    esc = escalation_next_steps(current_rows, scoped_rows, findings, monitoring_actions, entity_key="Model")
     return html.Section(
         id="overview-governance-summary",
         className="pd-content-section pd-live-section",
         children=[
             build_pd_section_heading(
                 "1.4 Governance Summary",
-                "Decision Summary",
-                "A concise governance posture, the signals driving it, and the actions requiring attention.",
-                "Green",
+                "Escalation & Next Steps",
+                "Models that require escalation, their review-flow verdicts, and the playbook actions to take "
+                "next — mirroring each Performance tab's Conclusion section.",
+                "N/A",
                 {"show_rag": False},
             ),
-            _governance_board(gov, "model", "clean_models", "No findings", "models", show_amber_stat=True),
+            _governance_next_steps_board(esc, "model"),
         ],
     )
 
 
-def _build_segment_governance_section(current_rows: list[dict], findings: list[dict]) -> html.Section:
-    gov = segment_governance_summary(current_rows, findings)
+def _build_segment_governance_section(
+    current_rows: list[dict], scoped_rows: list[dict], findings: list[dict], monitoring_actions: list[dict],
+) -> html.Section:
+    esc = escalation_next_steps(current_rows, scoped_rows, findings, monitoring_actions, entity_key="Segment")
     return html.Section(
         id="overview-segment-governance-summary",
         className="pd-content-section pd-live-section",
         children=[
             build_pd_section_heading(
                 "2.4 Governance Summary",
-                "Decision Summary",
-                "A concise segment-level posture, the signals driving it, and the actions requiring attention.",
-                "Green",
+                "Escalation & Next Steps",
+                "Segments that require escalation, their review-flow verdicts, and the playbook actions to take "
+                "next — mirroring each Performance tab's Conclusion section.",
+                "N/A",
                 {"show_rag": False},
             ),
-            _governance_board(gov, "segment", "clean_segments", "Clear segments", "segments"),
+            _governance_next_steps_board(esc, "segment"),
         ],
     )
 
@@ -2226,7 +2336,7 @@ def render_overview_content(
         _build_summary_section(current_rows, findings, monitoring_point or "All", theme),
         _build_heatmap_section(current_rows, theme, monitoring_point or "All"),
         _build_trend_section(scoped_rows, rag_trend_metric, range_store, theme, monitoring_point or "All"),
-        _build_governance_section(current_rows, findings),
+        _build_governance_section(current_rows, scoped_rows, findings, data.get("monitoring_actions") or []),
     ]
 
     chapter_2 = build_pd_chapter_heading(
@@ -2243,7 +2353,9 @@ def render_overview_content(
         _build_segment_summary_section(current_segment_rows, segment_findings, monitoring_point or "All", theme),
         _build_segment_heatmap_section(current_segment_rows, theme, monitoring_point or "All"),
         _build_segment_trend_section(segment_scoped_rows, segment_rag_trend_metric, range_store, theme, monitoring_point or "All"),
-        _build_segment_governance_section(current_segment_rows, segment_findings),
+        _build_segment_governance_section(
+            current_segment_rows, segment_scoped_rows, segment_findings, data.get("monitoring_actions") or [],
+        ),
     ]
 
     children = [

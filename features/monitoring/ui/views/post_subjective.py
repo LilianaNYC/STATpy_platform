@@ -346,7 +346,7 @@ def _mev_range_summary(cfg: PostSubjectiveConfig, data: dict, selected_model, se
     }
 
 
-def build_overview_section(
+def compute_post_subjective_summaries(
     cfg: PostSubjectiveConfig,
     data: dict,
     level: str,
@@ -359,12 +359,14 @@ def build_overview_section(
     selected_model,
     selected_segment,
     store: dict | None = None,
-) -> html.Section:
-    """Review scorecard summarising every applicable post-subjective test.
+) -> list[dict]:
+    """Headline status + key metric + takeaway for every applicable post-subjective test.
 
-    Mirrors the PD 2.1 overview (posture hero + per-test scorecard cards) for the
-    tests that apply to LGD/EAD: PSI, Scenario Ranking, Sensitivity and MEV Range.
-    (PD's Transition Matrix card is omitted -- there is no MM_P0/MM_Pm data here.)
+    Covers the tests that apply to LGD/EAD: PSI, Scenario Ranking, Sensitivity and MEV Range.
+    (PD's Transition Matrix is omitted -- there is no MM_P0/MM_Pm data here.) Shared by
+    :func:`build_overview_section` (the tab's own "2.1 Overview" page) and by callers building a
+    higher-level chapter breakdown (e.g. the LGD "0.0 Overview" and "3.1 Conclusion" RAG lifecycle
+    diagram), so both places always agree on each test's RAG.
     """
     summaries: list[dict] = []
 
@@ -411,6 +413,36 @@ def build_overview_section(
 
     # MEV Range
     summaries.append(_mev_range_summary(cfg, data, selected_model, selected_segment, reporting_cycle, scenario))
+
+    return summaries
+
+
+def build_overview_section(
+    cfg: PostSubjectiveConfig,
+    data: dict,
+    level: str,
+    entity: str,
+    reporting_cycle: str,
+    scenario: str,
+    monitoring_point: str,
+    summary: dict,
+    thresholds: list[dict],
+    selected_model,
+    selected_segment,
+    store: dict | None = None,
+    summaries: list[dict] | None = None,
+) -> html.Section:
+    """Review scorecard summarising every applicable post-subjective test.
+
+    Mirrors the PD 2.1 overview (posture hero + per-test scorecard cards). Pass a precomputed
+    ``summaries`` (from :func:`compute_post_subjective_summaries`) when the caller already needs it
+    elsewhere (e.g. a chapter breakdown), to avoid computing it twice.
+    """
+    if summaries is None:
+        summaries = compute_post_subjective_summaries(
+            cfg, data, level, entity, reporting_cycle, scenario, monitoring_point,
+            summary, thresholds, selected_model, selected_segment, store,
+        )
 
     attention = [s for s in summaries if s["rag"] in ("Amber", "Red")]
     red = sum(1 for s in summaries if s["rag"] == "Red")

@@ -55,10 +55,6 @@ class Settings:
     def dummy_mev_data_file(self) -> Path:
         return self.source_data_dir / "dummy_mev_data.xlsx"
 
-    @property
-    def monitoring_actions_file(self) -> Path:
-        return self.source_data_dir / "monitoring.xlsx"
-
 
 def build_settings(environment: str | None = None) -> Settings:
     """Build a :class:`Settings` object for ``environment`` (or the active one)."""

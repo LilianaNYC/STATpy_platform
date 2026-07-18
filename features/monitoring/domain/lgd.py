@@ -55,6 +55,11 @@ def _lgd_store_key(selected_model, selected_segment) -> tuple[str, str]:
     return "model", ""
 
 
+def lgd_store_key(selected_model, selected_segment) -> tuple[str, str]:
+    """Public wrapper for :func:`_lgd_store_key`, for callers outside this module."""
+    return _lgd_store_key(selected_model, selected_segment)
+
+
 def _lgd_store_rows(selected_model, selected_segment) -> list[dict] | None:
     if _LGD_STORE is None:
         return None
@@ -244,6 +249,24 @@ def get_lgd_periods(data: dict, selected_model: str | None, selected_segment: st
 def get_lgd_monitoring_point_options(data: dict, selected_model: str | None, selected_segment: str | None = "All") -> list[str]:
     periods = get_lgd_periods(data, selected_model, selected_segment)
     return ["Latest", *reversed(periods)]
+
+
+def get_previous_lgd_quarter(data: dict, selected_model: str | None, selected_segment: str | None, quarter: str) -> str:
+    """The monitoring period immediately before ``quarter``, or "" if there isn't one."""
+    periods = get_lgd_periods(data, selected_model, selected_segment)
+    if quarter not in periods:
+        return ""
+    index = periods.index(quarter)
+    return periods[index - 1] if index > 0 else ""
+
+
+def lgd_metrics_row_for_quarter(selected_model: str | None, selected_segment: str | None, quarter: str) -> dict[str, Any]:
+    """The precomputed LGD metric row for a specific monitoring period, or ``{}`` if none is loaded."""
+    rows = _lgd_store_rows(selected_model, selected_segment) or []
+    for row in rows:
+        if str(row.get("Monitoring Period", "")) == str(quarter):
+            return row
+    return {}
 
 
 def resolve_lgd_monitoring_point(

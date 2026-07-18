@@ -150,12 +150,12 @@ bands) live in `shared/domain/constants.py`.
   (`PD/LGD/EAD/Loss_Performance_Metrics`), the `Filters` config sheet, and
   `PD_Sensitivity_Projections` (with `MM_P0` / `MM_Pm` transition margins).
 - `statpy_monitoring_thresholds.xlsm` – PD / CRR-master-scale / RAG-assignment /
-  LGD / Loss / scenario-test threshold tables.
+  LGD / Loss / scenario-test threshold tables, plus the governance action
+  playbook (`monitoring_actions` sheet): one required-action row per stage/RAG,
+  surfaced in the Conclusion's Required Actions panel and keyed off the
+  review-flow RAGs.
 - `dummy_mev_data.xlsx` – the MEV catalog (descriptions, time series, model
   characteristics) used by the PD MEV Range section and the SAAS workspace.
-- `monitoring.xlsx` – the governance action playbook (`monitoring_actions`
-  sheet): one required-action row per stage/RAG, surfaced in the PD
-  Conclusion's Required Actions panel and keyed off the review-flow RAGs.
 
 Each dashboard's `data_access.py` reads its source once at import time (through
 its `services` layer) and exposes the in-memory payload.

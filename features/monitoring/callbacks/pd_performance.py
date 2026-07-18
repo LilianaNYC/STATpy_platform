@@ -17,7 +17,7 @@ from dash import ALL, Input, Output, State, ctx, no_update
 from ..ui import common as filter_shell
 from ..ui.views import pd_performance as layout
 from ....shared.ui import controls
-from ....shared.theme import APP_THEME_ID
+from ....shared.theme import APP_THEME_ID, URL_ID
 from ....shared.domain.calculations import PdFilterContext, ctx_store_keys, set_precomputed_metrics
 from ....shared.registration import already_registered
 from ..data_access import PD_PERFORMANCE_DATA
@@ -66,6 +66,31 @@ def register_callbacks(app) -> None:
     segment_labels = {"all": "All", **{value: value for value in data["segment_values"]}}
 
     # -----------------------------------------------------------------
+    # Discard unsaved review-flow state whenever the PD page is (re)entered.
+    #
+    # Unlike LGD/EAD (whose stores are page-local and reset on navigation), the
+    # PD stores live in the shared app shell, so a staged-but-unsaved RAG pick,
+    # a draft sign-off, or a stale save-status message would otherwise survive
+    # navigating away and re-appear on return. Clearing them on entry means
+    # leaving the page always drops staged edits -- only saved (factual) values
+    # are shown when you come back.
+    # -----------------------------------------------------------------
+    @app.callback(
+        Output(layout.PD_REVIEW_FLOW_PENDING_STORE_ID, "data", allow_duplicate=True),
+        Output(layout.CONCLUSIONS_NOTES_STORE_ID, "data", allow_duplicate=True),
+        Output(layout.PD_REVIEW_FLOW_STATUS_STORE_ID, "data", allow_duplicate=True),
+        Input(URL_ID, "pathname"),
+        prevent_initial_call=True,
+    )
+    def discard_pd_staged_state_on_entry(pathname):
+        # Only reset when the PD page itself is on screen (its path is "/"), so
+        # the master re-render that this triggers has a live content container to
+        # write into rather than firing against a page that has been swapped out.
+        if pathname != "/":
+            return no_update, no_update, no_update
+        return {}, "", ""
+
+    # -----------------------------------------------------------------
     # Reporting Cycle -> Monitoring Point options
     # -----------------------------------------------------------------
     all_quarters_desc = sorted(data["quarters"], reverse=True)
@@ -81,9 +106,15 @@ def register_callbacks(app) -> None:
         if allowed is None:
             quarters = all_quarters_desc
         else:
-            quarters = list(allowed)
+            # Latest-first. dcc.Dropdown resets its value to the first option when
+            # the options list changes (as it does here when the reporting cycle
+            # rebuilds the monitoring-point list on load), so ordering latest-first
+            # makes that reset land on the latest quarter -- keeping the hidden
+            # value in sync with the "latest" default the toggle shows, instead of
+            # silently snapping back to the earliest quarter.
+            quarters = sorted(allowed, reverse=True)
         options = [{"label": q, "value": q} for q in quarters]
-        value = filter_shell.resolve_monitoring_point_value(quarters, current_mp)
+        value = current_mp if current_mp in quarters else (quarters[0] if quarters else "")
         return options, value
 
     # -----------------------------------------------------------------

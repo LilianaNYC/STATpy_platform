@@ -8,18 +8,48 @@ from ..ui import common as filter_shell
 from ..ui.views import lgd_performance as layout
 from ....shared.ui import controls
 from ..domain.lgd import (
+    get_lgd_model_options,
     get_lgd_segments_for_model,
+    lgd_store_key,
+    resolve_lgd_monitoring_point,
     resolve_lgd_segment,
 )
 from ....shared.registration import already_registered
 from ....shared.theme import APP_THEME_ID
 from ..data_access import PD_PERFORMANCE_DATA
+from ..services import data_service
 
 _RANGE_PRESET_COUNTS = {"last-4": 4, "last-8": 8, "last-12": 12}
 
 
 def _dropdown_options(values: list[str]) -> list[dict[str, str]]:
     return [{"label": value, "value": value} for value in values]
+
+
+def _resolve_lgd_scope(data: dict, applied: dict | None) -> tuple[str | None, str | None, str, str]:
+    """Resolve (selected_model, selected_segment, monitoring_point, reporting_cycle) from the applied store.
+
+    Shared by the review-flow Save callback and the save-bar sync callback so both always agree on which
+    portfolio-file row a read/write targets. Assumes ``_LGD_STORE`` (installed by the master render
+    callback whenever ``reporting_cycle`` changes) already matches ``reporting_cycle`` -- true here since
+    both callbacks only ever fire after the tab has already rendered once for the current scope.
+    """
+    from ....shared.repositories.filters_config import load_filter_config
+    cfg = load_filter_config()
+    default_cycle = cfg["reporting_cycles"][0]["value"] if cfg["reporting_cycles"] else "CCAR 2026"
+
+    applied = applied or {}
+    reporting_cycle = applied.get("reporting_cycle") or default_cycle
+    selected_model = applied.get("model")
+    selected_segment = applied.get("segment")
+    # Mirrors the same fallback in layout.render_lgd_performance_content: with no explicit model and no
+    # segment, the tab defaults to the first available LGD model rather than showing nothing. Without
+    # this, a Save/sync here would resolve a different (empty) scope key than what's on screen.
+    if (not selected_model or selected_model == "all") and (selected_segment in (None, "", "All", "all")):
+        model_options = get_lgd_model_options(data)
+        selected_model = model_options[0] if model_options else selected_model
+    monitoring_point = resolve_lgd_monitoring_point(data, selected_model, selected_segment, applied.get("monitoring_point"))
+    return selected_model, selected_segment, monitoring_point, reporting_cycle
 
 
 def register_callbacks(app) -> None:
@@ -149,6 +179,9 @@ def register_callbacks(app) -> None:
     # -----------------------------------------------------------------
     @app.callback(
         Output(layout.APPLIED_FILTERS_STORE_ID, "data"),
+        Output(layout.CONCLUSIONS_NOTES_STORE_ID, "data", allow_duplicate=True),
+        Output(layout.LGD_REVIEW_FLOW_PENDING_STORE_ID, "data", allow_duplicate=True),
+        Output(layout.LGD_REVIEW_FLOW_STATUS_STORE_ID, "data", allow_duplicate=True),
         Input(layout.APPLY_FILTERS_ID, "n_clicks"),
         State(layout.REPORTING_CYCLE_ID, "value"),
         State(layout.SCENARIO_ID, "value"),
@@ -158,15 +191,20 @@ def register_callbacks(app) -> None:
         prevent_initial_call=True,
     )
     def apply_lgd_filters(_n_clicks, reporting_cycle, scenario, selected_model, selected_segment, selected_monitoring_point):
+        """Snapshot the current top filters so the content renders only on Apply.
+
+        Also discards the scope-specific review-flow state (unsaved reviewer sign-off draft, staged RAG
+        picks, last save-status message) -- see ``apply_pd_filters`` for why.
+        """
         if not _n_clicks:
-            return no_update
+            return no_update, no_update, no_update, no_update
         return {
             "reporting_cycle": reporting_cycle,
             "scenario": scenario,
             "model": selected_model,
             "segment": selected_segment,
             "monitoring_point": selected_monitoring_point,
-        }
+        }, "", {}, ""
 
     # -----------------------------------------------------------------
     # Master re-render: applied store + range store -> lgd-dashboard-content
@@ -176,10 +214,16 @@ def register_callbacks(app) -> None:
         Input(layout.APPLIED_FILTERS_STORE_ID, "data"),
         Input(layout.RANGE_STORE_ID, "data"),
         Input(layout.SCENARIO_RANKING_STORE_ID, "data"),
+        Input(layout.LGD_REVIEW_FLOW_PENDING_STORE_ID, "data"),
         Input(APP_THEME_ID, "value"),
+        State(layout.CONCLUSIONS_NOTES_STORE_ID, "data"),
+        State(layout.LGD_REVIEW_FLOW_STATUS_STORE_ID, "data"),
         prevent_initial_call=True,
     )
-    def render_lgd_content(applied, range_store, scenario_ranking_store, theme_value):
+    def render_lgd_content(
+        applied, range_store, scenario_ranking_store, review_flow_pending_edits, theme_value,
+        conclusions_notes, review_flow_save_status,
+    ):
         if not applied:
             return layout.build_lgd_apply_prompt()
 
@@ -203,4 +247,125 @@ def register_callbacks(app) -> None:
             scenario=scenario,
             scenario_ranking_store=scenario_ranking_store or {},
             theme_value=theme_value,
+            conclusions_notes=conclusions_notes or "",
+            review_flow_pending_edits=review_flow_pending_edits or {},
+            review_flow_save_status=review_flow_save_status or "",
         )
+
+    # -----------------------------------------------------------------
+    # Reviewer conclusions textarea -> lgd-conclusions-notes-store
+    # -----------------------------------------------------------------
+    @app.callback(
+        Output(layout.CONCLUSIONS_NOTES_STORE_ID, "data"),
+        Input(layout.CONCLUSIONS_NOTES_ID, "value"),
+        prevent_initial_call=True,
+    )
+    def save_lgd_conclusions_notes(value):
+        return value or ""
+
+    # -----------------------------------------------------------------
+    # Review-flow RAG pickers (Post Subjective Review / Pre-/Post-Mitigation)
+    # -> lgd-review-flow-pending-store (staged only, not yet written to disk)
+    # -----------------------------------------------------------------
+    @app.callback(
+        Output(layout.LGD_REVIEW_FLOW_PENDING_STORE_ID, "data"),
+        Input({"type": layout.LGD_REVIEW_FLOW_OPTION_ID, "field": ALL}, "value"),
+        State(layout.LGD_REVIEW_FLOW_PENDING_STORE_ID, "data"),
+        prevent_initial_call=True,
+    )
+    def stage_lgd_review_flow_rag(_values, pending):
+        # These dropdowns live inside the re-rendered content area, so they get torn down and
+        # recreated on every master re-render -- which fires this callback once as a "component just
+        # appeared" reconciliation even with prevent_initial_call=True. They always mount with
+        # value=None (a "Change RAG to..." action, not a live display), so that reconciliation firing
+        # always reports a None value and is caught by the guard below; only a genuine pick ever sets a
+        # real Green/Amber/Red value.
+        triggered = ctx.triggered_id
+        if not triggered or not ctx.triggered:
+            return no_update
+        new_value = ctx.triggered[0]["value"]
+        if not new_value:
+            return no_update
+        pending = dict(pending or {})
+        pending[triggered["field"]] = new_value
+        return pending
+
+    # -----------------------------------------------------------------
+    # Save staged review-flow RAG edits -> portfolio.xlsx (source of truth),
+    # then clear the pending store so the master re-render above shows the
+    # newly-saved values as "current" instead of "staged".
+    # -----------------------------------------------------------------
+    @app.callback(
+        Output(layout.LGD_REVIEW_FLOW_PENDING_STORE_ID, "data", allow_duplicate=True),
+        Output(layout.LGD_REVIEW_FLOW_STATUS_STORE_ID, "data"),
+        Input(layout.LGD_REVIEW_FLOW_SAVE_ID, "n_clicks"),
+        State(layout.LGD_REVIEW_FLOW_PENDING_STORE_ID, "data"),
+        State(layout.APPLIED_FILTERS_STORE_ID, "data"),
+        State(layout.CONCLUSIONS_NOTES_STORE_ID, "data"),
+        prevent_initial_call=True,
+    )
+    def save_lgd_review_flow_rag_changes(n_clicks, pending, applied, conclusions_notes):
+        # Same dynamic-mount quirk as the picker above: the Save button only exists once there's a
+        # pending edit or commentary change, so it "just appeared" at least once and could fire
+        # without a real click.
+        if not n_clicks:
+            return no_update, no_update
+
+        selected_model, selected_segment, monitoring_point, reporting_cycle = _resolve_lgd_scope(data, applied)
+        level, value = lgd_store_key(selected_model, selected_segment)
+
+        saved_fields = []
+        for field, new_value in (pending or {}).items():
+            if new_value not in ("Green", "Amber", "Red"):
+                continue
+            column = layout.LGD_REVIEW_FLOW_COLUMNS.get(field)
+            if not column:
+                continue
+            ok = data_service.save_lgd_review_flow_rag(
+                data, reporting_cycle, level, value, monitoring_point, column, new_value,
+            )
+            if ok:
+                saved_fields.append(field)
+
+        saved_commentary = layout.lgd_reviewer_commentary(selected_model, selected_segment, monitoring_point)
+        if (conclusions_notes or "") != (saved_commentary or ""):
+            ok = data_service.save_lgd_review_flow_rag(
+                data, reporting_cycle, level, value, monitoring_point,
+                layout.REVIEWER_COMMENTARY_COLUMN, conclusions_notes or "",
+            )
+            if ok:
+                saved_fields.append("reviewer_commentary")
+
+        if not saved_fields:
+            return no_update, (
+                "Could not save -- no matching rows were found in the portfolio file for the current scope."
+            )
+
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        count = len(saved_fields)
+        return {}, f"Saved {count} change{'s' if count != 1 else ''} to portfolio.xlsx at {timestamp}."
+
+    # -----------------------------------------------------------------
+    # Keep the "Unsaved changes" bar in sync with commentary keystrokes without
+    # rebuilding the whole tab (which would drop the textarea's cursor/focus).
+    # RAG picks already rebuild the whole tab (layout.LGD_REVIEW_FLOW_PENDING_STORE_ID
+    # is an Input there), so this callback only needs to add live text typing to the mix.
+    # -----------------------------------------------------------------
+    @app.callback(
+        Output(layout.LGD_REVIEW_FLOW_SAVE_BAR_ID, "children"),
+        Input(layout.CONCLUSIONS_NOTES_ID, "value"),
+        Input(layout.LGD_REVIEW_FLOW_PENDING_STORE_ID, "data"),
+        State(layout.APPLIED_FILTERS_STORE_ID, "data"),
+        State(layout.LGD_REVIEW_FLOW_STATUS_STORE_ID, "data"),
+        prevent_initial_call=True,
+    )
+    def sync_lgd_review_flow_save_bar(conclusions_notes, pending, applied, save_status):
+        selected_model, selected_segment, monitoring_point, _reporting_cycle = _resolve_lgd_scope(data, applied)
+        review_flow_rags = layout.lgd_review_flow_rags(selected_model, selected_segment, monitoring_point)
+        saved_commentary = layout.lgd_reviewer_commentary(selected_model, selected_segment, monitoring_point)
+        commentary_changed = (conclusions_notes or "") != (saved_commentary or "")
+        save_bar = layout.build_lgd_review_flow_save_bar(
+            pending or {}, review_flow_rags, save_status, commentary_changed,
+        )
+        return [save_bar] if save_bar is not None else []

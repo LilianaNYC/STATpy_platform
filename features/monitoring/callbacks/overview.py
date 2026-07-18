@@ -275,6 +275,13 @@ def register_callbacks(app) -> None:
             },
             "n_clicks",
         ),
+        Input(
+            {
+                "type": layout.RAG_FLOW_SHOW_ALL_BUTTON_TYPE,
+                "scope": ALL,
+            },
+            "n_clicks",
+        ),
         State(layout.RAG_FLOW_SELECTION_STORE_ID, "data"),
         prevent_initial_call=True,
     )
@@ -286,6 +293,7 @@ def register_callbacks(app) -> None:
         segment_compact_click,
         entity_clicks,
         reset_clicks,
+        show_all_clicks,
         selection_store,
     ):
         triggered = ctx.triggered_id
@@ -342,6 +350,16 @@ def register_callbacks(app) -> None:
             if scope not in ("model", "segment"):
                 return no_update
             store[scope] = None
+            return store
+
+        if isinstance(triggered, dict) and triggered.get("type") == layout.RAG_FLOW_SHOW_ALL_BUTTON_TYPE:
+            if not any(show_all_clicks or []):
+                return no_update
+            scope = triggered.get("scope")
+            if scope not in ("model", "segment"):
+                return no_update
+            # "See all" -- list every journey without focusing a bucket.
+            store[scope] = {"all": True, "entity": None}
             return store
 
         return no_update

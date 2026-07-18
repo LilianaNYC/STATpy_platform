@@ -27,12 +27,16 @@ from .....shared.domain.mev_range import (
 from .....shared.domain.quarter_labels import iso_date_to_pd_quarter
 from .....shared.ui.charts import build_pd_mev_range_figure
 from .....shared.theme import normalize_theme_value
+from ...domain.actions import select_pd_monitoring_actions
 from ...domain.lgd import (
     build_lgd_calibration_rag_trend,
     build_lgd_discrimination_rag_trend,
     build_lgd_period_summary,
+    get_lgd_model_options,
     get_lgd_monitoring_point_options,
     get_lgd_thresholds,
+    get_previous_lgd_quarter,
+    lgd_metrics_row_for_quarter,
 )
 from .cards import (
     build_pd_chapter_heading,
@@ -49,6 +53,7 @@ from .post_subjective import (
     build_psi_section,
     build_scenario_ranking_section,
     build_sensitivity_section,
+    compute_post_subjective_summaries,
     resolve_entity,
 )
 
@@ -79,6 +84,53 @@ LGD_SUBNAV_ID = "lgd-subnav"
 RANGE_STORE_ID = "lgd-range-store"
 SCENARIO_RANKING_STORE_ID = "lgd-scenario-ranking-store"
 SCENARIO_RANKING_FILTER_ID = "lgd-scenario-ranking-filter"
+CONCLUSIONS_NOTES_ID = "lgd-conclusions-notes-input"
+CONCLUSIONS_NOTES_STORE_ID = "lgd-conclusions-notes-store"
+LGD_REVIEW_FLOW_OPTION_ID = "lgd-review-flow-option"
+LGD_REVIEW_FLOW_PENDING_STORE_ID = "lgd-review-flow-pending-store"
+LGD_REVIEW_FLOW_STATUS_STORE_ID = "lgd-review-flow-status-store"
+LGD_REVIEW_FLOW_SAVE_ID = "lgd-review-flow-save"
+LGD_REVIEW_FLOW_SAVE_BAR_ID = "lgd-review-flow-save-bar-container"
+# Maps this UI's short field keys to the portfolio file's actual column names
+# (LGD_Performance_Metrics tab), so reads and writes never drift apart.
+LGD_REVIEW_FLOW_COLUMNS = {
+    "post_subjective": "rag_post_sr",
+    "pre_mitigation": "rag_pre_mitig",
+    "post_mitigation": "rag_post_mitig",
+}
+LGD_REVIEW_FLOW_FIELD_LABELS = {
+    "post_subjective": "Post Subjective Review RAG",
+    "pre_mitigation": "Pre Mitigation RAG",
+    "post_mitigation": "Post Mitigation RAG",
+}
+# The reviewer sign-off commentary lives in the same portfolio-file mechanism (self-healing column,
+# written via the same generic write path) but isn't a RAG, so it's kept out of LGD_REVIEW_FLOW_COLUMNS.
+REVIEWER_COMMENTARY_COLUMN = "reviewer_commentary"
+
+_RAG_RANK = {"N/A": -1, "Green": 0, "Amber": 1, "Red": 2}
+_RAG_HEX = {"green": "#16a34a", "amber": "#d97706", "red": "#dc2626", "neutral": "#94a3b8"}
+
+_LGD_LIFECYCLE_TOOLTIPS = {
+    "performance": (
+        "Model RAG (initial) = Performance RAG - Based on the results of tests applied at the modelled outcomes."
+    ),
+    "subjective_review": (
+        "Worst-case RAG across Chapter 2 (Post Subjective Review Analysis): PSI, scenario ranking, sensitivity, "
+        "and MEV range findings for the current scope."
+    ),
+    "post_subjective": (
+        "Model RAG (post subjective review) - Reflects the impact of any subjective overlays (this considers the "
+        "post-subjective review)."
+    ),
+    "pre_mitigation": (
+        "Pre Mitigation RAG = Pre-Overlay RAG - Obtained from a trend of Model RAG (post subjective review). For ST "
+        "models, only the current model RAG (post subjective review) will be considered."
+    ),
+    "post_mitigation": (
+        "Post Mitigation RAG = Post-Overlay RAG - Based on the residual risk of the model. Judgement-based. "
+        "Considers compensating controls."
+    ),
+}
 
 _POST_SUBJECTIVE = PostSubjectiveConfig(
     prefix="lgd",
@@ -117,13 +169,26 @@ def _build_lgd_subnav() -> html.Div:
         className="monitoring-section-subnav",
         children=[
             html.Div(
-                className="monitoring-section-subnav-group pd-subnav-group pd-subnav-group-rag active",
+                className="monitoring-section-subnav-group pd-subnav-group pd-subnav-group-overview active",
                 children=[
-                    html.Div("RAG Assignment", className="monitoring-section-subnav-label"),
+                    html.Div("Overview & Conclusion", className="monitoring-section-subnav-label"),
                     html.Div(
                         className="monitoring-section-subnav-links",
                         children=[
-                            _subnav_link("lgd-overview", "Overview", active=True),
+                            _subnav_link("lgd-dashboard-overview", "Main Overview", active=True),
+                            _subnav_link("lgd-conclusions-verdict", "Conclusion"),
+                        ],
+                    ),
+                ],
+            ),
+            html.Div(
+                className="monitoring-section-subnav-group pd-subnav-group pd-subnav-group-rag",
+                children=[
+                    html.Div("Chapter 1: RAG Assignment", className="monitoring-section-subnav-label"),
+                    html.Div(
+                        className="monitoring-section-subnav-links",
+                        children=[
+                            _subnav_link("lgd-overview", "RAG Assignment Overview"),
                             _subnav_link("lgd-calibration", "Calibration Conservatism"),
                             _subnav_link("lgd-discrimination", "Discriminatory Power"),
                         ],
@@ -133,11 +198,11 @@ def _build_lgd_subnav() -> html.Div:
             html.Div(
                 className="monitoring-section-subnav-group pd-subnav-group pd-subnav-group-post-review",
                 children=[
-                    html.Div("Post Subjective Review Analysis", className="monitoring-section-subnav-label"),
+                    html.Div("Chapter 2: Post Subjective Review Analysis", className="monitoring-section-subnav-label"),
                     html.Div(
                         className="monitoring-section-subnav-links",
                         children=[
-                            _subnav_link("lgd-post-subjective-overview", "Overview"),
+                            _subnav_link("lgd-post-subjective-overview", "Post Subjective Review Analysis Overview"),
                             _subnav_link("lgd-psi", "PSI"),
                             _subnav_link("lgd-scenario-ranking", "Scenario Ranking"),
                             _subnav_link("lgd-sensitivity-analysis", "Sensitivity Analysis"),
@@ -658,6 +723,791 @@ def _build_lgd_mev_range_section(
     )
 
 
+def _lgd_rag_tone(rag: str) -> str:
+    return {"Green": "green", "Amber": "amber", "Red": "red"}.get(rag, "neutral")
+
+
+def _lgd_worst_rag(rags: list[str]) -> str:
+    rags = [r for r in rags if r]
+    return max(rags, key=lambda r: _RAG_RANK.get(r, -1)) if rags else "N/A"
+
+
+def _count_lgd_attention(summaries: list[dict]) -> int:
+    return sum(1 for summary in summaries if summary.get("rag") in ("Amber", "Red"))
+
+
+def _worst_lgd_summary(summaries: list[dict]) -> dict | None:
+    ranked = [summary for summary in summaries if summary.get("rag") in ("Green", "Amber", "Red")]
+    if not ranked:
+        return None
+    return min(ranked, key=lambda summary: (-_RAG_RANK.get(summary["rag"], -1), summary["name"]))
+
+
+def _lgd_overview_info_chip(tooltip: str | None):
+    """Same "?" tooltip chip as ``cards._info_chip``, ported for the 0.0 Overview diagrams."""
+    if not tooltip:
+        return None
+    return html.Span(
+        "?",
+        className="pd-info-chip",
+        role="img",
+        **{"aria-label": tooltip, "title": tooltip},
+    )
+
+
+def _build_lgd_overview_area_index(index: int, tone: str = "neutral") -> html.Span:
+    return html.Span(
+        str(index),
+        className=f"overview-area-index overview-area-index-{tone}",
+        **{"aria-label": f"Overview area {index}"},
+    )
+
+
+def _build_lgd_chapter_1_diagram_node(summary: dict, label: str, href: str, extra_class: str = "") -> html.A:
+    tone = _lgd_rag_tone(summary.get("rag", "N/A"))
+    label_children = [label]
+    chip = _lgd_overview_info_chip(summary.get("tooltip"))
+    if chip is not None:
+        label_children.append(chip)
+    return html.A(
+        href=href,
+        className=f"overview-chapter-diagram-node overview-chapter-diagram-node-{tone} {extra_class}".strip(),
+        children=[
+            html.Span(label_children, className="overview-chapter-diagram-node-label"),
+            html.Span(
+                [pd_rag_dot(summary.get("rag", "N/A")), html.Strong(summary.get("rag", "N/A"))],
+                className="overview-chapter-diagram-node-value",
+            ),
+        ],
+        **{"aria-label": f"Jump to {label} section"},
+    )
+
+
+def _build_lgd_chapter_1_diagram(chapter_1_rag: str, summaries: list[dict], chapter_1_tooltip: str | None = None) -> html.Div:
+    by_name = {summary["name"]: summary for summary in summaries}
+    rows = []
+    for index, (name, label, href, extra_class) in enumerate([
+        ("Calibration Conservatism", "Calibration Conservatism RAG", "#lgd-calibration", "overview-chapter-diagram-node-primary"),
+        ("Discriminatory Power", "Discriminatory Power RAG", "#lgd-discrimination", ""),
+    ], start=1):
+        summary = by_name.get(name, {"rag": "N/A"})
+        node = _build_lgd_chapter_1_diagram_node(summary, label, href, extra_class)
+        node.children = [_build_lgd_overview_area_index(index, _lgd_rag_tone(summary["rag"])), *list(node.children)]
+        rows.append(node)
+        rows.append(html.Span(className=f"overview-chapter-diagram-connector overview-chapter-diagram-connector-{index}", **{"aria-hidden": "true"}))
+
+    tone = _lgd_rag_tone(chapter_1_rag)
+    rows.append(
+        html.Div(
+            className=f"overview-chapter-diagram-output overview-chapter-diagram-output-{tone}",
+            children=[
+                html.Span(
+                    ["Performance", html.Br(), "RAG", _lgd_overview_info_chip(chapter_1_tooltip)],
+                    className="overview-chapter-diagram-output-label",
+                ),
+                html.Span([pd_rag_dot(chapter_1_rag), html.Strong(chapter_1_rag)], className="overview-chapter-diagram-output-value"),
+            ],
+        )
+    )
+    return html.Div(className="overview-chapter-diagram", children=rows)
+
+
+def _build_lgd_chapter_2_overview_card(summary: dict, index: int) -> html.A:
+    tone = _lgd_rag_tone(summary["rag"])
+    return html.A(
+        href=f"#{summary['anchor']}",
+        className=f"overview-post-review-mini overview-post-review-mini-{tone}",
+        children=[
+            _build_lgd_overview_area_index(index, tone),
+            html.Div(
+                className="overview-post-review-mini-header",
+                children=[html.Strong(summary["name"], className="overview-post-review-mini-title")],
+            ),
+            html.Div(summary["metric"], className="overview-post-review-mini-value"),
+            html.Div(summary["metric_label"], className="overview-post-review-mini-label"),
+            html.Div(summary["takeaway"], className="overview-post-review-mini-copy"),
+        ],
+        **{"aria-label": f"Jump to {summary['name']} section"},
+    )
+
+
+def _build_lgd_chapter_2_overview_group(title: str, copy: str, cards: list[html.A], layout_class: str) -> html.Div:
+    return html.Div(
+        className="overview-post-review-group",
+        children=[
+            html.Div(
+                className="overview-post-review-group-heading",
+                children=[
+                    html.Span(title, className="overview-post-review-group-kicker"),
+                    html.P(copy, className="overview-post-review-group-copy"),
+                ],
+            ),
+            html.Div(
+                className=f"overview-post-review-strip {layout_class}",
+                children=cards,
+            ),
+        ],
+    )
+
+
+def _build_lgd_chapter_2_overview_strip(summaries: list[dict]) -> html.Div:
+    indexed = {
+        summary["name"]: _build_lgd_chapter_2_overview_card(summary, index)
+        for index, summary in enumerate(summaries, start=3)
+    }
+    core_checks = [indexed[name] for name in ("PSI", "Scenario Ranking") if name in indexed]
+    boundary_checks = [indexed[name] for name in ("Sensitivity Analysis", "MEV Range") if name in indexed]
+    groups = []
+    if core_checks:
+        groups.append(
+            _build_lgd_chapter_2_overview_group(
+                "Core stability checks",
+                "Start with population stability and ranking order.",
+                core_checks,
+                "overview-post-review-strip-primary",
+            )
+        )
+    if boundary_checks:
+        groups.append(
+            _build_lgd_chapter_2_overview_group(
+                "Stress and boundary checks",
+                "Use these to confirm whether shocks or MEV ranges push the model outside expected behaviour.",
+                boundary_checks,
+                "overview-post-review-strip-secondary",
+            )
+        )
+    return html.Div(className="overview-post-review-board", children=groups)
+
+
+def _build_lgd_overview_chapter_panel(
+    kicker: str,
+    title: str,
+    rag: str,
+    body,
+    panel_tone: str | None = None,
+    show_rag: bool = True,
+) -> html.Div:
+    tone = panel_tone or _lgd_rag_tone(rag)
+    rag_tone = _lgd_rag_tone(rag)
+    return html.Div(
+        className=f"overview-chapter-panel overview-chapter-panel-{tone}",
+        children=[
+            html.Div(
+                className="overview-chapter-panel-header",
+                children=[
+                    html.Div([
+                        html.Div(kicker, className="overview-chapter-panel-kicker"),
+                        html.H5(title, className="overview-chapter-panel-title"),
+                    ]),
+                    *(
+                        [html.Span(rag, className=f"overview-chapter-panel-rag overview-chapter-panel-rag-{rag_tone}")]
+                        if show_rag
+                        else []
+                    ),
+                ],
+            ),
+            body,
+        ],
+    )
+
+
+def _build_lgd_main_overview(
+    chapter_1_rag: str,
+    chapter_1_summaries: list[dict],
+    chapter_2_summaries: list[dict],
+    chapter_1_tooltip: str | None = None,
+) -> html.Section:
+    chapter_1_attention = _count_lgd_attention(chapter_1_summaries)
+    chapter_2_attention = _count_lgd_attention(chapter_2_summaries)
+    total_areas = len(chapter_1_summaries) + len(chapter_2_summaries)
+    total_attention = chapter_1_attention + chapter_2_attention
+    chapter_2_rag = _lgd_worst_rag([summary.get("rag") for summary in chapter_2_summaries])
+    priority_summary = _worst_lgd_summary([
+        *[{**summary, "chapter": "RAG Assignment"} for summary in chapter_1_summaries],
+        *[{**summary, "chapter": "Post Subjective Review Analysis"} for summary in chapter_2_summaries],
+    ])
+    priority_label = (
+        f"{priority_summary['chapter']} -> {priority_summary['name']}"
+        if priority_summary and priority_summary.get("rag") in ("Amber", "Red")
+        else "No immediate hotspot"
+    )
+    posture_tone = "red" if any(summary.get("rag") == "Red" for summary in [*chapter_1_summaries, *chapter_2_summaries]) else (
+        "amber" if total_attention else "green"
+    )
+
+    return html.Section(
+        id="lgd-dashboard-overview",
+        className="pd-content-section pd-live-section",
+        children=[
+            build_pd_section_heading(
+                "0.0 Overview",
+                "Dashboard Main Overview",
+                "",
+                "N/A",
+                options={"show_rag": False},
+            ),
+            html.Div(
+                className="overview-command-hero overview-main-card",
+                children=[
+                    html.Div(
+                        className="overview-main-breakdown",
+                        children=[
+                            html.Div(
+                                className="overview-review-card-heading overview-main-breakdown-heading",
+                                children=[
+                                    html.Div("Chapter breakdown", className="overview-review-card-kicker"),
+                                    html.H4("How the dashboard story splits across the two chapters"),
+                                    html.P(
+                                        "Each section below keeps the current RAG context so you can spot the stress points quickly."
+                                    ),
+                                ],
+                            ),
+                            html.Div(
+                                className="overview-chapter-grid overview-chapter-grid-single-card",
+                                children=[
+                                    _build_lgd_overview_chapter_panel(
+                                        "Chapter 1",
+                                        "RAG Assignment Overview",
+                                        chapter_1_rag,
+                                        _build_lgd_chapter_1_diagram(chapter_1_rag, chapter_1_summaries, chapter_1_tooltip),
+                                        panel_tone="neutral",
+                                        show_rag=False,
+                                    ),
+                                    _build_lgd_overview_chapter_panel(
+                                        "Chapter 2",
+                                        "Post Subjective Review Analysis Overview",
+                                        chapter_2_rag,
+                                        _build_lgd_chapter_2_overview_strip(chapter_2_summaries),
+                                        panel_tone="neutral",
+                                        show_rag=False,
+                                    ),
+                                ],
+                            ),
+                        ],
+                    ),
+                    html.Div(
+                        className="overview-main-card-scope",
+                        children=[
+                            html.Div(
+                                className="overview-command-hero-copy",
+                                children=[
+                                    html.Div("Overall posture", className="overview-command-hero-kicker"),
+                                    html.H4(
+                                        f"{total_attention} of {total_areas} monitored areas need attention",
+                                        className="overview-command-hero-title",
+                                        style={"--overview-posture-tone": _RAG_HEX[posture_tone], "margin": "0"},
+                                    ),
+                                ],
+                            ),
+                        ],
+                    ),
+                    html.Div(
+                        className="overview-review-focus overview-main-breakdown-focus",
+                        children=[
+                            html.Div([
+                                html.Span("Recommended deep dive"),
+                                html.Strong(priority_label),
+                            ]),
+                            html.Div([
+                                html.Span("Why it matters"),
+                                html.Strong(
+                                    priority_summary["takeaway"]
+                                    if priority_summary and priority_summary.get("rag") in ("Amber", "Red")
+                                    else "Both chapters are stable for the selected scope."
+                                ),
+                            ]),
+                        ],
+                    ),
+                ],
+            ),
+        ],
+    )
+
+
+# ---------------------------------------------------------------------------
+# 3.1 Conclusion: RAG lifecycle diagram + reviewer sign-off + required actions
+# ---------------------------------------------------------------------------
+
+
+def _build_lgd_rag_lifecycle_card(
+    kicker: str,
+    title: str,
+    rag: str | None,
+    tooltip_key: str,
+    extra_class: str = "",
+    body=None,
+    note: str | None = None,
+    href: str | None = None,
+):
+    tone = _lgd_rag_tone(rag) if rag else "neutral"
+    children = [
+        html.Span(kicker, className="pd-rag-lifecycle-card-kicker"),
+        html.Strong([title, _lgd_overview_info_chip(_LGD_LIFECYCLE_TOOLTIPS.get(tooltip_key))], className="pd-rag-lifecycle-card-title"),
+        body if body is not None else html.Div(
+            [pd_rag_dot(rag or "N/A"), html.Strong(rag or "N/A")],
+            className="pd-rag-lifecycle-card-value",
+        ),
+    ]
+    if note:
+        children.append(html.Span(note, className="pd-rag-lifecycle-card-note"))
+    class_name = f"pd-rag-lifecycle-card pd-rag-lifecycle-card-{tone} {extra_class}".strip()
+    if href:
+        return html.A(
+            href=href,
+            className=f"{class_name} pd-rag-lifecycle-card-link",
+            children=children,
+            **{"aria-label": f"Jump to {title} section"},
+        )
+    return html.Div(className=class_name, children=children)
+
+
+def _build_lgd_rag_lifecycle_merge_badge(symbol: str) -> html.Span:
+    return html.Span(symbol, className="pd-rag-lifecycle-merge-badge", **{"aria-hidden": "true"})
+
+
+def _build_lgd_rag_lifecycle_connector() -> html.Span:
+    return html.Span(className="pd-rag-lifecycle-connector", **{"aria-hidden": "true"})
+
+
+def lgd_review_flow_rags(selected_model, selected_segment, quarter: str) -> dict[str, str]:
+    """Post Subjective Review / Pre Mitigation / Post Mitigation RAG, read verbatim from the portfolio file.
+
+    These three come from the ``LGD_Performance_Metrics`` tab of the portfolio workbook (``rag_post_sr`` /
+    ``rag_pre_mitig`` / ``rag_post_mitig``), the same precomputed-metrics store Chapter 1 already reads from --
+    they are not derived here.
+    """
+    row = lgd_metrics_row_for_quarter(selected_model, selected_segment, quarter)
+
+    def _text(key: str) -> str:
+        value = str(row.get(key, "") or "").strip()
+        return value or "N/A"
+
+    return {field: _text(column) for field, column in LGD_REVIEW_FLOW_COLUMNS.items()}
+
+
+def lgd_reviewer_commentary(selected_model, selected_segment, quarter: str) -> str:
+    """The reviewer sign-off commentary saved for this scope, or "" if none has been saved yet."""
+    row = lgd_metrics_row_for_quarter(selected_model, selected_segment, quarter)
+    return str(row.get(REVIEWER_COMMENTARY_COLUMN, "") or "").strip()
+
+
+def _build_lgd_rag_lifecycle_metric_list(chapter_2_summaries: list[dict]) -> html.Div:
+    """Every Chapter 2 finding with its own RAG -- no single aggregated dot.
+
+    Chapter 2 is a qualitative, subjective-review layer with no defined roll-up formula (unlike Chapter 1's
+    weighted Performance RAG), so summarizing it as one dot would imply a computed logic that doesn't exist here.
+    """
+    return html.Div(
+        className="pd-rag-lifecycle-metric-list",
+        children=[
+            html.Div(
+                className="pd-rag-lifecycle-metric-row",
+                children=[
+                    pd_rag_dot(summary["rag"]),
+                    html.Span(summary["name"], className="pd-rag-lifecycle-metric-name"),
+                ],
+            )
+            for summary in chapter_2_summaries
+        ],
+    )
+
+
+def _build_lgd_review_flow_picker(field: str, effective_value: str | None) -> html.Div:
+    """Current value + a "Change RAG" dropdown for an editable review-flow RAG card.
+
+    Picking an option only stages the change (see ``LGD_REVIEW_FLOW_PENDING_STORE_ID``); nothing is
+    written to the portfolio file until the reviewer clicks Save in :func:`build_lgd_review_flow_save_bar`.
+    The dropdown always mounts with ``value=None`` (a "Change RAG to..." action, not a live display of
+    the current value) so a fresh mount never looks like a real pick -- see the callback for why that
+    matters.
+    """
+    return html.Div(
+        className="pd-rag-picker",
+        children=[
+            html.Div(
+                [pd_rag_dot(effective_value or "N/A"), html.Strong(effective_value or "N/A")],
+                className="pd-rag-lifecycle-card-value",
+            ),
+            html.Label("Change RAG", htmlFor=None, className="pd-rag-picker-label"),
+            dcc.Dropdown(
+                id={"type": LGD_REVIEW_FLOW_OPTION_ID, "field": field},
+                options=[{"label": option, "value": option} for option in ("Green", "Amber", "Red")],
+                value=None,
+                placeholder="Select…",
+                clearable=False,
+                searchable=False,
+                className="pd-rag-picker-dropdown",
+            ),
+        ],
+    )
+
+
+def _build_lgd_rag_lifecycle_diagram(
+    performance_rag: str,
+    chapter_2_summaries: list[dict],
+    post_subjective_rag: str,
+    pre_mitigation_rag: str,
+    post_mitigation_rag: str,
+    pending_edits: dict | None = None,
+) -> html.Div:
+    """Performance RAG + Subjective Review = Post Subjective Review -> Pre Mitigation -> Post Mitigation."""
+    pending_edits = pending_edits or {}
+    effective = {
+        field: pending_edits.get(field) or file_value
+        for field, file_value in (
+            ("post_subjective", post_subjective_rag),
+            ("pre_mitigation", pre_mitigation_rag),
+            ("post_mitigation", post_mitigation_rag),
+        )
+    }
+    return html.Div(
+        className="pd-rag-lifecycle",
+        children=[
+            _build_lgd_rag_lifecycle_card(
+                "Chapter 1", "Performance RAG", performance_rag, "performance",
+                href="#lgd-rag-assignment",
+            ),
+            _build_lgd_rag_lifecycle_merge_badge("+"),
+            _build_lgd_rag_lifecycle_card(
+                "Chapter 2", "Subjective Review", None, "subjective_review",
+                extra_class="pd-rag-lifecycle-card-list",
+                body=_build_lgd_rag_lifecycle_metric_list(chapter_2_summaries),
+                href="#lgd-post-subjective-overview",
+            ),
+            _build_lgd_rag_lifecycle_merge_badge("="),
+            _build_lgd_rag_lifecycle_card(
+                "Model RAG", "Post Subjective Review RAG", effective["post_subjective"], "post_subjective",
+                extra_class="pd-rag-lifecycle-card-highlight",
+                body=_build_lgd_review_flow_picker("post_subjective", effective["post_subjective"]),
+            ),
+            _build_lgd_rag_lifecycle_connector(),
+            _build_lgd_rag_lifecycle_card(
+                "Pre-Overlay RAG", "Pre Mitigation RAG", effective["pre_mitigation"], "pre_mitigation",
+                body=_build_lgd_review_flow_picker("pre_mitigation", effective["pre_mitigation"]),
+            ),
+            _build_lgd_rag_lifecycle_connector(),
+            _build_lgd_rag_lifecycle_card(
+                "Post-Overlay RAG", "Post Mitigation RAG", effective["post_mitigation"], "post_mitigation",
+                body=_build_lgd_review_flow_picker("post_mitigation", effective["post_mitigation"]),
+            ),
+        ],
+    )
+
+
+def build_lgd_review_flow_save_bar(
+    pending_edits: dict,
+    current_values: dict,
+    save_status: str | None,
+    commentary_changed: bool = False,
+) -> html.Div | None:
+    """Diff summary + Save button for staged RAG edits and/or reviewer commentary, plus the last save status."""
+    changed = {
+        field: value for field, value in (pending_edits or {}).items()
+        if value in ("Green", "Amber", "Red") and value != current_values.get(field)
+    }
+    children = []
+    if changed or commentary_changed:
+        items = [
+            html.Li([
+                html.Strong(LGD_REVIEW_FLOW_FIELD_LABELS.get(field, field)),
+                f": {current_values.get(field, 'N/A')} → {value}",
+            ])
+            for field, value in changed.items()
+        ]
+        if commentary_changed:
+            items.append(html.Li([html.Strong("Reviewer sign-off commentary"), ": will be updated"]))
+        children.extend([
+            html.Div("Unsaved changes to the portfolio file", className="pd-review-flow-save-title"),
+            html.Ul(items, className="pd-review-flow-save-list"),
+            html.Button(
+                "Save to portfolio.xlsx", id=LGD_REVIEW_FLOW_SAVE_ID, type="button", n_clicks=0,
+                className="pd-review-flow-save-button",
+            ),
+        ])
+    if save_status:
+        children.append(html.Div(save_status, className="pd-review-flow-save-status"))
+    if not children:
+        return None
+    return html.Div(className="pd-review-flow-save-bar", children=children)
+
+
+def _build_lgd_conclusions_signoff_chip(post_mitigation_rag: str) -> html.Div:
+    """Read-only Post Mitigation RAG readout (from the portfolio file) alongside the sign-off notes."""
+    if post_mitigation_rag in ("Green", "Amber", "Red"):
+        tone = _lgd_rag_tone(post_mitigation_rag)
+        label = ["Post Mitigation RAG: ", html.Strong(post_mitigation_rag)]
+    else:
+        tone = "neutral"
+        label = "Post Mitigation RAG is not available in the portfolio file for this scope."
+    return html.Div(
+        className=f"pd-conclusions-signoff-chip pd-conclusions-signoff-chip-{tone}",
+        children=[pd_rag_dot(post_mitigation_rag or "N/A"), html.Span(label)],
+    )
+
+
+def _build_lgd_collapsible_card(card_id: str, title: str, subtitle: str, body: list, extra_class: str = "") -> html.Details:
+    """A section-card that folds via native ``<details>``/``<summary>`` (no callbacks)."""
+    return html.Details(
+        id=card_id,
+        className=f"section-card pd-collapsible-card {extra_class}".strip(),
+        open=False,
+        children=[
+            html.Summary(
+                className="pd-collapsible-summary",
+                children=[
+                    html.Span(
+                        className="pd-collapsible-summary-copy",
+                        children=[
+                            html.Span(title, className="section-title"),
+                            html.Span(subtitle, className="pd-section-subtitle"),
+                        ],
+                    ),
+                    html.Span("▾", className="pd-collapsible-chevron", **{"aria-hidden": "true"}),
+                ],
+            ),
+            *body,
+        ],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Required Actions panel (governance playbook, driven by the review-flow RAGs)
+# ---------------------------------------------------------------------------
+
+_LGD_ACTION_STAGE_KICKERS = {
+    "Pre Mitigation": "Pre mitigation playbook",
+    "Post Mitigation": "Post mitigation playbook",
+}
+
+
+def _lgd_action_empty_hint(selection: dict) -> str:
+    labels = [LGD_REVIEW_FLOW_FIELD_LABELS.get(field, field) for field, _ in selection["drivers"]]
+    named = " or ".join(labels) if labels else "review-flow RAG"
+    return f"Set the {named} above to surface its required action."
+
+
+def _build_lgd_action_governance_pill(label: str, value: str) -> html.Span:
+    required = str(value or "").strip().lower() == "yes"
+    return html.Span(
+        className=f"pd-action-gov-pill{' pd-action-gov-pill-required' if required else ''}",
+        children=[html.Span(label), html.Strong("Yes" if required else "No")],
+    )
+
+
+def _build_lgd_action_driver_chips(selection: dict, pending_fields: set[str]) -> html.Div:
+    chips = []
+    for field, rag in selection["drivers"]:
+        label = LGD_REVIEW_FLOW_FIELD_LABELS.get(field, field)
+        chip_children = [pd_rag_dot(rag), html.Span(f"{label}: "), html.Strong(rag)]
+        if field in pending_fields:
+            chip_children.append(html.Span("unsaved", className="pd-action-driver-chip-unsaved"))
+        chips.append(html.Span(chip_children, className="pd-action-driver-chip"))
+    return html.Div(
+        className="pd-action-driver-row",
+        children=[html.Span("Driven by", className="pd-action-driver-label"), *chips],
+    )
+
+
+def _build_lgd_action_card(selection: dict, pending_fields: set[str]) -> html.Article:
+    stage = selection["stage"]
+    kicker = _LGD_ACTION_STAGE_KICKERS.get(stage, stage)
+    action = selection.get("action")
+
+    if not action:
+        return html.Article(
+            className="pd-test-card pd-test-neutral pd-action-card pd-action-card-empty",
+            children=[
+                html.Div(
+                    className="pd-test-card-heading",
+                    children=[html.Div([
+                        html.Span(kicker),
+                        html.Div([html.H4(f"{stage} action")], className="pd-card-title-row"),
+                    ])],
+                ),
+                _build_lgd_action_driver_chips(selection, pending_fields),
+                html.Div("No action defined", className="pd-test-value"),
+                html.Div(_lgd_action_empty_hint(selection), className="pd-test-meta"),
+            ],
+        )
+
+    tone = _lgd_rag_tone(selection["rag"])
+    detail_blocks = [
+        html.Div(
+            className="pd-action-detail pd-action-detail-primary",
+            children=[html.Span("Required action"), html.P(action["required_action"])],
+        ),
+    ]
+    if action.get("additional_requirements"):
+        detail_blocks.append(
+            html.Div(
+                className="pd-action-detail",
+                children=[html.Span("Additional requirements"), html.P(action["additional_requirements"])],
+            )
+        )
+    if action.get("escalation"):
+        detail_blocks.append(
+            html.Div(
+                className="pd-action-detail",
+                children=[html.Span("Escalation / discussion"), html.P(action["escalation"])],
+            )
+        )
+
+    children = [
+        html.Div(
+            className="pd-test-card-heading",
+            children=[
+                html.Div([
+                    html.Span(kicker),
+                    html.Div([html.H4(action.get("trigger") or f"{stage} action")], className="pd-card-title-row"),
+                ]),
+                html.Span(
+                    [pd_rag_dot(selection["rag"]), html.Strong(selection["rag"])],
+                    className="pd-action-card-rag",
+                ),
+            ],
+        ),
+    ]
+    if selection.get("persistent_breach"):
+        children.append(
+            html.Div(
+                "Persistent breach — two consecutive Red quarters",
+                className="pd-action-breach-ribbon",
+            )
+        )
+    children.extend([
+        _build_lgd_action_driver_chips(selection, pending_fields),
+        html.Div(action.get("description", ""), className="pd-action-description"),
+        *detail_blocks,
+        html.Div(
+            className="pd-action-gov-row",
+            children=[
+                _build_lgd_action_governance_pill("Sponsor approval", action.get("sponsor_approval")),
+                _build_lgd_action_governance_pill("Deep dive", action.get("deep_dive")),
+                _build_lgd_action_governance_pill("Redevelopment", action.get("redevelopment")),
+            ],
+        ),
+        html.Div(
+            " · ".join(
+                part for part in (
+                    f"Owner: {action.get('owner')}" if action.get("owner") else "",
+                    f"Due in: {action.get('due_in_report')}" if action.get("due_in_report") else "",
+                ) if part
+            ),
+            className="pd-test-footnote",
+        ),
+    ])
+    return html.Article(
+        className=f"pd-test-card pd-test-{tone} pd-action-card"
+                  f"{' pd-action-card-breach' if selection.get('persistent_breach') else ''}",
+        children=children,
+    )
+
+
+def _build_lgd_required_actions_panel(
+    monitoring_actions: list[dict],
+    effective_rags: dict[str, str],
+    previous_post_mitigation_rag: str,
+    pending_fields: set[str],
+) -> html.Div | None:
+    """Governance playbook actions for the effective review-flow RAGs."""
+    if not monitoring_actions:
+        return None
+    selections = select_pd_monitoring_actions(monitoring_actions, effective_rags, previous_post_mitigation_rag)
+
+    return _build_lgd_collapsible_card(
+        "lgd-conclusions-action-plan",
+        "Required actions",
+        "Governance playbook actions matched to the review-flow RAGs above. Changing a RAG — even before "
+        "saving — updates these actions immediately.",
+        [
+            html.Div(
+                className="pd-action-plan-grid",
+                children=[_build_lgd_action_card(selection, pending_fields) for selection in selections],
+            ),
+            html.Div(
+                "Source: statpy_monitoring_thresholds.xlsx · monitoring_actions. Each action keys off the review-flow RAG named in "
+                "its Trigger column; two consecutive Red Post Mitigation quarters escalate to the persistent-breach "
+                "protocol.",
+                className="pd-test-footnote",
+            ),
+        ],
+        extra_class="pd-action-plan-card",
+    )
+
+
+def _build_lgd_conclusions_verdict_section(
+    chapter_1_rag: str,
+    chapter_2_summaries: list[dict],
+    review_flow_rags: dict[str, str],
+    conclusions_notes: str | None = None,
+    pending_edits: dict | None = None,
+    review_flow_save_status: str | None = None,
+    saved_commentary: str = "",
+    monitoring_actions: list[dict] | None = None,
+    previous_post_mitigation_rag: str = "",
+) -> html.Section:
+    lifecycle_diagram = _build_lgd_rag_lifecycle_diagram(
+        chapter_1_rag, chapter_2_summaries,
+        review_flow_rags["post_subjective"], review_flow_rags["pre_mitigation"], review_flow_rags["post_mitigation"],
+        pending_edits=pending_edits,
+    )
+    effective_rags = {
+        field: (pending_edits or {}).get(field) or review_flow_rags[field]
+        for field in ("post_subjective", "pre_mitigation", "post_mitigation")
+    }
+    pending_fields = {
+        field for field, value in (pending_edits or {}).items()
+        if value in ("Green", "Amber", "Red") and value != review_flow_rags.get(field)
+    }
+    actions_panel = _build_lgd_required_actions_panel(
+        monitoring_actions or [], effective_rags, previous_post_mitigation_rag, pending_fields,
+    )
+    commentary_changed = (conclusions_notes or "") != (saved_commentary or "")
+    save_bar = build_lgd_review_flow_save_bar(
+        pending_edits or {}, review_flow_rags, review_flow_save_status, commentary_changed,
+    )
+
+    reviewer_signoff = _build_lgd_collapsible_card(
+        "lgd-conclusions-reviewer",
+        "Reviewer sign-off",
+        "Record the reviewer's conclusions, caveats, or rationale for the Post Mitigation RAG shown above.",
+        [
+            _build_lgd_conclusions_signoff_chip(review_flow_rags["post_mitigation"]),
+            dcc.Textarea(
+                id=CONCLUSIONS_NOTES_ID,
+                value=conclusions_notes or "",
+                placeholder="Record conclusions, caveats, or a sign-off note for this monitoring cycle...",
+                className="pd-conclusions-textarea",
+            ),
+            html.Div(
+                "Saved to portfolio.xlsx via the Save button above once edited.",
+                className="pd-test-footnote",
+            ),
+        ],
+        extra_class="pd-conclusions-notes-card",
+    )
+
+    return html.Section(
+        id="lgd-conclusions-verdict",
+        className="pd-content-section pd-live-section",
+        children=[
+            build_pd_section_heading(
+                "3.1 Conclusion", "Conclusion",
+                "Synthesizes Chapter 1 (RAG Assignment) and Chapter 2 (Post Subjective Review Analysis) into a "
+                "single model verdict, plus the reviewer's own sign-off, for the current scope.",
+                "N/A", options={"show_rag": False},
+            ),
+            lifecycle_diagram,
+            *([actions_panel] if actions_panel is not None else []),
+            reviewer_signoff,
+            html.Div(
+                id=LGD_REVIEW_FLOW_SAVE_BAR_ID,
+                children=[save_bar] if save_bar is not None else [],
+            ),
+        ],
+    )
+
+
 def render_lgd_performance_content(
     data: dict,
     selected_model: str | None,
@@ -668,6 +1518,9 @@ def render_lgd_performance_content(
     scenario: str = "intsevere",
     scenario_ranking_store: dict | None = None,
     theme_value: str | None = None,
+    conclusions_notes: str | None = None,
+    review_flow_pending_edits: dict | None = None,
+    review_flow_save_status: str | None = None,
 ) -> list:
     model_options = get_lgd_model_options(data)
     if (not selected_model or selected_model == "all") and (selected_segment in (None, "", "All", "all")):
@@ -969,9 +1822,14 @@ def render_lgd_performance_content(
     )
 
     level, entity = resolve_entity(selected_model, selected_segment)
+    chapter_2_summaries = compute_post_subjective_summaries(
+        _POST_SUBJECTIVE, data, level, entity, reporting_cycle, scenario, monitoring_point,
+        summary, thresholds, selected_model, selected_segment, scenario_ranking_store,
+    )
     post_subjective_overview = build_overview_section(
         _POST_SUBJECTIVE, data, level, entity, reporting_cycle, scenario, monitoring_point,
         summary, thresholds, selected_model, selected_segment, scenario_ranking_store,
+        summaries=chapter_2_summaries,
     )
     psi_section = build_psi_section(
         _POST_SUBJECTIVE,
@@ -994,6 +1852,53 @@ def render_lgd_performance_content(
         children=[post_subjective_overview, psi_section, scenario_ranking_section, sensitivity_section, mev_range_section],
     )
 
+    chapter_1_summaries = [
+        {
+            "name": "Calibration Conservatism",
+            "rag": summary["calibration_rag"],
+            "takeaway": "Combines mean error and RMSE against realized LGD.",
+        },
+        {
+            "name": "Discriminatory Power",
+            "rag": summary["discrimination_rag"],
+            "takeaway": "Reflects Kendall's Tau rank-ordering strength.",
+        },
+    ]
+    dashboard_overview = _build_lgd_main_overview(
+        summary["performance_rag"], chapter_1_summaries, chapter_2_summaries,
+    )
+
+    chapter_3 = html.Section(
+        id="lgd-conclusions",
+        className="pd-content-section pd-chapter-section",
+        children=[
+            build_pd_chapter_heading(
+                "3.",
+                "Conclusions",
+                "Synthesizes both chapters into a final model verdict and recommendation, plus a place for the "
+                "reviewer to record their own conclusions and sign-off for this monitoring cycle.",
+                options={"note": f"Monitoring point {monitoring_point}"},
+            ),
+        ],
+    )
+    review_flow_rags = lgd_review_flow_rags(selected_model, selected_segment, monitoring_point)
+    saved_commentary = lgd_reviewer_commentary(selected_model, selected_segment, monitoring_point)
+    previous_monitoring_point = get_previous_lgd_quarter(data, selected_model, selected_segment, monitoring_point)
+    previous_review_flow_rags = lgd_review_flow_rags(selected_model, selected_segment, previous_monitoring_point)
+    section_3_1 = _build_lgd_conclusions_verdict_section(
+        summary["performance_rag"], chapter_2_summaries, review_flow_rags,
+        conclusions_notes=conclusions_notes if conclusions_notes else saved_commentary,
+        pending_edits=review_flow_pending_edits,
+        review_flow_save_status=review_flow_save_status,
+        saved_commentary=saved_commentary,
+        monitoring_actions=data.get("monitoring_actions") or [],
+        previous_post_mitigation_rag=previous_review_flow_rags["post_mitigation"],
+    )
+    chapter_3_body = html.Div(
+        className="pd-chapter-body pd-chapter-body-conclusions",
+        children=[section_3_1],
+    )
+
     executive_summary = build_executive_summary(
         "The LGD Performance dashboard is the monitoring view for Loss Given Default (LGD) models across the "
         "wholesale portfolio. It tracks each model's calibration and discriminatory power against agreed RAG "
@@ -1003,7 +1908,12 @@ def render_lgd_performance_content(
         theme,
     )
 
-    return [executive_summary, chapter_1, chapter_1_body, chapter_2, chapter_2_body]
+    return [
+        executive_summary, dashboard_overview,
+        chapter_1, chapter_1_body,
+        chapter_2, chapter_2_body,
+        chapter_3, chapter_3_body,
+    ]
 
 
 def _build_lgd_apply_button() -> html.Div:
@@ -1063,6 +1973,9 @@ def page_layout(data: dict) -> list:
         dcc.Store(id=RANGE_STORE_ID, data={}),
         dcc.Store(id=SCENARIO_RANKING_STORE_ID, data={}),
         dcc.Store(id=APPLIED_FILTERS_STORE_ID),
+        dcc.Store(id=CONCLUSIONS_NOTES_STORE_ID, storage_type="session", data=""),
+        dcc.Store(id=LGD_REVIEW_FLOW_PENDING_STORE_ID, data={}),
+        dcc.Store(id=LGD_REVIEW_FLOW_STATUS_STORE_ID, data=""),
         html.Div(
             className="top-bar",
             children=[

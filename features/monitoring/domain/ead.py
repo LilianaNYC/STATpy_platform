@@ -51,6 +51,11 @@ def _ead_store_key(selected_model, selected_segment) -> tuple[str, str]:
     return "model", ""
 
 
+def ead_store_key(selected_model, selected_segment) -> tuple[str, str]:
+    """Public wrapper for :func:`_ead_store_key`, for callers outside this module."""
+    return _ead_store_key(selected_model, selected_segment)
+
+
 def _ead_store_rows(selected_model, selected_segment) -> list[dict] | None:
     if _EAD_STORE is None:
         return None
@@ -250,6 +255,24 @@ def get_ead_periods(data: dict, selected_model: str | None, selected_segment: st
 def get_ead_monitoring_point_options(data: dict, selected_model: str | None, selected_segment: str | None = "All") -> list[str]:
     periods = get_ead_periods(data, selected_model, selected_segment)
     return ["Latest", *reversed(periods)]
+
+
+def get_previous_ead_quarter(data: dict, selected_model: str | None, selected_segment: str | None, quarter: str) -> str:
+    """The monitoring period immediately before ``quarter``, or "" if there isn't one."""
+    periods = get_ead_periods(data, selected_model, selected_segment)
+    if quarter not in periods:
+        return ""
+    index = periods.index(quarter)
+    return periods[index - 1] if index > 0 else ""
+
+
+def ead_metrics_row_for_quarter(selected_model: str | None, selected_segment: str | None, quarter: str) -> dict[str, Any]:
+    """The precomputed EAD metric row for a specific monitoring period, or ``{}`` if none is loaded."""
+    rows = _ead_store_rows(selected_model, selected_segment) or []
+    for row in rows:
+        if str(row.get("Monitoring Period", "")) == str(quarter):
+            return row
+    return {}
 
 
 def resolve_ead_monitoring_point(

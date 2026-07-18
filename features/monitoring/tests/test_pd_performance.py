@@ -129,6 +129,35 @@ def test_apply_filters_clears_the_reviewer_signoff_draft(monkeypatch):
     )
 
 
+def test_navigating_to_pd_discards_unsaved_staged_state(monkeypatch):
+    """Entering the PD page (path "/") clears staged RAG picks, the draft sign-off,
+    and any stale save-status, so a page leave never leaves an unsaved edit behind.
+    Navigating elsewhere leaves the stores untouched."""
+    from dash import no_update
+
+    import STATpy_platform.features.monitoring.callbacks.pd_performance as cb
+
+    captured: dict = {}
+
+    class StubApp:
+        def callback(self, *args, **kwargs):
+            def decorator(fn):
+                captured[fn.__name__] = fn
+                return fn
+
+            return decorator
+
+    monkeypatch.setattr(cb, "already_registered", lambda app, key: False)
+    cb.register_callbacks(StubApp())
+
+    discard_fn = captured["discard_pd_staged_state_on_entry"]
+    # Entering the PD page resets the three staged stores.
+    assert discard_fn("/") == ({}, "", "")
+    # Any other page leaves them alone.
+    assert discard_fn("/overview") == (no_update, no_update, no_update)
+    assert discard_fn("/lgd-performance") == (no_update, no_update, no_update)
+
+
 def test_pd_performance_build_stores():
     stores = page.build_stores()
     assert {store.id for store in stores} == {

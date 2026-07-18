@@ -388,6 +388,7 @@ _OPTIONAL_REVIEW_TEXT_COLUMNS = (
     "rag_post_sr",
     "rag_pre_mitig",
     "rag_post_mitig",
+    "reviewer_commentary",
 )
 
 
@@ -563,16 +564,20 @@ _MONITORING_ACTIONS_COLUMN_MAP = {
 
 
 def load_monitoring_actions() -> list[dict[str, Any]]:
-    """Load the governance action playbook from ``monitoring.xlsx``.
+    """Load the governance action playbook from the ``monitoring_actions`` sheet
+    of the monitoring-thresholds workbook.
 
     One row per ``(Stage, Trigger, RAG)``; blank cells become empty strings so
     the domain/UI layers never see NaN. Missing file or sheet -> ``[]`` (the
     Conclusion section then simply renders without a Required Actions panel).
     """
     try:
-        df = pd.read_excel(settings.monitoring_actions_file, sheet_name=MONITORING_ACTIONS_SHEET_NAME)
+        df = pd.read_excel(settings.monitoring_thresholds_file, sheet_name=MONITORING_ACTIONS_SHEET_NAME)
     except (FileNotFoundError, ValueError, KeyError):
-        log.warning("Monitoring actions file %s not readable; playbook disabled", settings.monitoring_actions_file)
+        log.warning(
+            "Monitoring actions sheet '%s' not readable in %s; playbook disabled",
+            MONITORING_ACTIONS_SHEET_NAME, settings.monitoring_thresholds_file,
+        )
         return []
 
     df = df.dropna(how="all")
@@ -617,6 +622,7 @@ _PD_METRIC_COLUMNS = (
     "rating_migration_index",
     "ead",
     "ead_share",
+    "total_defaults",
     "default_count_1y",
 )
 
@@ -659,6 +665,13 @@ def _build_metrics_store(cycle_df: pd.DataFrame) -> dict:
         if not quarter or not level or not value:
             continue
         metrics = {col: _num(row.get(col)) for col in _PD_METRIC_COLUMNS if col in cycle_df.columns}
+        total_defaults = metrics.get("total_defaults")
+        legacy_default_count_1y = metrics.get("default_count_1y")
+        if total_defaults is None and legacy_default_count_1y is not None:
+            total_defaults = legacy_default_count_1y
+            metrics["total_defaults"] = legacy_default_count_1y
+        if horizon == "1y" and metrics.get("default_count_1y") is None and total_defaults is not None:
+            metrics["default_count_1y"] = total_defaults
         metrics.update({
             col: str(row.get(col)).strip()
             for col in _PD_TEXT_COLUMNS
@@ -682,28 +695,45 @@ def _build_metrics_store(cycle_df: pd.DataFrame) -> dict:
     return store
 
 
-def update_pd_review_flow_rag(
+_LGD_TEXT_COLUMNS = (
+    "rag_post_sr",
+    "rag_pre_mitig",
+    "rag_post_mitig",
+    "reviewer_commentary",
+)
+
+_EAD_TEXT_COLUMNS = (
+    "rag_post_sr",
+    "rag_pre_mitig",
+    "rag_post_mitig",
+    "reviewer_commentary",
+)
+
+
+def _update_review_flow_field(
+    sheet_name: str,
+    valid_fields: tuple[str, ...],
     reporting_cycle: str, level: str, model_or_segment: str, quarter: str, field: str, new_value: str,
 ) -> int:
-    """Write ``new_value`` for ``field`` into the portfolio file, in place.
+    """Write ``new_value`` for ``field`` into ``sheet_name`` of the portfolio file, in place.
 
-    ``field`` is one of ``rag_post_sr`` / ``rag_pre_mitig`` / ``rag_post_mitig`` / ``reviewer_commentary``.
-    Every horizon row (blank/1y/2y/nco_1y) for a given ``(reporting_cycle, level, model_or_segment,
-    quarter)`` carries the same value in this sheet (see :func:`_build_metrics_store`), so all matching
-    rows are updated together to keep the file internally consistent. Returns the number of rows
-    written; 0 means no matching rows were found (nothing was written, so the file is untouched).
+    Shared by :func:`update_pd_review_flow_rag` and :func:`update_lgd_review_flow_rag`. Every row for a
+    given ``(reporting_cycle, level, model_or_segment, quarter)`` carries the same value in these sheets
+    (PD duplicates it across horizon rows; LGD has exactly one row per key), so all matching rows are
+    updated together to keep the file internally consistent. Returns the number of rows written; 0 means
+    no matching rows were found (nothing was written, so the file is untouched).
     """
-    if field not in _PD_TEXT_COLUMNS:
-        raise ValueError(f"Unknown PD review-flow RAG field: {field!r}")
+    if field not in valid_fields:
+        raise ValueError(f"Unknown review-flow RAG field: {field!r}")
 
     workbook = openpyxl.load_workbook(settings.portfolio_file)
-    sheet = workbook[PD_AGGREGATED_SHEET_NAME]
+    sheet = workbook[sheet_name]
 
     header_row = next(sheet.iter_rows(min_row=1, max_row=1))
     col_index = {cell.value: cell.column for cell in header_row if cell.value}
     base_columns = ("reporting_cycle", "quarter", "level", "model_or_segment")
     if any(name not in col_index for name in base_columns):
-        log.warning("PD_Performance_Metrics is missing a required column for the RAG write-back; skipped.")
+        log.warning("%s is missing a required column for the RAG write-back; skipped.", sheet_name)
         return 0
 
     if field not in col_index:
@@ -712,7 +742,7 @@ def update_pd_review_flow_rag(
         new_col = sheet.max_column + 1
         sheet.cell(row=1, column=new_col, value=field)
         col_index[field] = new_col
-        log.info("Added missing column %r to %s in %s", field, PD_AGGREGATED_SHEET_NAME, settings.portfolio_file)
+        log.info("Added missing column %r to %s in %s", field, sheet_name, settings.portfolio_file)
 
     def _cell_text(row, name: str) -> str:
         value = row[col_index[name] - 1].value
@@ -732,10 +762,49 @@ def update_pd_review_flow_rag(
     if updated:
         workbook.save(settings.portfolio_file)
         log.info(
-            "Updated %s to %r for %s %s %s %s (%d row(s)) in %s",
-            field, new_value, reporting_cycle, level, model_or_segment, quarter, updated, settings.portfolio_file,
+            "Updated %s to %r for %s %s %s %s (%d row(s)) in %s [%s]",
+            field, new_value, reporting_cycle, level, model_or_segment, quarter, updated, settings.portfolio_file, sheet_name,
         )
     return updated
+
+
+def update_pd_review_flow_rag(
+    reporting_cycle: str, level: str, model_or_segment: str, quarter: str, field: str, new_value: str,
+) -> int:
+    """Write ``new_value`` for ``field`` into the ``PD_Performance_Metrics`` sheet, in place.
+
+    ``field`` is one of ``rag_post_sr`` / ``rag_pre_mitig`` / ``rag_post_mitig`` / ``reviewer_commentary``.
+    """
+    return _update_review_flow_field(
+        PD_AGGREGATED_SHEET_NAME, _PD_TEXT_COLUMNS,
+        reporting_cycle, level, model_or_segment, quarter, field, new_value,
+    )
+
+
+def update_lgd_review_flow_rag(
+    reporting_cycle: str, level: str, model_or_segment: str, quarter: str, field: str, new_value: str,
+) -> int:
+    """Write ``new_value`` for ``field`` into the ``LGD_Performance_Metrics`` sheet, in place.
+
+    ``field`` is one of ``rag_post_sr`` / ``rag_pre_mitig`` / ``rag_post_mitig`` / ``reviewer_commentary``.
+    """
+    return _update_review_flow_field(
+        LGD_AGGREGATED_SHEET_NAME, _LGD_TEXT_COLUMNS,
+        reporting_cycle, level, model_or_segment, quarter, field, new_value,
+    )
+
+
+def update_ead_review_flow_rag(
+    reporting_cycle: str, level: str, model_or_segment: str, quarter: str, field: str, new_value: str,
+) -> int:
+    """Write ``new_value`` for ``field`` into the ``EAD_Performance_Metrics`` sheet, in place.
+
+    ``field`` is one of ``rag_post_sr`` / ``rag_pre_mitig`` / ``rag_post_mitig`` / ``reviewer_commentary``.
+    """
+    return _update_review_flow_field(
+        EAD_AGGREGATED_SHEET_NAME, _EAD_TEXT_COLUMNS,
+        reporting_cycle, level, model_or_segment, quarter, field, new_value,
+    )
 
 
 def load_pd_performance_data_from_aggregated() -> dict[str, Any]:
