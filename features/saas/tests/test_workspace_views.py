@@ -273,13 +273,12 @@ def test_build_model_panel_defaults_family_picker_to_all(monkeypatch):
     trigger = _find_component_by_id(panel, {"type": page.MODEL_CHART_TRIGGER_TYPE, "model": "Model A"})
     assert trigger is not None
 
-    # The summary shows the segment; the Model Name (its GMIS name) is in the
-    # info-chip tooltip, not the visible heading.
-    kicker = panel.children[0].children[0].children[0].children
-    heading_text, info_chip = kicker[0], kicker[1]
+    # The summary shows the segment, not the raw Model Name (its GMIS name);
+    # no tooltip is attached to the kicker.
+    kicker = panel.children[0].children[0].children[0]
+    heading_text = kicker.children
     assert heading_text.startswith("1. ")
     assert "Model A" not in heading_text
-    assert info_chip.title == "GMIS Name: Model A"
 
 
 def test_build_model_chart_cards_returns_empty_mev_card_without_figure_builder():
@@ -461,8 +460,7 @@ def test_build_model_group_card_nests_children_under_one_collapsible_parent():
     assert card.open is True
 
     texts = _text_nodes(card)
-    assert "PD Model D" in texts          # parent label rendered once
-    assert "1. Model" in texts            # numbered parent kicker
+    assert "1. PD Model D" in texts       # numbered kicker is the only heading, carries the Model Descriptive Name
     assert "2 models" in texts            # member count shown for multi-child parents
     assert "Region: US" in texts          # shared attribute rolled up into the header
 

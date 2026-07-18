@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from STATpy_platform.features.saas.services import reports
+import plotly.graph_objects as go
+
+from STATpy_platform.features.saas.services import exports, reports
 
 
 def test_run_for_filename_prefix_sanitizes_selected_cycle(monkeypatch):
@@ -104,3 +106,75 @@ def test_build_model_report_sections_uses_default_panel_selection(monkeypatch):
 
     assert sections == [("Model A — MEV A", {"selected_mevs": ["MEV A"]})]
     assert calls[0][4] == ["baseline"]
+
+
+def test_build_saas_report_html_group_kicker_carries_descriptive_name_no_gmis_name():
+    """Mirrors the workspace UI: the group kicker is "N. <Model Descriptive Name>"
+    with no separate heading duplicating it, and a child model's section no longer
+    surfaces the raw GMIS Model Name (see components.build_model_group_card /
+    build_model_panel, which dropped the redundant H4 and the GMIS-name tooltip).
+    The report's "Model structure" coverage-tree page (Region -> Portfolio ->
+    Model Group -> parent -> segment) drops the raw Model Name too."""
+    groups = [
+        {
+            "parent_label": "PD Model A",
+            "shared_attributes": ["Region: US"],
+            "models": [
+                {
+                    "model_name": "PD_MODEL_A_001",
+                    "segment_label": "Cyclical",
+                    "attributes": [],
+                    "figures": [],
+                },
+            ],
+        },
+    ]
+
+    html = exports.build_saas_report_html(groups, [])
+
+    # Nowhere in the report -- neither the coverage tree nor the per-model
+    # chart section -- should the raw GMIS Model Name appear.
+    assert "PD_MODEL_A_001" not in html
+    assert "saas-report-tree-gmis" not in html
+    assert "Cyclical" in html  # the segment is still shown, just not the GMIS name
+
+    group_section = html[html.index('<section class="saas-report-group"') :]
+    assert "1. PD Model A" in group_section
+    assert "<h2>" not in group_section
+    assert "saas-report-gmis" not in group_section
+    assert "Cyclical" in html
+
+
+def test_build_saas_report_html_toc_counts_segments_not_models():
+    """The Contents entry counts distinct segments, not raw models -- with the
+    GMIS Model Name no longer shown, "N models" was an opaque, untraceable
+    count; "N segments" matches what a reader can actually see and verify."""
+    groups = [
+        {
+            # Two Model Names (PD_model_d / PD_model_e) sharing one Descriptive
+            # Name, each with its own single segment -> 2 distinct segments.
+            "parent_label": "PD Model D",
+            "shared_attributes": [],
+            "models": [
+                {"model_name": "PD_model_d", "segment_label": "Cyclical", "attributes": [], "figures": [("t", go.Figure())]},
+                {"model_name": "PD_model_e", "segment_label": "Defensive", "attributes": [], "figures": [("t", go.Figure())]},
+            ],
+        },
+        {
+            # A single model spanning two segments -> still 2 distinct segments,
+            # even though there is only one model dict.
+            "parent_label": "EAD Model A",
+            "shared_attributes": [],
+            "models": [
+                {"model_name": "EAD_model_a", "segment_label": "Cyclical, Defensive", "attributes": [], "figures": []},
+            ],
+        },
+    ]
+
+    html = exports.build_saas_report_html(groups, [])
+    toc = html[html.index('<nav class="saas-report-toc">') : html.index("</nav>")]
+
+    assert "2 segments &middot; 2 charts" in toc
+    assert "2 segments &middot; 0 charts" in toc
+    assert "1 model" not in toc
+    assert "2 model" not in toc

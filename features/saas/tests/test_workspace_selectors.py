@@ -126,6 +126,49 @@ def test_group_effective_models_orders_parents_by_model_group(monkeypatch):
     ]
 
 
+def test_model_scope_summary_counts_distinct_descriptive_names_not_all(monkeypatch):
+    # Two Model Names share a Descriptive Name, one more model exists in scope
+    # under a *different* name but is not selected -- 2 distinct Descriptive
+    # Names are in scope, and it is not "All" since a third is reachable.
+    monkeypatch.setattr(
+        selectors,
+        "effective_model_names",
+        lambda *args, **kwargs: ["PD_model_d", "PD_model_e"],
+    )
+    monkeypatch.setattr(
+        selectors,
+        "model_names_for_filters",
+        lambda *args, **kwargs: ["PD_model_d", "PD_model_e", "PD_model_a"],
+    )
+    labels = {"PD_model_d": "PD Model D", "PD_model_e": "PD Model D", "PD_model_a": "PD Model A"}
+    monkeypatch.setattr(selectors, "model_descriptive_label", lambda name: labels[name])
+
+    count, is_all = selectors.model_scope_summary(None, ["PD Model D"])
+
+    assert count == 1
+    assert is_all is False
+
+
+def test_model_scope_summary_detects_all_reachable_models_selected(monkeypatch):
+    monkeypatch.setattr(
+        selectors,
+        "effective_model_names",
+        lambda *args, **kwargs: ["PD_model_d", "PD_model_a"],
+    )
+    monkeypatch.setattr(
+        selectors,
+        "model_names_for_filters",
+        lambda *args, **kwargs: ["PD_model_d", "PD_model_a"],
+    )
+    labels = {"PD_model_d": "PD Model D", "PD_model_a": "PD Model A"}
+    monkeypatch.setattr(selectors, "model_descriptive_label", lambda name: labels[name])
+
+    count, is_all = selectors.model_scope_summary(None, ["PD Model D", "PD Model A"])
+
+    assert count == 2
+    assert is_all is True
+
+
 def test_scenario_and_historical_stat_labels():
     assert selectors.format_scenario_label(selectors.DEFAULT_SCENARIO_FILTER) == "All"
     assert selectors.format_scenario_label("int_severe") == "Int Severe"

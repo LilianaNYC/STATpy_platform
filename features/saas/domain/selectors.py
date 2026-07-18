@@ -496,6 +496,29 @@ def effective_model_names(
     return []
 
 
+def model_scope_summary(
+    segment: str | None,
+    selected_models,
+    *,
+    region: str | None = None,
+    model_group: str | None = None,
+    portfolio: str | None = None,
+) -> tuple[int, bool]:
+    """Count of distinct Model Descriptive Names covered by the current
+    Specific-Models scope, and whether that scope reaches every Descriptive
+    Name available under the active Region/Portfolio/Model Group filters
+    (i.e. the export meta-line should read "All" rather than a count).
+    """
+    effective = effective_model_names(
+        segment, selected_models, region=region, model_group=model_group, portfolio=portfolio
+    )
+    reachable_model_names = model_names_for_filters(None, region=region, model_group=model_group, portfolio=portfolio)
+    all_descriptive_names = {model_descriptive_label(name) for name in reachable_model_names}
+    selected_descriptive_names = {model_descriptive_label(name) for name in effective}
+    is_all = bool(all_descriptive_names) and selected_descriptive_names == all_descriptive_names
+    return len(selected_descriptive_names), is_all
+
+
 def group_effective_models(
     segment: str | None,
     selected_models,
