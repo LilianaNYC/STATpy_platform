@@ -2232,9 +2232,22 @@ def build_saas_mev_time_series_figure(
             if str(row.get("Run For") or "").strip() == primary_run_for
         ]
     historical_reference_values = _saas_historical_values(min_max_reference_records)
+    visible_axis_dates = [value for value in all_axis_values if value is not None]
+    # A custom "visible date range" window on the chart can narrow the plotted
+    # data to a span that doesn't reach the cycle's actual jump-off date (e.g.
+    # a purely historical window years before projection starts). Drawing the
+    # marker/annotation there anyway forces Plotly to auto-range the axis out
+    # to that far-off, off-screen x position, squeezing all the real data (and
+    # its tick labels) into a sliver -- so only draw it when the jump-off date
+    # actually falls within what's currently plotted.
+    projection_start_in_view = (
+        projection_start_date is not None
+        and bool(visible_axis_dates)
+        and min(visible_axis_dates) <= projection_start_date <= max(visible_axis_dates)
+    )
     if (
         snapshot_period == "history_projection"
-        and projection_start_date is not None
+        and projection_start_in_view
         and not (reference_lines == "monitoring" and current_date and projection_start_date == current_date)
     ):
         projection_end_date = None
