@@ -178,3 +178,32 @@ def test_build_saas_report_html_toc_counts_segments_not_models():
     assert "2 segments &middot; 0 charts" in toc
     assert "1 model" not in toc
     assert "2 model" not in toc
+
+
+def test_build_saas_report_html_model_headings_are_numbered_group_dot_model():
+    """Each model section heading is "N.N. <segment>" -- matching the live
+    workspace's child-panel kicker numbering (e.g. "1.1. CYCLICAL") -- so a
+    reader can cross-reference a chart back to its position in the hierarchy."""
+    groups = [
+        {
+            "parent_label": "PD Model D",
+            "shared_attributes": [],
+            "models": [
+                {"model_name": "PD_model_d", "segment_label": "Cyclical", "attributes": [], "figures": []},
+                {"model_name": "PD_model_e", "segment_label": "Defensive", "attributes": [], "figures": []},
+            ],
+        },
+        {
+            "parent_label": "EAD Model A",
+            "shared_attributes": [],
+            "models": [
+                {"model_name": "EAD_model_a", "segment_label": "Cyclical", "attributes": [], "figures": []},
+            ],
+        },
+    ]
+
+    html = exports.build_saas_report_html(groups, [])
+
+    assert "<h3>1.1. Cyclical</h3>" in html
+    assert "<h3>1.2. Defensive</h3>" in html
+    assert "<h3>2.1. Cyclical</h3>" in html

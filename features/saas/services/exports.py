@@ -87,7 +87,7 @@ def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
         shared_html = f'<div class="saas-report-attrs">{shared}</div>' if shared else ""
 
         model_blocks: list[str] = []
-        for model in models:
+        for model_index, model in enumerate(models, start=1):
             segment_label = model.get("segment_label") or model.get("model_name") or ""
             extra = " &nbsp;&middot;&nbsp; ".join(
                 html_escape(line) for line in (model.get("attributes") or [])
@@ -135,7 +135,7 @@ def build_saas_report_html(groups: list[dict], meta_lines: list[str]) -> str:
             )
             model_blocks.append(
                 '<section class="saas-report-model">'
-                f'<h3>{html_escape(segment_label)}</h3>'
+                f'<h3>{group_index}.{model_index}. {html_escape(segment_label)}</h3>'
                 f"{extra_html}{charts_html}</section>"
             )
 
