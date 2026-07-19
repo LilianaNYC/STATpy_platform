@@ -39,6 +39,7 @@ _normalize_mev_label_mode = selectors.normalize_mev_label_mode
 _normalize_theme_value = selectors.normalize_theme_value
 _effective_model_names = selectors.effective_model_names
 _group_effective_models = selectors.group_effective_models
+_model_scope_summary = selectors.model_scope_summary
 _primary_run_for_value = selectors.primary_run_for_value
 _show_historical_statistics = selectors.show_historical_statistics
 _compute_saas_metrics = metrics.compute_saas_metrics
@@ -60,6 +61,22 @@ _scenario_toggle_label = views.scenario_toggle_label
 _single_selected_scenario = views.single_selected_scenario
 _mev_type_toggle_label = views.mev_type_toggle_label
 _mev_toggle_label = views.mev_toggle_label
+
+
+def _model_scope_label(segment, selected_models, effective_models, *, region=None, model_group=None, portfolio=None) -> str:
+    """The export "Segment:"/"Models:" meta-line. When Specific Models is the
+    active scope, this reports only whether that scope is "All" or a filtered
+    subset -- not a count, since the report's own "Models" stat tile and
+    Contents list already show how many and which ones.
+    """
+    if _is_segment_active(segment):
+        return f"Segment: {', '.join(layout.format_segment_label(v) for v in _active_segment_values(segment))}"
+    if not effective_models:
+        return "Models: None selected"
+    _, all_selected = _model_scope_summary(
+        segment, selected_models, region=region, model_group=model_group, portfolio=portfolio
+    )
+    return "Models: All" if all_selected else "Models: Custom selection"
 
 
 def _register_menu_callbacks(app) -> None:
@@ -630,12 +647,9 @@ def _register_export_callbacks(
         )
 
         effective_models = _effective_model_names(segment, selected_models, region=region, model_group=model_group, portfolio=portfolio)
-        if _is_segment_active(segment):
-            scope_label = f"Segment: {', '.join(layout.format_segment_label(v) for v in _active_segment_values(segment))}"
-        elif effective_models:
-            scope_label = f"Models: {', '.join(effective_models)}"
-        else:
-            scope_label = "Models: None selected"
+        scope_label = _model_scope_label(
+            segment, selected_models, effective_models, region=region, model_group=model_group, portfolio=portfolio
+        )
 
         meta_lines = [
             f"Model Use Case / Cycle: {_run_for_meta_label(run_for)}",
@@ -693,12 +707,9 @@ def _register_export_callbacks(
         scenario_label = SAAS_SCENARIO_LABEL_MAP.get(scenario_value, scenario_value.replace("_", " ").title() or "—")
         columns = exports.active_metric_columns(baseline_available, scenario_label, scenario_value)
         effective_models = _effective_model_names(segment, selected_models, region=region, model_group=model_group, portfolio=portfolio)
-        if _is_segment_active(segment):
-            scope_label = f"Segment: {', '.join(layout.format_segment_label(v) for v in _active_segment_values(segment))}"
-        elif effective_models:
-            scope_label = f"Models: {', '.join(effective_models)}"
-        else:
-            scope_label = "Models: None selected"
+        scope_label = _model_scope_label(
+            segment, selected_models, effective_models, region=region, model_group=model_group, portfolio=portfolio
+        )
 
         meta_lines = [
             f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
@@ -769,12 +780,9 @@ def _register_export_callbacks(
         primary = recon.get("primary")
         compare_cycles = recon.get("compare_cycles", [])
         effective_models = _effective_model_names(segment, selected_models, region=region, model_group=model_group, portfolio=portfolio)
-        if _is_segment_active(segment):
-            scope_label = f"Segment: {', '.join(layout.format_segment_label(v) for v in _active_segment_values(segment))}"
-        elif effective_models:
-            scope_label = f"Models: {', '.join(effective_models)}"
-        else:
-            scope_label = "Models: None selected"
+        scope_label = _model_scope_label(
+            segment, selected_models, effective_models, region=region, model_group=model_group, portfolio=portfolio
+        )
 
         meta_lines = [
             f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
@@ -851,12 +859,9 @@ def _register_export_callbacks(
         primary = comparison.get("primary")
         compare_cycles = comparison.get("compare_cycles", [])
         effective_models = _effective_model_names(segment, selected_models, region=region, model_group=model_group, portfolio=portfolio)
-        if _is_segment_active(segment):
-            scope_label = f"Segment: {', '.join(layout.format_segment_label(v) for v in _active_segment_values(segment))}"
-        elif effective_models:
-            scope_label = f"Models: {', '.join(effective_models)}"
-        else:
-            scope_label = "Models: None selected"
+        scope_label = _model_scope_label(
+            segment, selected_models, effective_models, region=region, model_group=model_group, portfolio=portfolio
+        )
 
         meta_lines = [
             f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",

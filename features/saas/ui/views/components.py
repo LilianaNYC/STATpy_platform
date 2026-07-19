@@ -972,8 +972,7 @@ def build_model_group_card(
     every child are rolled up into the header; the card is a native
     ``<details>`` so it can be collapsed, and the subnav opens it on navigation."""
     summary_children = [
-        html.Div(f"{group_index}. Model", className="pd-content-kicker"),
-        html.H4(parent_label),
+        html.Div(f"{group_index}. {parent_label}", className="pd-content-kicker"),
     ]
     if len(member_panels) > 1:
         summary_children.append(
@@ -1039,11 +1038,10 @@ def build_model_panel(
     default_model_mevs = [option["value"] for option in transformed_mev_options]
     date_periods = records.available_date_periods(visible_records)
     attribute_lines = model_attribute_lines(model_name, skip=suppress_attributes)
-    # The child summary shows the model's segment(s); the underlying Model Name
-    # (its GMIS name) moves into the info-chip tooltip.
+    # The child summary shows the model's segment(s), falling back to the raw
+    # Model Name (GMIS name) when the model has no segment.
     segment_labels = model_attributes(model_name).get("Segment", [])
     summary_heading = ", ".join(segment_labels) if segment_labels else model_name
-    gmis_tooltip = f"GMIS Name: {model_name}"
     # Charts are built lazily the first time this (collapsed-by-default) panel is
     # opened -- see the MODEL_CHART_TRIGGER_TYPE callback. Rendering every model's
     # charts up front draws dozens of hidden Plotly figures at once and freezes
@@ -1070,16 +1068,7 @@ def build_model_panel(
                         className="pd-mev-model-copy",
                         children=[
                             html.Div(
-                                [
-                                    f"{panel_index}. {summary_heading}",
-                                    html.Span(
-                                        "i",
-                                        className="pd-info-chip",
-                                        title=gmis_tooltip,
-                                        style={"marginLeft": "6px", "textTransform": "none", "verticalAlign": "middle"},
-                                        **{"aria-label": gmis_tooltip},
-                                    ),
-                                ],
+                                f"{panel_index}. {summary_heading}",
                                 className="pd-content-kicker",
                             ),
                             *attribute_lines,

@@ -2232,9 +2232,22 @@ def build_saas_mev_time_series_figure(
             if str(row.get("Run For") or "").strip() == primary_run_for
         ]
     historical_reference_values = _saas_historical_values(min_max_reference_records)
+    visible_axis_dates = [value for value in all_axis_values if value is not None]
+    # A custom "visible date range" window on the chart can narrow the plotted
+    # data to a span that doesn't reach the cycle's actual jump-off date (e.g.
+    # a purely historical window years before projection starts). Drawing the
+    # marker/annotation there anyway forces Plotly to auto-range the axis out
+    # to that far-off, off-screen x position, squeezing all the real data (and
+    # its tick labels) into a sliver -- so only draw it when the jump-off date
+    # actually falls within what's currently plotted.
+    projection_start_in_view = (
+        projection_start_date is not None
+        and bool(visible_axis_dates)
+        and min(visible_axis_dates) <= projection_start_date <= max(visible_axis_dates)
+    )
     if (
         snapshot_period == "history_projection"
-        and projection_start_date is not None
+        and projection_start_in_view
         and not (reference_lines == "monitoring" and current_date and projection_start_date == current_date)
     ):
         projection_end_date = None
@@ -2290,15 +2303,14 @@ def build_saas_mev_time_series_figure(
             annotations.append(
                 dict(
                     xref="paper",
-                    x=0.99,
+                    x=1.01,
                     yref="y",
                     y=min_value,
                     text="Historical Min / Max",
                     showarrow=False,
-                    xanchor="right",
-                    yanchor="bottom",
-                    font=dict(size=10, color="#0f766e"),
-                    bgcolor=palette["annotation_bg"],
+                    xanchor="left",
+                    yanchor="middle",
+                    font=dict(size=9, color="#0f766e"),
                 )
             )
         else:
@@ -2342,27 +2354,25 @@ def build_saas_mev_time_series_figure(
                 [
                     dict(
                         xref="paper",
-                        x=0.99,
+                        x=1.01,
                         yref="y",
                         y=min_value,
                         text="Historical Min",
                         showarrow=False,
-                        xanchor="right",
-                        yanchor="bottom",
-                        font=dict(size=10, color="#0f766e"),
-                        bgcolor=palette["annotation_bg"],
+                        xanchor="left",
+                        yanchor="middle",
+                        font=dict(size=9, color="#0f766e"),
                     ),
                     dict(
                         xref="paper",
-                        x=0.99,
+                        x=1.01,
                         yref="y",
                         y=max_value,
                         text="Historical Max",
                         showarrow=False,
-                        xanchor="right",
-                        yanchor="bottom",
-                        font=dict(size=10, color="#b45309"),
-                        bgcolor=palette["annotation_bg"],
+                        xanchor="left",
+                        yanchor="middle",
+                        font=dict(size=9, color="#b45309"),
                     ),
                 ]
             )
@@ -2389,7 +2399,17 @@ def build_saas_mev_time_series_figure(
                     dict(type="rect", xref="paper", x0=0, x1=1, yref="y", y0=upper_yellow, y1=axis_high, fillcolor="rgba(239,68,68,0.10)", line=dict(width=0), layer="below"),
                     dict(type="line", xref="paper", x0=0, x1=1, yref="y", y0=green_low, y1=green_low, line=dict(color="#f59e0b", width=1.3, dash="dash")),
                     dict(type="line", xref="paper", x0=0, x1=1, yref="y", y0=green_high, y1=green_high, line=dict(color="#f59e0b", width=1.3, dash="dash")),
+                    dict(type="line", xref="paper", x0=0, x1=1, yref="y", y0=lower_yellow, y1=lower_yellow, line=dict(color="#ef4444", width=1, dash="dot")),
+                    dict(type="line", xref="paper", x0=0, x1=1, yref="y", y0=upper_yellow, y1=upper_yellow, line=dict(color="#ef4444", width=1, dash="dot")),
                     dict(type="line", xref="paper", x0=0, x1=1, yref="y", y0=0, y1=0, line=dict(color=palette["zero_line"], width=1.3)),
+                ]
+            )
+            annotations.extend(
+                [
+                    dict(xref="paper", x=1.01, yref="y", y=upper_yellow, text="Max_Dev + 2 SD", showarrow=False, xanchor="left", yanchor="middle", font=dict(size=9, color="#64748b")),
+                    dict(xref="paper", x=1.01, yref="y", y=green_high, text="Max_Dev", showarrow=False, xanchor="left", yanchor="middle", font=dict(size=9, color="#64748b")),
+                    dict(xref="paper", x=1.01, yref="y", y=green_low, text="Min_Dev", showarrow=False, xanchor="left", yanchor="middle", font=dict(size=9, color="#64748b")),
+                    dict(xref="paper", x=1.01, yref="y", y=lower_yellow, text="Min_Dev − 2 SD", showarrow=False, xanchor="left", yanchor="middle", font=dict(size=9, color="#64748b")),
                 ]
             )
         else:
@@ -2440,7 +2460,7 @@ def build_saas_mev_time_series_figure(
     legend_entry_width = max(1 / legend_entry_count if legend_entry_count else 1, 0.5)
     fig.update_layout(
         height=438,
-        margin=dict(t=52, r=18, b=88 if reference_lines == "monitoring" else bottom_margin, l=72),
+        margin=dict(t=52, r=108 if reference_lines in ("monitoring", "min_max") else 18, b=88 if reference_lines == "monitoring" else bottom_margin, l=72),
         hovermode="x unified",
         showlegend=show_bottom_legend,
         hoverdistance=2,
