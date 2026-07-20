@@ -1479,7 +1479,7 @@ def _build_pd_post_review_overview(
         children=[
             build_pd_section_heading(
                 "2.0 Overview",
-                "Post Subjective Review Analysis Overview",
+                "PD Post Subjective Review Analysis Overview",
                 "At-a-glance health of every post subjective review test for the current scope. Each card shows the "
                 "worst-case RAG across the projection horizon, a headline metric, and a one-line takeaway.",
                 "N/A", options={"show_rag": False},
@@ -2817,7 +2817,7 @@ def render_pd_performance_content(
                 className="pd-content-heading",
                 children=[
                     html.Div("1.0 Overview", className="pd-content-kicker"),
-                    html.H3("RAG Assignment Overview"),
+                    html.H3("PD RAG Assignment Overview"),
                     html.P(
                         "At-a-glance summary of the 1-year PD monitoring flow across ECL PIT PD and Balance Sheet PD "
                         "calibration and discriminatory-power diagnostics."
@@ -3611,7 +3611,7 @@ def build_stores() -> list:
         dcc.Store(id=MEV_FILTER_STORE_ID, data=dict(DEFAULT_MEV_FILTER_STORE)),
         dcc.Store(id=SCENARIO_RANKING_STORE_ID, data={}),
         dcc.Store(id=APPLIED_FILTERS_STORE_ID),
-        dcc.Store(id=CONCLUSIONS_NOTES_STORE_ID, storage_type="session", data=""),
+        dcc.Store(id=CONCLUSIONS_NOTES_STORE_ID, data=""),
         dcc.Store(id=PD_REVIEW_FLOW_PENDING_STORE_ID, data={}),
         dcc.Store(id=PD_REVIEW_FLOW_STATUS_STORE_ID, data=""),
     ]

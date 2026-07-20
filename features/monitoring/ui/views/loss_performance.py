@@ -89,7 +89,7 @@ def _build_loss_subnav() -> html.Div:
             html.Div(
                 className="monitoring-section-subnav-group pd-subnav-group pd-subnav-group-rag active",
                 children=[
-                    html.Div("RAG Assignment", className="monitoring-section-subnav-label"),
+                    html.Div("Chapter 1: RAG Assignment", className="monitoring-section-subnav-label"),
                     html.Div(
                         className="monitoring-section-subnav-links",
                         children=[
@@ -543,7 +543,7 @@ def page_layout(data: dict) -> list:
                 html.Div(
                     style={"flex": "1"},
                     children=[
-                        html.Div("Wholesale Portfolio Model Monitoring Dashboard", className="monitoring-dashboard-title"),
+                        html.Div("Loss Performance Monitoring Dashboard", className="monitoring-dashboard-title"),
                         html.Div(
                             className="monitoring-controls",
                             children=[
