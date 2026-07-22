@@ -17,9 +17,10 @@ LOSS_MODEL_LABEL = "All Models"
 # Precomputed-metrics store
 # ---------------------------------------------------------------------------
 # The Loss tab reads metric rows straight from ``Loss_Performance_Metrics`` via
-# a store keyed by ``(level, value)``. There is a single loss model, so the
-# model-level entity is ``"All Models"``. The cycle callback installs the
-# selected reporting cycle's store and quarters here.
+# a store keyed by ``(model, segment)`` (segment ``"All"`` for the aggregate
+# row). There is a single loss model, so the model is always
+# ``"All Models"``. The cycle callback installs the selected reporting
+# cycle's store and quarters here.
 
 _LOSS_STORE: dict | None = None
 _LOSS_QUARTERS: list[str] = []
@@ -33,11 +34,11 @@ def set_loss_metrics(store: dict | None, quarters: list[str] | None = None) -> N
 
 
 def _loss_store_key(selected_model, selected_segment) -> tuple[str, str]:
-    """Map a (model, segment) selection to a ``(level, value)`` store key."""
+    """Map a (model, segment) selection to a ``(model, segment)`` store key."""
     segment = selected_segment if isinstance(selected_segment, str) else None
     if segment and segment not in ("All", "all", ""):
-        return "segment", segment
-    return "model", LOSS_MODEL_LABEL
+        return LOSS_MODEL_LABEL, segment
+    return LOSS_MODEL_LABEL, "All"
 
 
 def _loss_store_rows(selected_model, selected_segment) -> list[dict] | None:

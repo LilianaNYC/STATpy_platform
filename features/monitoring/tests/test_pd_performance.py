@@ -60,7 +60,7 @@ def _collect_nodes_with_class(node, class_token: str) -> list[Component]:
     return matches
 
 
-def _render_pd_content():
+def _render_pd_content_with(**overrides):
     """Render the live dashboard content (post-Apply), not the getting-started prompt."""
     from STATpy_platform.features.monitoring.data_access import PD_PERFORMANCE_DATA as data
     from STATpy_platform.shared.domain.calculations import PdFilterContext, set_precomputed_metrics
@@ -83,14 +83,84 @@ def _render_pd_content():
             {},
             reporting_cycle="CCAR 2026",
             scenario="intsevere",
+            **overrides,
         )
     finally:
         set_precomputed_metrics(None)
 
 
+def _render_pd_content():
+    return _render_pd_content_with()
+
+
 def test_pd_performance_layout_builds():
     layout = page.build_layout()
     assert isinstance(layout, list) and layout
+
+
+def test_apply_filters_clears_the_reviewer_signoff_draft(monkeypatch):
+    from dash import no_update
+
+    import STATpy_platform.features.monitoring.callbacks.pd_performance as cb
+
+    captured: dict = {}
+
+    class StubApp:
+        def callback(self, *args, **kwargs):
+            def decorator(fn):
+                captured[fn.__name__] = fn
+                return fn
+
+            return decorator
+
+    monkeypatch.setattr(cb, "already_registered", lambda app, key: False)
+    cb.register_callbacks(StubApp())
+
+    apply_fn = captured["apply_pd_filters"]
+    applied, notes, pending, save_status = apply_fn(1, "2026Q3", "all", "PD Model A", "CCAR 2026", "intsevere")
+    assert applied["monitoring_point"] == "2026Q3"
+    assert notes == "", "an Apply click must discard the unsaved sign-off draft"
+    assert pending == {}, "an Apply click must discard staged review-flow RAG picks"
+    assert save_status == "", "an Apply click must discard the stale save-status message"
+
+    # Apply requires a Model even on a real click -- Segment alone isn't enough.
+    assert apply_fn(1, "2026Q3", "Cyclical", "", "CCAR 2026", "intsevere") == (
+        no_update, no_update, no_update, no_update,
+    )
+
+    # Spurious fire (router re-insert, n_clicks=0) must touch no store.
+    assert apply_fn(0, "2026Q3", "all", "", "CCAR 2026", "intsevere") == (
+        no_update, no_update, no_update, no_update,
+    )
+
+
+def test_navigating_to_pd_discards_unsaved_staged_state(monkeypatch):
+    """Entering the PD page (path "/") clears staged RAG picks, the draft sign-off,
+    and any stale save-status, so a page leave never leaves an unsaved edit behind.
+    Navigating elsewhere leaves the stores untouched."""
+    from dash import no_update
+
+    import STATpy_platform.features.monitoring.callbacks.pd_performance as cb
+
+    captured: dict = {}
+
+    class StubApp:
+        def callback(self, *args, **kwargs):
+            def decorator(fn):
+                captured[fn.__name__] = fn
+                return fn
+
+            return decorator
+
+    monkeypatch.setattr(cb, "already_registered", lambda app, key: False)
+    cb.register_callbacks(StubApp())
+
+    discard_fn = captured["discard_pd_staged_state_on_entry"]
+    # Entering the PD page resets the three staged stores.
+    assert discard_fn("/") == ({}, "", "")
+    # Any other page leaves them alone.
+    assert discard_fn("/overview") == (no_update, no_update, no_update)
+    assert discard_fn("/lgd-performance") == (no_update, no_update, no_update)
 
 
 def test_pd_performance_build_stores():
@@ -101,6 +171,9 @@ def test_pd_performance_build_stores():
         "pd-mev-filter-store",
         "pd-scenario-ranking-store",
         "pd-applied-filters-store",
+        "pd-conclusions-notes-store",
+        "pd-review-flow-pending-store",
+        "pd-review-flow-status-store",
     }
 
 
@@ -135,7 +208,7 @@ def test_pd_main_overview_summarizes_both_chapters_before_the_deep_dive():
         aria_labels.extend(_collect_prop_values(node, "aria-label"))
 
     assert "Dashboard Main Overview" in text
-    assert "Before the deep dive" in text
+    assert "Overall posture" in text
     assert "How the dashboard story splits across the two chapters" in text
     assert "Recommended deep dive" in text
     assert "1. RAG Assignment" in text
@@ -162,7 +235,7 @@ def test_pd_subnav_keeps_main_overview_without_adding_a_dashboard_summary_row():
     layout = page.build_layout()
     text = " ".join(_collect_text(node) for node in layout)
 
-    assert "Executive Overview" in text
+    assert "Overview & Conclusion" in text
     assert "Main Overview" in text
     assert "RAG Assignment" in text
     assert text.index("Main Overview") < text.index("RAG Assignment")
@@ -178,7 +251,7 @@ def test_pd_subnav_keeps_main_overview_without_adding_a_dashboard_summary_row():
     assert "Scenario Ranking" in text
     assert "Sensitivity Analysis" in text
     assert "MEV Range" in text
-    assert text.index("Executive Overview") < text.index("Main Overview")
+    assert text.index("Overview & Conclusion") < text.index("Main Overview")
     assert text.index("RAG Assignment") < text.index("RAG Assignment Overview")
     assert text.index("Post Subjective Review Analysis") < text.index("Post Subjective Review Analysis Overview")
     assert "Dashboard Summary" not in text

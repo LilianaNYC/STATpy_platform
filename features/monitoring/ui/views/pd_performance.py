@@ -49,6 +49,7 @@ from .....shared.ui.controls import (
     build_section_filter_item,
     build_trend_horizon_control,
 )
+from ...domain.actions import select_pd_monitoring_actions
 from .cards import (
     build_pd_chapter_heading,
     build_pd_ead_card,
@@ -73,6 +74,7 @@ from .....shared.domain.quarter_labels import (
     iso_date_to_pd_quarter,
 )
 from .....shared.domain.calculations import (
+    PD_SEGMENT_HOME_MODEL,
     PdFilterContext,
     build_pd_balance_sheet_calibration_rag_trend,
     build_pd_calibration_assignment_tooltip,
@@ -122,6 +124,28 @@ APPLY_FILTERS_ID = "pd-apply-filters"
 APPLIED_FILTERS_STORE_ID = "pd-applied-filters-store"
 SCENARIO_RANKING_STORE_ID = "pd-scenario-ranking-store"
 SCENARIO_RANKING_FILTER_ID = "pd-scenario-ranking-filter"
+CONCLUSIONS_NOTES_ID = "pd-conclusions-notes-input"
+CONCLUSIONS_NOTES_STORE_ID = "pd-conclusions-notes-store"
+PD_REVIEW_FLOW_OPTION_ID = "pd-review-flow-option"
+PD_REVIEW_FLOW_PENDING_STORE_ID = "pd-review-flow-pending-store"
+PD_REVIEW_FLOW_STATUS_STORE_ID = "pd-review-flow-status-store"
+PD_REVIEW_FLOW_SAVE_ID = "pd-review-flow-save"
+PD_REVIEW_FLOW_SAVE_BAR_ID = "pd-review-flow-save-bar-container"
+PD_REVIEW_FLOW_FIELD_LABELS = {
+    "post_subjective": "Post Subjective Review RAG",
+    "pre_mitigation": "Pre Mitigation RAG",
+    "post_mitigation": "Post Mitigation RAG",
+}
+# Maps this UI's short field keys to the portfolio file's actual column names
+# (PD_Performance_Metrics tab), so reads and writes never drift apart.
+PD_REVIEW_FLOW_COLUMNS = {
+    "post_subjective": "rag_post_sr",
+    "pre_mitigation": "rag_pre_mitig",
+    "post_mitigation": "rag_post_mitig",
+}
+# The reviewer sign-off commentary lives in the same portfolio-file mechanism (self-healing column,
+# written via the same generic write path) but isn't a RAG, so it's kept out of PD_REVIEW_FLOW_COLUMNS.
+REVIEWER_COMMENTARY_COLUMN = "reviewer_commentary"
 
 # Maps each per-panel trend-horizon control to the shared store group it
 # reads/writes. Ports the JS PD_CALIBRATION_TREND_HORIZON /
@@ -310,22 +334,35 @@ def _format_pd_scenario_label(value: str | None) -> str:
     return scenario or "Scenario"
 
 
-def _resolve_pd_sensitivity_entity(ctx: PdFilterContext) -> tuple[str, str]:
-    if ctx.segment and ctx.segment != "all":
-        return "segment", ctx.segment
+def _primary_pd_model(ctx: PdFilterContext) -> str:
     models = sorted(model for model in ctx.models if model)
-    if len(models) == 1:
-        return "model", models[0]
-    return "model", "All Models"
+    return models[0] if models else ""
+
+
+def _resolve_pd_sensitivity_entity(ctx: PdFilterContext) -> tuple[str, str]:
+    """Mirrors :func:`shared.domain.calculations.ctx_store_keys`: a real segment
+    refines whichever single model is in scope; falls back to
+    :data:`PD_SEGMENT_HOME_MODEL` only when zero or more than one model is in
+    scope (e.g. Overview's pooled Segments chapter)."""
+    models = sorted(model for model in ctx.models if model)
+    if ctx.segment and ctx.segment != "all":
+        if len(models) == 1:
+            return models[0], ctx.segment
+        return PD_SEGMENT_HOME_MODEL, ctx.segment
+    return _primary_pd_model(ctx), "All"
+
+
+def _entity_label(model: str, segment: str) -> str:
+    return f"{model} — {segment}" if segment and segment != "All" else (model or "—")
 
 
 def _filter_pd_projection_rows(rows: list[dict], reporting_cycle: str, ctx: PdFilterContext) -> list[dict]:
-    level, entity = _resolve_pd_sensitivity_entity(ctx)
+    model, segment = _resolve_pd_sensitivity_entity(ctx)
     return [
         row for row in rows or []
         if row.get("reporting_cycle") == reporting_cycle
-        and row.get("level") == level
-        and row.get("model_or_segment") == entity
+        and row.get("model") == model
+        and row.get("segment") == segment
         and row.get("scenario_variant")
     ]
 
@@ -592,7 +629,7 @@ def _build_pd_scenario_ranking_section(
         row for row in available_rows
         if row.get("scenario_variant") in selected_scenarios
     ]
-    level, entity = _resolve_pd_sensitivity_entity(ctx)
+    model, segment = _resolve_pd_sensitivity_entity(ctx)
     summary = _scenario_ranking_summary(rows)
     filter_control = _build_pd_scenario_ranking_filter(available_rows, selected_scenarios)
 
@@ -642,7 +679,7 @@ def _build_pd_scenario_ranking_section(
                         children=[
                             build_chart_header(
                                 "Projected PD by Scenario",
-                                f"{entity} ({level}) projected PD paths for selected scenarios.",
+                                f"{_entity_label(model, segment)} projected PD paths for selected scenarios.",
                             ),
                             dcc.Graph(
                                 id="pd-scenario-projection-chart",
@@ -819,7 +856,7 @@ def _build_rag_status_card(
 def _build_pd_sensitivity_section(data: dict, ctx: PdFilterContext, reporting_cycle: str, theme: str, range_store: dict | None = None) -> html.Section:
     range_store = range_store or {}
     rows = _filter_pd_sensitivity_rows(data.get("sensitivity_projections") or [], reporting_cycle, ctx)
-    level, entity = _resolve_pd_sensitivity_entity(ctx)
+    model, segment = _resolve_pd_sensitivity_entity(ctx)
     threshold_row = _get_pd_sensitivity_threshold(data.get("monitoring_thresholds") or {})
     threshold_value = threshold_row.get("threshold")
     impact_summary = _sensitivity_impact_summary(rows, threshold_value)
@@ -869,7 +906,7 @@ def _build_pd_sensitivity_section(data: dict, ctx: PdFilterContext, reporting_cy
                 children=[
                     build_chart_header(
                         "Projected PD Sensitivity & Relative Shock Impact",
-                        f"{entity} ({level}): baseline vs 2SD-shock projected PD (left) and the relative shock "
+                        f"{_entity_label(model, segment)}: baseline vs 2SD-shock projected PD (left) and the relative shock "
                         "impact by quarter (right), RAG-rated against the scenario-test threshold.",
                     ),
                     dcc.Graph(
@@ -1065,15 +1102,6 @@ def _build_pd_review_scorecard_card(summary: dict) -> html.Article:
     )
 
 
-def _pd_scope_label(ctx: PdFilterContext) -> str:
-    if ctx.segment and ctx.segment != "all":
-        return ctx.segment
-    models = sorted(model for model in ctx.models if model)
-    if len(models) == 1:
-        return models[0]
-    return "All Models"
-
-
 def _count_pd_attention(summaries: list[dict]) -> int:
     return sum(1 for summary in summaries if summary.get("rag") in ("Amber", "Red"))
 
@@ -1117,13 +1145,29 @@ def _build_pd_overview_section_item(summary: dict) -> html.Li:
     )
 
 
+def _pd_overview_info_chip(tooltip: str | None):
+    """Same "?" tooltip chip as ``cards._info_chip``, ported for the 0.0 Overview diagrams."""
+    if not tooltip:
+        return None
+    return html.Span(
+        "?",
+        className="pd-info-chip",
+        role="img",
+        **{"aria-label": tooltip, "title": tooltip},
+    )
+
+
 def _build_pd_chapter_1_diagram_node(summary: dict, label: str, href: str, extra_class: str = "") -> html.A:
     tone = _rag_tone(summary.get("rag", "N/A"))
+    label_children = [label]
+    chip = _pd_overview_info_chip(summary.get("tooltip"))
+    if chip is not None:
+        label_children.append(chip)
     return html.A(
         href=href,
         className=f"overview-chapter-diagram-node overview-chapter-diagram-node-{tone} {extra_class}".strip(),
         children=[
-            html.Span(label, className="overview-chapter-diagram-node-label"),
+            html.Span(label_children, className="overview-chapter-diagram-node-label"),
             html.Span(
                 [pd_rag_dot(summary.get("rag", "N/A")), html.Strong(summary.get("rag", "N/A"))],
                 className="overview-chapter-diagram-node-value",
@@ -1141,7 +1185,7 @@ def _build_pd_overview_area_index(index: int, tone: str = "neutral") -> html.Spa
     )
 
 
-def _build_pd_chapter_1_diagram(chapter_1_rag: str, summaries: list[dict]) -> html.Div:
+def _build_pd_chapter_1_diagram(chapter_1_rag: str, summaries: list[dict], chapter_1_tooltip: str | None = None) -> html.Div:
     by_name = {summary["name"]: summary for summary in summaries}
     rows = []
     for index, (name, label, href, extra_class) in enumerate([
@@ -1160,7 +1204,10 @@ def _build_pd_chapter_1_diagram(chapter_1_rag: str, summaries: list[dict]) -> ht
         html.Div(
             className=f"overview-chapter-diagram-output overview-chapter-diagram-output-{tone}",
             children=[
-                html.Span(["Performance", html.Br(), "PD RAG"], className="overview-chapter-diagram-output-label"),
+                html.Span(
+                    ["Performance", html.Br(), "PD RAG", _pd_overview_info_chip(chapter_1_tooltip)],
+                    className="overview-chapter-diagram-output-label",
+                ),
                 html.Span([pd_rag_dot(chapter_1_rag), html.Strong(chapter_1_rag)], className="overview-chapter-diagram-output-value"),
             ],
         )
@@ -1283,6 +1330,7 @@ def _build_pd_main_overview(
     chapter_1_rag: str,
     chapter_1_summaries: list[dict],
     chapter_2_summaries: list[dict],
+    chapter_1_tooltip: str | None = None,
 ) -> html.Section:
     chapter_1_attention = _count_pd_attention(chapter_1_summaries)
     chapter_2_attention = _count_pd_attention(chapter_2_summaries)
@@ -1315,32 +1363,13 @@ def _build_pd_main_overview(
             build_pd_section_heading(
                 "0.0 Overview",
                 "Dashboard Main Overview",
-                "Single-screen summary across both dashboard chapters before moving into the detailed diagnostics.",
+                "",
                 "N/A",
                 options={"show_rag": False},
             ),
             html.Div(
                 className="overview-command-hero overview-main-card",
                 children=[
-                    html.Div(
-                        className="overview-main-card-top",
-                        children=[
-                            html.Div(
-                                className="overview-command-hero-copy",
-                                children=[
-                                    html.Div("Before the deep dive", className="overview-command-hero-kicker"),
-                                    html.H4(
-                                        f"{total_attention} of {total_areas} monitored areas need attention",
-                                        className="overview-command-hero-title",
-                                        style={"--overview-posture-tone": _RAG_HEX[posture_tone], "margin": "0"},
-                                    ),
-                                    html.P(
-                                        "This opening readout shows where the signal is concentrated before the detailed charts and tests."
-                                    ),
-                                ],
-                            ),
-                        ],
-                    ),
                     html.Div(
                         className="overview-main-breakdown",
                         children=[
@@ -1362,7 +1391,7 @@ def _build_pd_main_overview(
                                         "RAG Assignment Overview",
                                         chapter_1_rag,
                                         chapter_1_summaries,
-                                        body=_build_pd_chapter_1_diagram(chapter_1_rag, chapter_1_summaries),
+                                        body=_build_pd_chapter_1_diagram(chapter_1_rag, chapter_1_summaries, chapter_1_tooltip),
                                         panel_tone="neutral",
                                         show_rag=False,
                                     ),
@@ -1377,23 +1406,39 @@ def _build_pd_main_overview(
                                     ),
                                 ],
                             ),
+                        ],
+                    ),
+                    html.Div(
+                        className="overview-main-card-scope",
+                        children=[
                             html.Div(
-                                className="overview-review-focus overview-main-breakdown-focus",
+                                className="overview-command-hero-copy",
                                 children=[
-                                    html.Div([
-                                        html.Span("Recommended deep dive"),
-                                        html.Strong(priority_label),
-                                    ]),
-                                    html.Div([
-                                        html.Span("Why it matters"),
-                                        html.Strong(
-                                            priority_summary["takeaway"]
-                                            if priority_summary and priority_summary.get("rag") in ("Amber", "Red")
-                                            else "Both chapters are stable for the selected scope."
-                                        ),
-                                    ]),
+                                    html.Div("Overall posture", className="overview-command-hero-kicker"),
+                                    html.H4(
+                                        f"{total_attention} of {total_areas} monitored areas need attention",
+                                        className="overview-command-hero-title",
+                                        style={"--overview-posture-tone": _RAG_HEX[posture_tone], "margin": "0"},
+                                    ),
                                 ],
                             ),
+                        ],
+                    ),
+                    html.Div(
+                        className="overview-review-focus overview-main-breakdown-focus",
+                        children=[
+                            html.Div([
+                                html.Span("Recommended deep dive"),
+                                html.Strong(priority_label),
+                            ]),
+                            html.Div([
+                                html.Span("Why it matters"),
+                                html.Strong(
+                                    priority_summary["takeaway"]
+                                    if priority_summary and priority_summary.get("rag") in ("Amber", "Red")
+                                    else "Both chapters are stable for the selected scope."
+                                ),
+                            ]),
                         ],
                     ),
                 ],
@@ -1440,7 +1485,7 @@ def _build_pd_post_review_overview(
         children=[
             build_pd_section_heading(
                 "2.0 Overview",
-                "Post Subjective Review Analysis Overview",
+                "PD Post Subjective Review Analysis Overview",
                 "At-a-glance health of every post subjective review test for the current scope. Each card shows the "
                 "worst-case RAG across the projection horizon, a headline metric, and a one-line takeaway.",
                 "N/A", options={"show_rag": False},
@@ -1953,6 +1998,546 @@ def _build_mev_range_section(data: dict, ctx: PdFilterContext, range_store: dict
 
 
 # ---------------------------------------------------------------------------
+# 3.0 Conclusions (executive verdict + reviewer sign-off)
+# ---------------------------------------------------------------------------
+
+
+_PD_LIFECYCLE_TOOLTIPS = {
+    "performance": (
+        "Model RAG (initial) = Performance RAG - Based on the results of tests applied at the modelled outcomes."
+    ),
+    "subjective_review": (
+        "Worst-case RAG across Chapter 2 (Post Subjective Review Analysis): transition, PSI, scenario ranking, "
+        "sensitivity, and MEV range findings for the current scope."
+    ),
+    "post_subjective": (
+        "Model RAG (post subjective review) - Reflects the impact of any subjective overlays (this considers the "
+        "post-subjective review)."
+    ),
+    "pre_mitigation": (
+        "Pre Mitigation RAG = Pre-Overlay RAG - Obtained from a trend of Model RAG (post subjective review). For ST "
+        "models, only the current model RAG (post subjective review) will be considered."
+    ),
+    "post_mitigation": (
+        "Post Mitigation RAG = Post-Overlay RAG - Based on the residual risk of the model. Judgement-based. "
+        "Considers compensating controls."
+    ),
+}
+
+
+def _build_pd_rag_lifecycle_card(
+    kicker: str,
+    title: str,
+    rag: str | None,
+    tooltip_key: str,
+    extra_class: str = "",
+    body=None,
+    note: str | None = None,
+    href: str | None = None,
+):
+    tone = _rag_tone(rag) if rag else "neutral"
+    children = [
+        html.Span(kicker, className="pd-rag-lifecycle-card-kicker"),
+        html.Strong([title, _pd_overview_info_chip(_PD_LIFECYCLE_TOOLTIPS.get(tooltip_key))], className="pd-rag-lifecycle-card-title"),
+        body if body is not None else html.Div(
+            [pd_rag_dot(rag or "N/A"), html.Strong(rag or "N/A")],
+            className="pd-rag-lifecycle-card-value",
+        ),
+    ]
+    if note:
+        children.append(html.Span(note, className="pd-rag-lifecycle-card-note"))
+    class_name = f"pd-rag-lifecycle-card pd-rag-lifecycle-card-{tone} {extra_class}".strip()
+    if href:
+        return html.A(
+            href=href,
+            className=f"{class_name} pd-rag-lifecycle-card-link",
+            children=children,
+            **{"aria-label": f"Jump to {title} section"},
+        )
+    return html.Div(className=class_name, children=children)
+
+
+def _build_pd_rag_lifecycle_merge_badge(symbol: str) -> html.Span:
+    """Circular "+" / "=" badge marking a merge point, as opposed to a directional flow arrow."""
+    return html.Span(symbol, className="pd-rag-lifecycle-merge-badge", **{"aria-hidden": "true"})
+
+
+def _build_pd_rag_lifecycle_connector() -> html.Span:
+    """Decorative flow connector (dot + gradient line + arrowhead), matching the RAG Assignment Overview diagram."""
+    return html.Span(className="pd-rag-lifecycle-connector", **{"aria-hidden": "true"})
+
+
+def pd_review_flow_rags(ctx: PdFilterContext, quarter: str) -> dict[str, str]:
+    """Post Subjective Review / Pre Mitigation / Post Mitigation RAG, read verbatim from the portfolio file.
+
+    These three come from the ``PD_Performance_Metrics`` tab of the portfolio workbook (``rag_post_sr`` /
+    ``rag_pre_mitig`` / ``rag_post_mitig``), the same precomputed-metrics store Chapter 1 already reads from --
+    they are not derived here.
+    """
+    row = (
+        precomputed_row(ctx, quarter, "1y")
+        or precomputed_row(ctx, quarter, "2y")
+        or precomputed_row(ctx, quarter, "nco_1y")
+        or {}
+    )
+
+    def _text(key: str) -> str:
+        value = str(row.get(key, "") or "").strip()
+        return value or "N/A"
+
+    return {field: _text(column) for field, column in PD_REVIEW_FLOW_COLUMNS.items()}
+
+
+def pd_reviewer_commentary(ctx: PdFilterContext, quarter: str) -> str:
+    """The reviewer sign-off commentary saved for this scope, or "" if none has been saved yet."""
+    row = (
+        precomputed_row(ctx, quarter, "1y")
+        or precomputed_row(ctx, quarter, "2y")
+        or precomputed_row(ctx, quarter, "nco_1y")
+        or {}
+    )
+    return str(row.get(REVIEWER_COMMENTARY_COLUMN, "") or "").strip()
+
+
+def _build_pd_rag_lifecycle_metric_list(chapter_2_summaries: list[dict]) -> html.Div:
+    """Every Chapter 2 finding with its own RAG -- no single aggregated dot.
+
+    Chapter 2 is a qualitative, subjective-review layer with no defined roll-up formula (unlike Chapter 1's
+    weighted Performance RAG), so summarizing it as one dot would imply a computed logic that doesn't exist here.
+    """
+    return html.Div(
+        className="pd-rag-lifecycle-metric-list",
+        children=[
+            html.Div(
+                className="pd-rag-lifecycle-metric-row",
+                children=[
+                    pd_rag_dot(summary["rag"]),
+                    html.Span(summary["name"], className="pd-rag-lifecycle-metric-name"),
+                ],
+            )
+            for summary in chapter_2_summaries
+        ],
+    )
+
+
+def _build_pd_review_flow_picker(field: str, effective_value: str | None) -> html.Div:
+    """Current value + a "Change RAG" dropdown for an editable review-flow RAG card.
+
+    Picking an option only stages the change (see ``PD_REVIEW_FLOW_PENDING_STORE_ID``); nothing is
+    written to the portfolio file until the reviewer clicks Save in :func:`build_pd_review_flow_save_bar``.
+    The dropdown always mounts with ``value=None`` (a "Change RAG to..." action, not a live display of
+    the current value) so a fresh mount never looks like a real pick -- see the callback for why that
+    matters.
+    """
+    return html.Div(
+        className="pd-rag-picker",
+        children=[
+            html.Div(
+                [pd_rag_dot(effective_value or "N/A"), html.Strong(effective_value or "N/A")],
+                className="pd-rag-lifecycle-card-value",
+            ),
+            html.Label("Change RAG", htmlFor=None, className="pd-rag-picker-label"),
+            dcc.Dropdown(
+                id={"type": PD_REVIEW_FLOW_OPTION_ID, "field": field},
+                options=[{"label": option, "value": option} for option in ("Green", "Amber", "Red")],
+                value=None,
+                placeholder="Select…",
+                clearable=False,
+                searchable=False,
+                className="pd-rag-picker-dropdown",
+            ),
+        ],
+    )
+
+
+def _build_pd_rag_lifecycle_diagram(
+    performance_rag: str,
+    chapter_2_summaries: list[dict],
+    post_subjective_rag: str,
+    pre_mitigation_rag: str,
+    post_mitigation_rag: str,
+    pending_edits: dict | None = None,
+) -> html.Div:
+    """Performance RAG + Subjective Review = Post Subjective Review -> Pre Mitigation -> Post Mitigation.
+
+    Ports the RAG governance lifecycle definitions (Model RAG initial/post subjective review, Pre/Post Mitigation
+    RAG) into a single flow diagram. Performance RAG comes from Chapter 1 (read-only). The last three stages are
+    read from the portfolio file's precomputed metrics (see :func:`pd_review_flow_rags`) but are editable here --
+    each shows ``pending_edits[field]`` (a staged, not-yet-saved pick) when present, else the file's current value.
+    """
+    pending_edits = pending_edits or {}
+    effective = {
+        field: pending_edits.get(field) or file_value
+        for field, file_value in (
+            ("post_subjective", post_subjective_rag),
+            ("pre_mitigation", pre_mitigation_rag),
+            ("post_mitigation", post_mitigation_rag),
+        )
+    }
+    return html.Div(
+        className="pd-rag-lifecycle",
+        children=[
+            _build_pd_rag_lifecycle_card(
+                "Chapter 1", "Performance RAG", performance_rag, "performance",
+                href="#pd-analysis-scope",
+            ),
+            _build_pd_rag_lifecycle_merge_badge("+"),
+            _build_pd_rag_lifecycle_card(
+                "Chapter 2", "Subjective Review", None, "subjective_review",
+                extra_class="pd-rag-lifecycle-card-list",
+                body=_build_pd_rag_lifecycle_metric_list(chapter_2_summaries),
+                href="#pd-post-subjective-overview",
+            ),
+            _build_pd_rag_lifecycle_merge_badge("="),
+            _build_pd_rag_lifecycle_card(
+                "Model RAG", "Post Subjective Review RAG", effective["post_subjective"], "post_subjective",
+                extra_class="pd-rag-lifecycle-card-highlight",
+                body=_build_pd_review_flow_picker("post_subjective", effective["post_subjective"]),
+            ),
+            _build_pd_rag_lifecycle_connector(),
+            _build_pd_rag_lifecycle_card(
+                "Pre-Overlay RAG", "Pre Mitigation RAG", effective["pre_mitigation"], "pre_mitigation",
+                body=_build_pd_review_flow_picker("pre_mitigation", effective["pre_mitigation"]),
+            ),
+            _build_pd_rag_lifecycle_connector(),
+            _build_pd_rag_lifecycle_card(
+                "Post-Overlay RAG", "Post Mitigation RAG", effective["post_mitigation"], "post_mitigation",
+                body=_build_pd_review_flow_picker("post_mitigation", effective["post_mitigation"]),
+            ),
+        ],
+    )
+
+
+def build_pd_review_flow_save_bar(
+    pending_edits: dict,
+    current_values: dict,
+    save_status: str | None,
+    commentary_changed: bool = False,
+) -> html.Div | None:
+    """Diff summary + Save button for staged RAG edits and/or reviewer commentary, plus the last save status."""
+    changed = {
+        field: value for field, value in (pending_edits or {}).items()
+        if value in ("Green", "Amber", "Red") and value != current_values.get(field)
+    }
+    children = []
+    if changed or commentary_changed:
+        items = [
+            html.Li([
+                html.Strong(PD_REVIEW_FLOW_FIELD_LABELS.get(field, field)),
+                f": {current_values.get(field, 'N/A')} → {value}",
+            ])
+            for field, value in changed.items()
+        ]
+        if commentary_changed:
+            items.append(html.Li([html.Strong("Reviewer sign-off commentary"), ": will be updated"]))
+        children.extend([
+            html.Div("Unsaved changes to the portfolio file", className="pd-review-flow-save-title"),
+            html.Ul(items, className="pd-review-flow-save-list"),
+            html.Button(
+                "Save to portfolio.xlsx", id=PD_REVIEW_FLOW_SAVE_ID, type="button", n_clicks=0,
+                className="pd-review-flow-save-button",
+            ),
+        ])
+    if save_status:
+        children.append(html.Div(save_status, className="pd-review-flow-save-status"))
+    if not children:
+        return None
+    return html.Div(className="pd-review-flow-save-bar", children=children)
+
+
+def _build_pd_conclusions_signoff_chip(post_mitigation_rag: str) -> html.Div:
+    """Read-only Post Mitigation RAG readout (from the portfolio file) alongside the sign-off notes."""
+    if post_mitigation_rag in ("Green", "Amber", "Red"):
+        tone = _rag_tone(post_mitigation_rag)
+        label = ["Post Mitigation RAG: ", html.Strong(post_mitigation_rag)]
+    else:
+        tone = "neutral"
+        label = "Post Mitigation RAG is not available in the portfolio file for this scope."
+    return html.Div(
+        className=f"pd-conclusions-signoff-chip pd-conclusions-signoff-chip-{tone}",
+        children=[pd_rag_dot(post_mitigation_rag or "N/A"), html.Span(label)],
+    )
+
+
+def _build_pd_collapsible_card(card_id: str, title: str, subtitle: str, body: list, extra_class: str = "") -> html.Details:
+    """A section-card that folds via native ``<details>``/``<summary>`` (no callbacks).
+
+    Starts collapsed; the open/closed state lives in the DOM only, so a full
+    content re-render (e.g. staging a review-flow RAG) folds it again —
+    acceptable here since the summary header always stays visible.
+    """
+    return html.Details(
+        id=card_id,
+        className=f"section-card pd-collapsible-card {extra_class}".strip(),
+        open=False,
+        children=[
+            html.Summary(
+                className="pd-collapsible-summary",
+                children=[
+                    html.Span(
+                        className="pd-collapsible-summary-copy",
+                        children=[
+                            html.Span(title, className="section-title"),
+                            html.Span(subtitle, className="pd-section-subtitle"),
+                        ],
+                    ),
+                    html.Span("▾", className="pd-collapsible-chevron", **{"aria-hidden": "true"}),
+                ],
+            ),
+            *body,
+        ],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Required Actions panel (governance playbook, driven by the review-flow RAGs)
+# ---------------------------------------------------------------------------
+
+_PD_ACTION_STAGE_KICKERS = {
+    "Pre Mitigation": "Pre mitigation playbook",
+    "Post Mitigation": "Post mitigation playbook",
+}
+
+
+def _pd_action_empty_hint(selection: dict) -> str:
+    labels = [
+        PD_REVIEW_FLOW_FIELD_LABELS.get(field, field)
+        for field, _ in selection["drivers"]
+    ]
+    named = " or ".join(labels) if labels else "review-flow RAG"
+    return f"Set the {named} above to surface its required action."
+
+
+def _build_pd_action_governance_pill(label: str, value: str) -> html.Span:
+    required = str(value or "").strip().lower() == "yes"
+    return html.Span(
+        className=f"pd-action-gov-pill{' pd-action-gov-pill-required' if required else ''}",
+        children=[html.Span(label), html.Strong("Yes" if required else "No")],
+    )
+
+
+def _build_pd_action_driver_chips(selection: dict, pending_fields: set[str]) -> html.Div:
+    chips = []
+    for field, rag in selection["drivers"]:
+        label = PD_REVIEW_FLOW_FIELD_LABELS.get(field, field)
+        chip_children = [pd_rag_dot(rag), html.Span(f"{label}: "), html.Strong(rag)]
+        if field in pending_fields:
+            chip_children.append(html.Span("unsaved", className="pd-action-driver-chip-unsaved"))
+        chips.append(html.Span(chip_children, className="pd-action-driver-chip"))
+    return html.Div(
+        className="pd-action-driver-row",
+        children=[html.Span("Driven by", className="pd-action-driver-label"), *chips],
+    )
+
+
+def _build_pd_action_card(selection: dict, pending_fields: set[str]) -> html.Article:
+    stage = selection["stage"]
+    kicker = _PD_ACTION_STAGE_KICKERS.get(stage, stage)
+    action = selection.get("action")
+
+    if not action:
+        return html.Article(
+            className="pd-test-card pd-test-neutral pd-action-card pd-action-card-empty",
+            children=[
+                html.Div(
+                    className="pd-test-card-heading",
+                    children=[html.Div([
+                        html.Span(kicker),
+                        html.Div([html.H4(f"{stage} action")], className="pd-card-title-row"),
+                    ])],
+                ),
+                _build_pd_action_driver_chips(selection, pending_fields),
+                html.Div("No action defined", className="pd-test-value"),
+                html.Div(_pd_action_empty_hint(selection), className="pd-test-meta"),
+            ],
+        )
+
+    tone = _rag_tone(selection["rag"])
+    detail_blocks = [
+        html.Div(
+            className="pd-action-detail pd-action-detail-primary",
+            children=[html.Span("Required action"), html.P(action["required_action"])],
+        ),
+    ]
+    if action.get("additional_requirements"):
+        detail_blocks.append(
+            html.Div(
+                className="pd-action-detail",
+                children=[html.Span("Additional requirements"), html.P(action["additional_requirements"])],
+            )
+        )
+    if action.get("escalation"):
+        detail_blocks.append(
+            html.Div(
+                className="pd-action-detail",
+                children=[html.Span("Escalation / discussion"), html.P(action["escalation"])],
+            )
+        )
+
+    children = [
+        html.Div(
+            className="pd-test-card-heading",
+            children=[
+                html.Div([
+                    html.Span(kicker),
+                    html.Div([html.H4(action.get("trigger") or f"{stage} action")], className="pd-card-title-row"),
+                ]),
+                html.Span(
+                    [pd_rag_dot(selection["rag"]), html.Strong(selection["rag"])],
+                    className="pd-action-card-rag",
+                ),
+            ],
+        ),
+    ]
+    if selection.get("persistent_breach"):
+        children.append(
+            html.Div(
+                "Persistent breach — two consecutive Red quarters",
+                className="pd-action-breach-ribbon",
+            )
+        )
+    children.extend([
+        _build_pd_action_driver_chips(selection, pending_fields),
+        html.Div(action.get("description", ""), className="pd-action-description"),
+        *detail_blocks,
+        html.Div(
+            className="pd-action-gov-row",
+            children=[
+                _build_pd_action_governance_pill("Sponsor approval", action.get("sponsor_approval")),
+                _build_pd_action_governance_pill("Deep dive", action.get("deep_dive")),
+                _build_pd_action_governance_pill("Redevelopment", action.get("redevelopment")),
+            ],
+        ),
+        html.Div(
+            " · ".join(
+                part for part in (
+                    f"Owner: {action.get('owner')}" if action.get("owner") else "",
+                    f"Due in: {action.get('due_in_report')}" if action.get("due_in_report") else "",
+                ) if part
+            ),
+            className="pd-test-footnote",
+        ),
+    ])
+    return html.Article(
+        className=f"pd-test-card pd-test-{tone} pd-action-card"
+                  f"{' pd-action-card-breach' if selection.get('persistent_breach') else ''}",
+        children=children,
+    )
+
+
+def _build_pd_required_actions_panel(
+    monitoring_actions: list[dict],
+    effective_rags: dict[str, str],
+    previous_post_mitigation_rag: str,
+    pending_fields: set[str],
+) -> html.Div | None:
+    """Governance playbook actions for the effective review-flow RAGs.
+
+    Rebuilt on every content render, so staging a different RAG in the
+    lifecycle pickers above updates the selected actions immediately (the
+    ``unsaved`` chip marks actions driven by a not-yet-saved pick).
+    """
+    if not monitoring_actions:
+        return None
+    selections = select_pd_monitoring_actions(
+        monitoring_actions, effective_rags, previous_post_mitigation_rag,
+    )
+
+    return _build_pd_collapsible_card(
+        "pd-conclusions-action-plan",
+        "Required actions",
+        "Governance playbook actions matched to the review-flow RAGs above. Changing a RAG — even before "
+        "saving — updates these actions immediately.",
+        [
+            html.Div(
+                className="pd-action-plan-grid",
+                children=[_build_pd_action_card(selection, pending_fields) for selection in selections],
+            ),
+            html.Div(
+                "Source: statpy_monitoring_thresholds.xlsx · monitoring_actions. Each action keys off the review-flow RAG named in "
+                "its Trigger column; two consecutive Red Post Mitigation quarters escalate to the persistent-breach "
+                "protocol.",
+                className="pd-test-footnote",
+            ),
+        ],
+        extra_class="pd-action-plan-card",
+    )
+
+
+def _build_pd_conclusions_verdict_section(
+    chapter_1_rag: str,
+    chapter_2_summaries: list[dict],
+    review_flow_rags: dict[str, str],
+    conclusions_notes: str | None = None,
+    pending_edits: dict | None = None,
+    review_flow_save_status: str | None = None,
+    saved_commentary: str = "",
+    monitoring_actions: list[dict] | None = None,
+    previous_post_mitigation_rag: str = "",
+) -> html.Section:
+    lifecycle_diagram = _build_pd_rag_lifecycle_diagram(
+        chapter_1_rag, chapter_2_summaries,
+        review_flow_rags["post_subjective"], review_flow_rags["pre_mitigation"], review_flow_rags["post_mitigation"],
+        pending_edits=pending_edits,
+    )
+    effective_rags = {
+        field: (pending_edits or {}).get(field) or review_flow_rags[field]
+        for field in ("post_subjective", "pre_mitigation", "post_mitigation")
+    }
+    pending_fields = {
+        field for field, value in (pending_edits or {}).items()
+        if value in ("Green", "Amber", "Red") and value != review_flow_rags.get(field)
+    }
+    actions_panel = _build_pd_required_actions_panel(
+        monitoring_actions or [], effective_rags, previous_post_mitigation_rag, pending_fields,
+    )
+    commentary_changed = (conclusions_notes or "") != (saved_commentary or "")
+    save_bar = build_pd_review_flow_save_bar(
+        pending_edits or {}, review_flow_rags, review_flow_save_status, commentary_changed,
+    )
+
+    reviewer_signoff = _build_pd_collapsible_card(
+        "pd-conclusions-reviewer",
+        "Reviewer sign-off",
+        "Record the reviewer's conclusions, caveats, or rationale for the Post Mitigation RAG shown above.",
+        [
+            _build_pd_conclusions_signoff_chip(review_flow_rags["post_mitigation"]),
+            dcc.Textarea(
+                id=CONCLUSIONS_NOTES_ID,
+                value=conclusions_notes or "",
+                placeholder="Record conclusions, caveats, or a sign-off note for this monitoring cycle...",
+                className="pd-conclusions-textarea",
+            ),
+            html.Div(
+                "Saved to portfolio.xlsx via the Save button above once edited.",
+                className="pd-test-footnote",
+            ),
+        ],
+        extra_class="pd-conclusions-notes-card",
+    )
+
+    return html.Section(
+        id="pd-conclusions-verdict",
+        className="pd-content-section pd-live-section",
+        children=[
+            build_pd_section_heading(
+                "3.1 Conclusion", "Conclusion",
+                "Synthesizes Chapter 1 (RAG Assignment) and Chapter 2 (Post Subjective Review Analysis) into a "
+                "single model verdict, plus the reviewer's own sign-off, for the current scope.",
+                "N/A", options={"show_rag": False},
+            ),
+            lifecycle_diagram,
+            *([actions_panel] if actions_panel is not None else []),
+            reviewer_signoff,
+            html.Div(
+                id=PD_REVIEW_FLOW_SAVE_BAR_ID,
+                children=[save_bar] if save_bar is not None else [],
+            ),
+        ],
+    )
+
+
+# ---------------------------------------------------------------------------
 # Main render function (renderPdModels)
 # ---------------------------------------------------------------------------
 
@@ -1967,6 +2552,9 @@ def render_pd_performance_content(
     theme_value: str | None = None,
     reporting_cycle: str = "CCAR 2026",
     scenario: str = "intsevere",
+    conclusions_notes: str | None = None,
+    review_flow_pending_edits: dict | None = None,
+    review_flow_save_status: str | None = None,
 ) -> list:
     theme = normalize_theme_value(theme_value)
     observations = data["performance_observations"]
@@ -2235,7 +2823,7 @@ def render_pd_performance_content(
                 className="pd-content-heading",
                 children=[
                     html.Div("1.0 Overview", className="pd-content-kicker"),
-                    html.H3("RAG Assignment Overview"),
+                    html.H3("PD RAG Assignment Overview"),
                     html.P(
                         "At-a-glance summary of the 1-year PD monitoring flow across ECL PIT PD and Balance Sheet PD "
                         "calibration and discriminatory-power diagnostics."
@@ -2669,16 +3257,19 @@ def render_pd_performance_content(
             "name": "Calibration Conservatism",
             "rag": calibration_rag,
             "takeaway": "Combines ECL PIT calibration assignment, notching, and confidence interval diagnostics.",
+            "tooltip": overview["calibration"]["tooltip"],
         },
         {
             "name": "Discriminatory Power",
             "rag": discrimination_rag,
             "takeaway": "Reflects Accuracy Ratio, Delta Accuracy Ratio, and the default-count overlay.",
+            "tooltip": overview["discrimination"]["tooltip"],
         },
         {
             "name": "Balance Sheet Calibration",
             "rag": balance_sheet_rag,
             "takeaway": "Tracks the balance-sheet calibration view using the fixed CPD NCO horizon.",
+            "tooltip": overview["balance_sheet"]["assignment_tooltip"],
         },
     ]
     post_review_summaries = _pd_post_review_summaries(
@@ -2688,6 +3279,7 @@ def render_pd_performance_content(
         performance_pd_overview["rag"],
         chapter_1_summaries,
         post_review_summaries,
+        chapter_1_tooltip=performance_pd_overview["tooltip"],
     )
 
     # -----------------------------------------------------------------
@@ -2791,6 +3383,36 @@ def render_pd_performance_content(
         children=[section_2_1, section_2_2, section_2_3, section_2_4, section_2_5, section_2_6],
     )
 
+    chapter_3 = html.Section(
+        id="pd-conclusions",
+        className="pd-content-section pd-chapter-section",
+        children=[
+            build_pd_chapter_heading(
+                "3.",
+                "Conclusions",
+                "Synthesizes both chapters into a final model verdict and recommendation, plus a place for the "
+                "reviewer to record their own conclusions and sign-off for this monitoring cycle.",
+                options={"note": f"Monitoring point {cq}"},
+            ),
+        ],
+    )
+    review_flow_rags = pd_review_flow_rags(ctx, cq)
+    saved_commentary = pd_reviewer_commentary(ctx, cq)
+    previous_review_flow_rags = pd_review_flow_rags(ctx, get_previous_pd_quarter(cq))
+    section_3_1 = _build_pd_conclusions_verdict_section(
+        performance_pd_overview["rag"], post_review_summaries, review_flow_rags,
+        conclusions_notes=conclusions_notes if conclusions_notes else saved_commentary,
+        pending_edits=review_flow_pending_edits,
+        review_flow_save_status=review_flow_save_status,
+        saved_commentary=saved_commentary,
+        monitoring_actions=data.get("monitoring_actions") or [],
+        previous_post_mitigation_rag=previous_review_flow_rags["post_mitigation"],
+    )
+    chapter_3_body = html.Div(
+        className="pd-chapter-body pd-chapter-body-conclusions",
+        children=[section_3_1],
+    )
+
     _exec_style = (
         {
             "background": "linear-gradient(180deg, rgba(21,34,56,.96) 0%, rgba(17,28,47,.97) 100%)",
@@ -2818,7 +3440,12 @@ def render_pd_performance_content(
         ],
     )
 
-    return [executive_summary, dashboard_overview, chapter_1, chapter_1_body, chapter_2, chapter_2_body]
+    return [
+        executive_summary, dashboard_overview,
+        chapter_1, chapter_1_body,
+        chapter_2, chapter_2_body,
+        chapter_3, chapter_3_body,
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -2902,7 +3529,7 @@ def build_pd_apply_prompt() -> html.Section:
                                         className="saas-getting-started-highlights",
                                         children=[
                                             html.Span("1. Choose Model Use Case / Cycle, Scenario, and Monitoring Point.", className="saas-getting-started-highlight"),
-                                            html.Span("2. Pick a Segment or a Specific Model — not both.", className="saas-getting-started-highlight"),
+                                            html.Span("2. Pick a Region/Portfolio/Model, then optionally narrow to a Segment.", className="saas-getting-started-highlight"),
                                             html.Span("3. Click Apply filters to load the dashboard.", className="saas-getting-started-highlight"),
                                         ],
                                     ),
@@ -2932,13 +3559,14 @@ def build_pd_apply_prompt() -> html.Section:
                                     ]),
                                     html.Li([
                                         html.Strong("Choose your population. "),
-                                        "Select a Segment or a single Specific Model — these two filters are mutually "
-                                        "exclusive. Leaving both at “All” reads the portfolio-level (All Models) metrics.",
+                                        "Region, Portfolio, and Model Group narrow the Model list. Segment can be picked "
+                                        "independently of Model -- with no Model chosen it lists every segment across all "
+                                        "models; picking a Model narrows it to that model's own segments.",
                                     ]),
                                     html.Li([
                                         html.Strong("Click “Apply filters”. "),
-                                        "The dashboard loads here. Nothing renders until you apply, so this starting guide "
-                                        "stays visible until the first Apply.",
+                                        "Requires a Model to be selected -- the button stays disabled until you pick one. "
+                                        "Nothing renders until you apply, so this starting guide stays visible until the first Apply.",
                                     ]),
                                     html.Li([
                                         html.Strong("Read the analysis in two chapters. "),
@@ -2990,6 +3618,9 @@ def build_stores() -> list:
         dcc.Store(id=MEV_FILTER_STORE_ID, data=dict(DEFAULT_MEV_FILTER_STORE)),
         dcc.Store(id=SCENARIO_RANKING_STORE_ID, data={}),
         dcc.Store(id=APPLIED_FILTERS_STORE_ID),
+        dcc.Store(id=CONCLUSIONS_NOTES_STORE_ID, data=""),
+        dcc.Store(id=PD_REVIEW_FLOW_PENDING_STORE_ID, data={}),
+        dcc.Store(id=PD_REVIEW_FLOW_STATUS_STORE_ID, data=""),
     ]
 
 

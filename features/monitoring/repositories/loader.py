@@ -31,6 +31,7 @@ import logging
 from typing import Any
 
 import numpy as np
+import openpyxl
 import pandas as pd
 
 from ....shared.domain import constants as config
@@ -166,7 +167,7 @@ def load_pd_mev_catalog() -> dict[str, Any]:
         xls = pd.ExcelFile(path)
     except FileNotFoundError:
         log.warning("MEV workbook not found: %s", path)
-        return {}
+        return {}, {}, {}, {}
 
     # -- model_names: development dates, segments, descriptive names
     mc_df = pd.read_excel(
@@ -177,6 +178,8 @@ def load_pd_mev_catalog() -> dict[str, Any]:
     dev_dates: dict[str, str] = {}
     descriptive_names: dict[str, str] = {}
     model_types: dict[str, str] = {}
+    regions: dict[str, str] = {}
+    portfolios: dict[str, str] = {}
     for _, row in mc_df.iterrows():
         model_key = str(row.get("Model Name", "")).strip()
         if not model_key:
@@ -190,6 +193,12 @@ def load_pd_mev_catalog() -> dict[str, Any]:
         model_type = str(row.get("Model Type", "")).strip().upper()
         if model_type:
             model_types[model_key] = model_type
+        region_val = row.get("Region")
+        if pd.notna(region_val) and str(region_val).strip():
+            regions[model_key] = str(region_val).strip()
+        portfolio_val = row.get("Portfolio")
+        if pd.notna(portfolio_val) and str(portfolio_val).strip():
+            portfolios[model_key] = str(portfolio_val).strip()
 
     # -- mev_transformed: model→segment and model→MEV mapping
     desc_df = pd.read_excel(
@@ -323,13 +332,28 @@ def load_pd_mev_catalog() -> dict[str, Any]:
 
         catalog[model_name] = {
             "model_type": model_types.get(model_key, ""),
+            "region": regions.get(model_key, ""),
+            "portfolio": portfolios.get(model_key, ""),
             "segments": model_segments.get(model_key, []),
             "severe_scenario_date": "",
             "mevs": mevs,
             "contributions": contributions,
         }
 
-    return catalog, mev_mnemonic_map, mev_description_map
+    # -- Model Use Case / Cycle -> Scenario: the Scenario filter's options are
+    # the distinct "Scenario" values available for the selected "Run For"
+    # cycle in this same scenario sheet (not from any config list).
+    scenarios_by_cycle: dict[str, list[str]] = {
+        str(run_for).strip(): sorted({
+            str(scenario).strip()
+            for scenario in group["Scenario"].dropna().unique()
+            if str(scenario).strip()
+        })
+        for run_for, group in ts_df.groupby("Run For")
+        if str(run_for).strip()
+    }
+
+    return catalog, mev_mnemonic_map, mev_description_map, scenarios_by_cycle
 
 
 # ---------------------------------------------------------------------------
@@ -383,12 +407,18 @@ _LOSS_METRIC_COLUMN_MAP = {
     "acl_predicted": "Predicted ACL",
     "acl_actual": "Actual ACL",
 }
+_OPTIONAL_REVIEW_TEXT_COLUMNS = (
+    "rag_post_sr",
+    "rag_pre_mitig",
+    "rag_post_mitig",
+    "reviewer_commentary",
+)
 
 
 def _build_metric_rows_store(sheet_name: str, column_map: dict[str, str]) -> dict[str, Any]:
     """Load a precomputed performance sheet into a per-cycle metric-row store.
 
-    Returns ``{cycle: {"quarters": [...], "metrics_store": {(level, value): [rows]}}}``
+    Returns ``{cycle: {"quarters": [...], "metrics_store": {(model, segment): [rows]}}}``
     where each row matches the metric-row shape the matching page expects.
     Values are taken verbatim from the sheet — no metric is recomputed.
     """
@@ -408,18 +438,21 @@ def _build_metric_rows_store(sheet_name: str, column_map: dict[str, str]) -> dic
         cycle_df = df[df["reporting_cycle"] == cycle]
         store: dict = {}
         for _, row in cycle_df.iterrows():
-            level = str(row.get("level", "")).strip().lower()
-            value = str(row.get("model_or_segment", "")).strip()
+            model = str(row.get("model", "")).strip()
+            segment = str(row.get("segment", "")).strip()
             quarter = str(row.get("quarter", "")).strip()
-            if not level or not value or not quarter:
+            if not model or not segment or not quarter:
                 continue
             metric_row = {"Monitoring Period": quarter}
             for col, key in column_map.items():
                 metric_row[key] = _num(row.get(col)) if col in cycle_df.columns else None
+            for col in _OPTIONAL_REVIEW_TEXT_COLUMNS:
+                if col in cycle_df.columns and pd.notna(row.get(col)) and str(row.get(col)).strip():
+                    metric_row[col] = str(row.get(col)).strip()
             for count_key in ("Observations", "Defaults"):
                 if metric_row.get(count_key) is not None:
                     metric_row[count_key] = int(metric_row[count_key])
-            store.setdefault((level, value), []).append(metric_row)
+            store.setdefault((model, segment), []).append(metric_row)
         for key in store:
             store[key].sort(key=lambda r: r["Monitoring Period"])
         quarters = sorted(cycle_df["quarter"].dropna().astype(str).unique())
@@ -442,24 +475,13 @@ def load_loss_performance_metrics() -> dict[str, Any]:
     return _build_metric_rows_store(LOSS_AGGREGATED_SHEET_NAME, _LOSS_METRIC_COLUMN_MAP)
 
 
-def load_sensitivity_projections(
-    sheet_name: str, value_col: str, model_relabel: dict[str, str] | None = None,
-) -> list[dict[str, Any]]:
+def load_sensitivity_projections(sheet_name: str, value_col: str) -> list[dict[str, Any]]:
     """Load projected sensitivity rows from a ``*_Sensitivity_Projections`` sheet.
 
     ``value_col`` is the tab's projected-value column (``projected_pd`` /
     ``projected_lgd`` / ``projected_ead``). It is exposed verbatim under that key
     and also under the generic ``projected_value`` key, so the shared chart
     builders and Post-Subjective section helpers stay tab-agnostic.
-
-    ``model_relabel`` re-tags ``level == "model"`` rows whose ``model_or_segment``
-    is a key in the mapping to that key's value, then drops duplicate
-    ``(reporting_cycle, quarter, scenario_variant)`` rows the relabel produces.
-    The LGD/EAD workbook sheets carry the PD model names ("PD Model A" /
-    "PD Model B") and "All Models" on their model-level rows -- copy-paste
-    leftovers from a template shared with PD_Sensitivity_Projections -- even
-    though LGD/EAD each have exactly one model; all three labels carry
-    identical values, confirming they're the same entity under the wrong name.
     """
     try:
         df = pd.read_excel(settings.portfolio_file, sheet_name=sheet_name)
@@ -469,8 +491,8 @@ def load_sensitivity_projections(
     df = df.dropna(how="all")
     required = {
         "reporting_cycle",
-        "level",
-        "model_or_segment",
+        "model",
+        "segment",
         "projection_quarter",
         "scenario_variant",
         value_col,
@@ -500,8 +522,8 @@ def load_sensitivity_projections(
         value = round(float(row[value_col]), 8)
         records.append({
             "reporting_cycle": str(row["reporting_cycle"]).strip(),
-            "level": str(row["level"]).strip().lower(),
-            "model_or_segment": str(row["model_or_segment"]).strip(),
+            "model": str(row["model"]).strip(),
+            "segment": str(row["segment"]).strip(),
             "quarter": int(row["quarter"]),
             "projection_quarter": row["projection_quarter"].date().isoformat(),
             "scenario_variant": str(row["scenario_variant"]).strip(),
@@ -514,25 +536,60 @@ def load_sensitivity_projections(
             "mm_pm": _opt_num(row, "MM_Pm"),
         })
 
-    if model_relabel:
-        seen: set[tuple] = set()
-        relabeled: list[dict[str, Any]] = []
-        for record in records:
-            if record["level"] == "model" and record["model_or_segment"] in model_relabel:
-                record = {**record, "model_or_segment": model_relabel[record["model_or_segment"]]}
-            dedupe_key = (record["reporting_cycle"], record["level"], record["model_or_segment"], record["quarter"], record["scenario_variant"])
-            if dedupe_key in seen:
-                continue
-            seen.add(dedupe_key)
-            relabeled.append(record)
-        records = relabeled
-
     return records
 
 
 def load_pd_sensitivity_projections() -> list[dict[str, Any]]:
     """Load projected PD sensitivity rows from ``PD_Sensitivity_Projections``."""
     return load_sensitivity_projections(PD_SENSITIVITY_SHEET_NAME, "projected_pd")
+
+
+MONITORING_ACTIONS_SHEET_NAME = "monitoring_actions"
+
+# Workbook column -> normalized record key for the governance action playbook.
+_MONITORING_ACTIONS_COLUMN_MAP = {
+    "Stage": "stage",
+    "Trigger": "trigger",
+    "RAG": "rag",
+    "Description": "description",
+    "Required Action": "required_action",
+    "Additional Requirements": "additional_requirements",
+    "Escalation / Discussion": "escalation",
+    "Sponsor Approval Required": "sponsor_approval",
+    "Deep Dive Required": "deep_dive",
+    "Redevelopment Considered": "redevelopment",
+    "Action Owner": "owner",
+    "Due in Report": "due_in_report",
+}
+
+
+def load_monitoring_actions() -> list[dict[str, Any]]:
+    """Load the governance action playbook from the ``monitoring_actions`` sheet
+    of the monitoring-thresholds workbook.
+
+    One row per ``(Stage, Trigger, RAG)``; blank cells become empty strings so
+    the domain/UI layers never see NaN. Missing file or sheet -> ``[]`` (the
+    Conclusion section then simply renders without a Required Actions panel).
+    """
+    try:
+        df = pd.read_excel(settings.monitoring_thresholds_file, sheet_name=MONITORING_ACTIONS_SHEET_NAME)
+    except (FileNotFoundError, ValueError, KeyError):
+        log.warning(
+            "Monitoring actions sheet '%s' not readable in %s; playbook disabled",
+            MONITORING_ACTIONS_SHEET_NAME, settings.monitoring_thresholds_file,
+        )
+        return []
+
+    df = df.dropna(how="all")
+    records = []
+    for _, row in df.iterrows():
+        record = {
+            key: str(row[col]).strip() if col in df.columns and pd.notna(row.get(col)) else ""
+            for col, key in _MONITORING_ACTIONS_COLUMN_MAP.items()
+        }
+        if record["stage"] and record["rag"]:
+            records.append(record)
+    return records
 
 
 def _build_observations_from_aggregated(agg_df: pd.DataFrame) -> tuple[dict, list[dict], list[str], list[dict]]:
@@ -565,7 +622,15 @@ _PD_METRIC_COLUMNS = (
     "rating_migration_index",
     "ead",
     "ead_share",
+    "total_defaults",
     "default_count_1y",
+)
+
+_PD_TEXT_COLUMNS = (
+    "rag_post_sr",
+    "rag_pre_mitig",
+    "rag_post_mitig",
+    "reviewer_commentary",
 )
 
 # The horizons each per-horizon row is replicated to when its ``horizon`` cell
@@ -576,12 +641,12 @@ _PD_HORIZONS = ("1y", "2y", "nco_1y")
 def _build_metrics_store(cycle_df: pd.DataFrame) -> dict:
     """Build the precomputed-metrics lookup the calculation engine reads from.
 
-    The ``PD_Performance_Metrics`` tab is keyed by ``reporting_cycle × level ×
-    quarter × model_or_segment × horizon``. The store is keyed by
-    ``(level, model_or_segment, quarter, horizon)`` and every value is taken
+    The ``PD_Performance_Metrics`` tab is keyed by ``reporting_cycle × model ×
+    segment × quarter × horizon``. The store is keyed by
+    ``(model, segment, quarter, horizon)`` and every value is taken
     verbatim from the sheet. Rows whose ``horizon`` is blank carry
     horizon-agnostic metrics (discrimination, PSI, rating migration); they are
-    merged into every horizon for that ``(level, value, quarter)`` so the engine
+    merged into every horizon for that ``(model, segment, quarter)`` so the engine
     finds them regardless of which horizon it queries.
     """
     go_live_quarter = config.PD_GO_LIVE_QUARTER_END
@@ -589,33 +654,221 @@ def _build_metrics_store(cycle_df: pd.DataFrame) -> dict:
     def _num(value):
         return float(value) if pd.notna(value) else None
 
-    # Collect, per (level, value, quarter), the blank-horizon agnostic metrics
+    # Collect, per (model, segment, quarter), the blank-horizon agnostic metrics
     # and each specific horizon's metrics.
     grouped: dict = {}
     for _, row in cycle_df.iterrows():
         quarter = str(row["quarter"]).strip()
-        level = str(row.get("level", "")).strip().lower()
-        value = str(row.get("model_or_segment", row.get("model", "") or row.get("segment", ""))).strip()
+        model = str(row.get("model", "")).strip()
+        segment = str(row.get("segment", "")).strip()
         horizon = str(row.get("horizon", "")).strip()
-        if not quarter or not level or not value:
+        if not quarter or not model or not segment:
             continue
         metrics = {col: _num(row.get(col)) for col in _PD_METRIC_COLUMNS if col in cycle_df.columns}
-        bucket = grouped.setdefault((level, value, quarter), {"shared": {}, "horizons": {}})
+        total_defaults = metrics.get("total_defaults")
+        legacy_default_count_1y = metrics.get("default_count_1y")
+        if total_defaults is None and legacy_default_count_1y is not None:
+            total_defaults = legacy_default_count_1y
+            metrics["total_defaults"] = legacy_default_count_1y
+        if horizon == "1y" and metrics.get("default_count_1y") is None and total_defaults is not None:
+            metrics["default_count_1y"] = total_defaults
+        metrics.update({
+            col: str(row.get(col)).strip()
+            for col in _PD_TEXT_COLUMNS
+            if col in cycle_df.columns and pd.notna(row.get(col)) and str(row.get(col)).strip()
+        })
+        bucket = grouped.setdefault((model, segment, quarter), {"shared": {}, "horizons": {}})
         if horizon in ("", "nan", "all"):
             bucket["shared"].update({k: v for k, v in metrics.items() if v is not None})
         else:
             bucket["horizons"][horizon] = metrics
 
     store: dict = {}
-    for (level, value, quarter), bucket in grouped.items():
+    for (model, segment, quarter), bucket in grouped.items():
         shared = bucket["shared"]
         horizons = bucket["horizons"] or {h: {} for h in _PD_HORIZONS}
         for horizon, specific in horizons.items():
             merged = {**shared, **{k: v for k, v in specific.items() if v is not None}}
             merged.setdefault("go_live_quarter", go_live_quarter)
-            store[(level, value, quarter, horizon)] = merged
+            store[(model, segment, quarter, horizon)] = merged
 
     return store
+
+
+_LGD_TEXT_COLUMNS = (
+    "rag_post_sr",
+    "rag_pre_mitig",
+    "rag_post_mitig",
+    "reviewer_commentary",
+)
+
+_EAD_TEXT_COLUMNS = (
+    "rag_post_sr",
+    "rag_pre_mitig",
+    "rag_post_mitig",
+    "reviewer_commentary",
+)
+
+
+def _update_review_flow_field(
+    sheet_name: str,
+    valid_fields: tuple[str, ...],
+    reporting_cycle: str, model: str, segment: str, quarter: str, field: str, new_value: str,
+) -> int:
+    """Write ``new_value`` for ``field`` into ``sheet_name`` of the portfolio file, in place.
+
+    Shared by :func:`update_pd_review_flow_rag` and :func:`update_lgd_review_flow_rag`. Every row for a
+    given ``(reporting_cycle, model, segment, quarter)`` carries the same value in these sheets
+    (PD duplicates it across horizon rows; LGD has exactly one row per key), so all matching rows are
+    updated together to keep the file internally consistent. Returns the number of rows written; 0 means
+    no matching rows were found (nothing was written, so the file is untouched).
+    """
+    if field not in valid_fields:
+        raise ValueError(f"Unknown review-flow RAG field: {field!r}")
+
+    workbook = openpyxl.load_workbook(settings.portfolio_file)
+    sheet = workbook[sheet_name]
+
+    header_row = next(sheet.iter_rows(min_row=1, max_row=1))
+    col_index = {cell.value: cell.column for cell in header_row if cell.value}
+    base_columns = ("reporting_cycle", "quarter", "model", "segment")
+    if any(name not in col_index for name in base_columns):
+        log.warning("%s is missing a required column for the RAG write-back; skipped.", sheet_name)
+        return 0
+
+    if field not in col_index:
+        # Self-healing schema: e.g. reviewer_commentary may not exist in the sheet yet on first use --
+        # add the column header once instead of silently failing every save attempt.
+        new_col = sheet.max_column + 1
+        sheet.cell(row=1, column=new_col, value=field)
+        col_index[field] = new_col
+        log.info("Added missing column %r to %s in %s", field, sheet_name, settings.portfolio_file)
+
+    def _cell_text(row, name: str) -> str:
+        value = row[col_index[name] - 1].value
+        return str(value).strip() if value is not None else ""
+
+    updated = 0
+    for row in sheet.iter_rows(min_row=2):
+        if (
+            _cell_text(row, "reporting_cycle") == reporting_cycle
+            and _cell_text(row, "quarter") == quarter
+            and _cell_text(row, "model") == model
+            and _cell_text(row, "segment") == segment
+        ):
+            row[col_index[field] - 1].value = new_value
+            updated += 1
+
+    if updated:
+        workbook.save(settings.portfolio_file)
+        log.info(
+            "Updated %s to %r for %s %s %s %s (%d row(s)) in %s [%s]",
+            field, new_value, reporting_cycle, model, segment, quarter, updated, settings.portfolio_file, sheet_name,
+        )
+    return updated
+
+
+def update_pd_review_flow_rag(
+    reporting_cycle: str, model: str, segment: str, quarter: str, field: str, new_value: str,
+) -> int:
+    """Write ``new_value`` for ``field`` into the ``PD_Performance_Metrics`` sheet, in place.
+
+    ``field`` is one of ``rag_post_sr`` / ``rag_pre_mitig`` / ``rag_post_mitig`` / ``reviewer_commentary``.
+    """
+    return _update_review_flow_field(
+        PD_AGGREGATED_SHEET_NAME, _PD_TEXT_COLUMNS,
+        reporting_cycle, model, segment, quarter, field, new_value,
+    )
+
+
+def update_lgd_review_flow_rag(
+    reporting_cycle: str, model: str, segment: str, quarter: str, field: str, new_value: str,
+) -> int:
+    """Write ``new_value`` for ``field`` into the ``LGD_Performance_Metrics`` sheet, in place.
+
+    ``field`` is one of ``rag_post_sr`` / ``rag_pre_mitig`` / ``rag_post_mitig`` / ``reviewer_commentary``.
+    """
+    return _update_review_flow_field(
+        LGD_AGGREGATED_SHEET_NAME, _LGD_TEXT_COLUMNS,
+        reporting_cycle, model, segment, quarter, field, new_value,
+    )
+
+
+def update_ead_review_flow_rag(
+    reporting_cycle: str, model: str, segment: str, quarter: str, field: str, new_value: str,
+) -> int:
+    """Write ``new_value`` for ``field`` into the ``EAD_Performance_Metrics`` sheet, in place.
+
+    ``field`` is one of ``rag_post_sr`` / ``rag_pre_mitig`` / ``rag_post_mitig`` / ``reviewer_commentary``.
+    """
+    return _update_review_flow_field(
+        EAD_AGGREGATED_SHEET_NAME, _EAD_TEXT_COLUMNS,
+        reporting_cycle, model, segment, quarter, field, new_value,
+    )
+
+
+def _build_model_segment_cycle_map(agg_df: pd.DataFrame) -> dict[tuple[str, str], list[str]]:
+    """Which reporting cycles have real data for each (model, segment) pair.
+
+    Some models have less cycle history for specific segments than for their
+    own "All" aggregate row (e.g. PD Model B's Cyclical/Defensive breakdown
+    only starts at CCAR 2025, while its All row also has BAU 2025Q1) -- this
+    lets the Model Use Case / Cycle filter narrow to what the currently
+    selected model/segment population actually has, instead of always
+    showing the full global cycle list.
+    """
+    result: dict[tuple[str, str], list[str]] = {}
+    grouped = agg_df.groupby([
+        agg_df["model"].map(_normalize_model_name),
+        agg_df["segment"].astype(str).str.strip(),
+    ])
+    for (model, segment), group in grouped:
+        if not model or not segment:
+            continue
+        result[(model, segment)] = sorted(group["reporting_cycle"].dropna().unique())
+    return result
+
+
+def _build_model_segment_cycle_map_from_sheet(sheet_name: str) -> dict[tuple[str, str], list[str]]:
+    """Same as :func:`_build_model_segment_cycle_map`, reading ``sheet_name`` directly.
+
+    Used for LGD/EAD, whose sheet rows use model names verbatim (no
+    normalization needed, unlike PD's).
+    """
+    try:
+        df = pd.read_excel(settings.portfolio_file, sheet_name=sheet_name)
+    except (FileNotFoundError, ValueError, KeyError):
+        return {}
+    df = df.dropna(how="all")
+    if df.empty or "reporting_cycle" not in df.columns:
+        return {}
+    result: dict[tuple[str, str], list[str]] = {}
+    grouped = df.groupby([
+        df["model"].astype(str).str.strip(),
+        df["segment"].astype(str).str.strip(),
+    ])
+    for (model, segment), group in grouped:
+        if not model or not segment:
+            continue
+        result[(model, segment)] = sorted(group["reporting_cycle"].dropna().unique())
+    return result
+
+
+def _build_model_segment_map(agg_df: pd.DataFrame) -> dict[str, list[str]]:
+    """Which real segments each model actually owns.
+
+    More than one model can cover the same segment name (e.g. both PD Model A
+    and PD Model D have Cyclical rows) -- this lets the PD Performance tab
+    narrow its Segment filter to whatever the currently-selected model has,
+    instead of offering every segment in the portfolio regardless of model.
+    """
+    return {
+        model: sorted({
+            s for s in group["segment"].dropna().astype(str).str.strip().unique()
+            if s and s.lower() != "all"
+        })
+        for model, group in agg_df.groupby(agg_df["model"].map(_normalize_model_name))
+    }
 
 
 def load_pd_performance_data_from_aggregated() -> dict[str, Any]:
@@ -631,17 +884,21 @@ def load_pd_performance_data_from_aggregated() -> dict[str, Any]:
     latest_quarter = quarters[-1] if quarters else ""
     previous_quarter = quarters[-2] if len(quarters) > 1 else ""
 
-    # Models/segments are the entities under each ``level`` in the sheet. The
-    # "All Models" portfolio entity is the implicit default, not a pickable model.
-    is_model = agg_df["level"].astype(str).str.lower() == "model"
-    is_segment = agg_df["level"].astype(str).str.lower() == "segment"
+    # Every row now names both a model and a segment ("All" for the model's
+    # aggregate row). We still ignore any legacy "All Models" rows if they
+    # exist in older files.
     data_model_names = sorted({
-        m for m in agg_df.loc[is_model, "model_or_segment"].dropna().map(_normalize_model_name).unique()
+        m for m in agg_df["model"].dropna().map(_normalize_model_name).unique()
         if m and m != "All Models"
     })
-    data_segment_values = sorted(agg_df.loc[is_segment, "model_or_segment"].dropna().astype(str).str.strip().unique())
+    data_segment_values = sorted({
+        s for s in agg_df["segment"].dropna().astype(str).str.strip().unique()
+        if s and s.lower() != "all"
+    })
     model_names = data_model_names or ["PD Model A", "PD Model B"]
     segment_values = data_segment_values or ["Cyclical", "Defensive", "O&M", "LoL", "IVB"]
+    pd_model_segments = _build_model_segment_map(agg_df)
+    pd_model_segment_cycles = _build_model_segment_cycle_map(agg_df)
 
     monitoring_thresholds = load_monitoring_thresholds()
 
@@ -674,7 +931,7 @@ def load_pd_performance_data_from_aggregated() -> dict[str, Any]:
             _build_observations_from_aggregated(agg_df)
         )
 
-    mev_catalog, mev_mnemonic_map, mev_description_map = load_pd_mev_catalog()
+    mev_catalog, mev_mnemonic_map, mev_description_map, mev_scenarios_by_cycle = load_pd_mev_catalog()
 
     return {
         "portfolio": portfolio,
@@ -686,6 +943,11 @@ def load_pd_performance_data_from_aggregated() -> dict[str, Any]:
         "source_file": settings.portfolio_file.name,
         "model_names": model_names,
         "segment_values": segment_values,
+        "pd_model_segments": pd_model_segments,
+        "pd_model_segment_cycles": pd_model_segment_cycles,
+        "lgd_model_segment_cycles": _build_model_segment_cycle_map_from_sheet(LGD_AGGREGATED_SHEET_NAME),
+        "ead_model_segment_cycles": _build_model_segment_cycle_map_from_sheet(EAD_AGGREGATED_SHEET_NAME),
+        "mev_scenarios_by_cycle": mev_scenarios_by_cycle,
         "monitoring_thresholds": monitoring_thresholds,
         "performance_horizons": performance_horizons,
         "performance_observations": performance_observations,
@@ -697,14 +959,9 @@ def load_pd_performance_data_from_aggregated() -> dict[str, Any]:
         "mev_mnemonic_map": mev_mnemonic_map,
         "mev_description_map": mev_description_map,
         "sensitivity_projections": load_pd_sensitivity_projections(),
-        "lgd_sensitivity_projections": load_sensitivity_projections(
-            LGD_SENSITIVITY_SHEET_NAME, "projected_lgd",
-            model_relabel={"PD Model A": "LGD Model A", "PD Model B": "LGD Model A", "All Models": "LGD Model A"},
-        ),
-        "ead_sensitivity_projections": load_sensitivity_projections(
-            EAD_SENSITIVITY_SHEET_NAME, "projected_ead",
-            model_relabel={"PD Model A": "EAD Model A", "PD Model B": "EAD Model A", "All Models": "EAD Model A"},
-        ),
+        "monitoring_actions": load_monitoring_actions(),
+        "lgd_sensitivity_projections": load_sensitivity_projections(LGD_SENSITIVITY_SHEET_NAME, "projected_lgd"),
+        "ead_sensitivity_projections": load_sensitivity_projections(EAD_SENSITIVITY_SHEET_NAME, "projected_ead"),
         "rank_ordering_facilities": {},
         "lgd_observations_by_cycle": load_lgd_performance_metrics(),
         "ead_observations_by_cycle": load_ead_performance_metrics(),

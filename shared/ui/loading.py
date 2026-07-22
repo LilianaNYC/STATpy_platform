@@ -51,6 +51,7 @@ def build_dashboard_loading_shell(
     loading_class_name: str = "dashboard-loading-mask",
     overlay_style: dict | None = None,
     spinner_card_class_name: str | None = None,
+    delay_show: int = 180,
 ):
     """Wrap a callback-driven content surface in the shared loading experience."""
 
@@ -58,7 +59,7 @@ def build_dashboard_loading_shell(
         id=loading_id or f"{content_id}-loading",
         parent_className=parent_class_name,
         className=loading_class_name,
-        delay_show=180,
+        delay_show=delay_show,
         show_initially=False,
         color="transparent",
         overlay_style=overlay_style or {"visibility": "visible", "filter": "blur(2px) saturate(0.9)"},

@@ -43,6 +43,22 @@ MONITORING_POINT_MENU_ID = "loss-monitoring-point-menu"
 MODEL_FILTER_KEY = "loss-model"
 SEGMENT_FILTER_KEY = "loss-segment"
 MONITORING_POINT_FILTER_KEY = "loss-monitoring-point"
+REGION_ID = "loss-region"
+REGION_TOGGLE_ID = "loss-region-toggle"
+REGION_MENU_ID = "loss-region-menu"
+REGION_FILTER_KEY = "loss-region"
+PORTFOLIO_ID = "loss-portfolio"
+PORTFOLIO_TOGGLE_ID = "loss-portfolio-toggle"
+PORTFOLIO_MENU_ID = "loss-portfolio-menu"
+PORTFOLIO_FILTER_KEY = "loss-portfolio"
+MODEL_GROUP_ID = "loss-model-group"
+MODEL_GROUP_TOGGLE_ID = "loss-model-group-toggle"
+MODEL_GROUP_MENU_ID = "loss-model-group-menu"
+MODEL_GROUP_FILTER_KEY = "loss-model-group"
+SCENARIO_ID = "loss-scenario"
+SCENARIO_TOGGLE_ID = "loss-scenario-toggle"
+SCENARIO_MENU_ID = "loss-scenario-menu"
+SCENARIO_FILTER_KEY = "loss-scenario"
 LOSS_SUBNAV_ID = "loss-subnav"
 RANGE_STORE_ID = "loss-range-store"
 PERFORMANCE_SECTION_RANGE_KEY = "loss_performance_section"
@@ -89,7 +105,7 @@ def _build_loss_subnav() -> html.Div:
             html.Div(
                 className="monitoring-section-subnav-group pd-subnav-group pd-subnav-group-rag active",
                 children=[
-                    html.Div("RAG Assignment", className="monitoring-section-subnav-label"),
+                    html.Div("Chapter 1: RAG Assignment", className="monitoring-section-subnav-label"),
                     html.Div(
                         className="monitoring-section-subnav-links",
                         children=[
@@ -432,7 +448,7 @@ def build_loss_apply_prompt() -> html.Section:
                                         className="saas-getting-started-highlights",
                                         children=[
                                             html.Span("1. Choose Model Use Case / Cycle and Monitoring Point.", className="saas-getting-started-highlight"),
-                                            html.Span("2. Pick a Segment or a Specific Model — not both.", className="saas-getting-started-highlight"),
+                                            html.Span("2. Optionally narrow to a Segment (Loss has a single model).", className="saas-getting-started-highlight"),
                                             html.Span("3. Click Apply filters to load the dashboard.", className="saas-getting-started-highlight"),
                                         ],
                                     ),
@@ -457,8 +473,9 @@ def build_loss_apply_prompt() -> html.Section:
                                     ]),
                                     html.Li([
                                         html.Strong("Choose your population. "),
-                                        "Select a Segment or a single Specific Model — these two filters are mutually "
-                                        "exclusive. Leaving both at “All” reads the portfolio-level (All Models) metrics.",
+                                        "Region, Portfolio, and Model Group are fixed (Loss has a single model). "
+                                        "Segment narrows to a specific portfolio segment; leaving it at “All” reads "
+                                        "the portfolio-level (All Models) metrics.",
                                     ]),
                                     html.Li([
                                         html.Strong("Click “Apply filters”. "),
@@ -522,7 +539,9 @@ def page_layout(data: dict) -> list:
     model_options = model_names("loss")
     segment_options = ["All", *segment_values()]
     reporting_cycle_options = [{"label": c["label"], "value": c["value"]} for c in cfg["reporting_cycles"]]
+    scenario_options = [{"label": s["label"], "value": s["value"]} for s in cfg["scenarios"]]
     default_cycle = reporting_cycle_options[0]["value"] if reporting_cycle_options else "CCAR 2026"
+    default_scenario = scenario_options[0]["value"] if scenario_options else "intsevere"
     cycle_data = (data.get("loss_observations_by_cycle") or {}).get(default_cycle)
     if cycle_data:
         set_loss_metrics(cycle_data.get("metrics_store"), cycle_data.get("quarters"))
@@ -543,9 +562,69 @@ def page_layout(data: dict) -> list:
                 html.Div(
                     style={"flex": "1"},
                     children=[
-                        html.Div("Wholesale Portfolio Model Monitoring Dashboard", className="monitoring-dashboard-title"),
+                        html.Div("Loss Performance Monitoring Dashboard", className="monitoring-dashboard-title"),
                         html.Div(
-                            className="monitoring-controls",
+                            className="monitoring-controls saas-top-filter-row monitoring-primary-filter-row",
+                            children=[
+                                _build_filter(
+                                    "Region",
+                                    shared_filters.build_single_select_dropdown(
+                                        value_id=REGION_ID,
+                                        toggle_id=REGION_TOGGLE_ID,
+                                        menu_id=REGION_MENU_ID,
+                                        filter_key=REGION_FILTER_KEY,
+                                        options=[{"label": "All", "value": "All"}],
+                                        value="All",
+                                    ),
+                                ),
+                                _build_filter(
+                                    "Portfolio",
+                                    shared_filters.build_single_select_dropdown(
+                                        value_id=PORTFOLIO_ID,
+                                        toggle_id=PORTFOLIO_TOGGLE_ID,
+                                        menu_id=PORTFOLIO_MENU_ID,
+                                        filter_key=PORTFOLIO_FILTER_KEY,
+                                        options=[{"label": "All", "value": "All"}],
+                                        value="All",
+                                    ),
+                                ),
+                                _build_filter(
+                                    "Model Group",
+                                    shared_filters.build_single_select_dropdown(
+                                        value_id=MODEL_GROUP_ID,
+                                        toggle_id=MODEL_GROUP_TOGGLE_ID,
+                                        menu_id=MODEL_GROUP_MENU_ID,
+                                        filter_key=MODEL_GROUP_FILTER_KEY,
+                                        options=[{"label": "Loss", "value": "Loss"}],
+                                        value="Loss",
+                                    ),
+                                ),
+                                _build_filter(
+                                    "Model",
+                                    shared_filters.build_single_select_dropdown(
+                                        value_id=MODEL_DROPDOWN_ID,
+                                        toggle_id=MODEL_TOGGLE_ID,
+                                        menu_id=MODEL_MENU_ID,
+                                        filter_key=MODEL_FILTER_KEY,
+                                        options=model_select_options,
+                                        value="all",
+                                    ),
+                                ),
+                                _build_filter(
+                                    "Segment",
+                                    shared_filters.build_single_select_dropdown(
+                                        value_id=SEGMENT_DROPDOWN_ID,
+                                        toggle_id=SEGMENT_TOGGLE_ID,
+                                        menu_id=SEGMENT_MENU_ID,
+                                        filter_key=SEGMENT_FILTER_KEY,
+                                        options=_dropdown_options(segment_options),
+                                        value="All",
+                                    ),
+                                ),
+                            ],
+                        ),
+                        html.Div(
+                            className="monitoring-controls saas-top-filter-row saas-secondary-filter-row",
                             children=[
                                 _build_filter(
                                     "Model Use Case / Cycle",
@@ -570,25 +649,14 @@ def page_layout(data: dict) -> list:
                                     ),
                                 ),
                                 _build_filter(
-                                    "Segment",
+                                    "Scenario",
                                     shared_filters.build_single_select_dropdown(
-                                        value_id=SEGMENT_DROPDOWN_ID,
-                                        toggle_id=SEGMENT_TOGGLE_ID,
-                                        menu_id=SEGMENT_MENU_ID,
-                                        filter_key=SEGMENT_FILTER_KEY,
-                                        options=_dropdown_options(segment_options),
-                                        value="All",
-                                    ),
-                                ),
-                                _build_filter(
-                                    "Model",
-                                    shared_filters.build_single_select_dropdown(
-                                        value_id=MODEL_DROPDOWN_ID,
-                                        toggle_id=MODEL_TOGGLE_ID,
-                                        menu_id=MODEL_MENU_ID,
-                                        filter_key=MODEL_FILTER_KEY,
-                                        options=model_select_options,
-                                        value="all",
+                                        value_id=SCENARIO_ID,
+                                        toggle_id=SCENARIO_TOGGLE_ID,
+                                        menu_id=SCENARIO_MENU_ID,
+                                        filter_key=SCENARIO_FILTER_KEY,
+                                        options=scenario_options,
+                                        value=default_scenario,
                                     ),
                                 ),
                                 _build_loss_apply_button(),

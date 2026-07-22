@@ -18,15 +18,15 @@ from ....shared.domain.calculations import calculate_pd_metric_rag, get_worst_pd
 EAD_METRICS = ["ME", "RMSE", "Kendall's Tau"]
 EAD_CALIBRATION_METRICS = ["ME", "RMSE"]
 EAD_DISCRIMINATION_METRICS = ["Kendall's Tau"]
-EAD_ALL_MODELS_LABEL = "All models"
-
-
 # ---------------------------------------------------------------------------
 # Precomputed-metrics store
 # ---------------------------------------------------------------------------
 # The EAD tab reads metric rows straight from ``EAD_Performance_Metrics`` via a
-# store keyed by ``(level, value)``. The cycle callback installs the selected
-# reporting cycle's store and quarters here.
+# store keyed by ``(model, segment)`` (segment ``"All"`` for a model's
+# aggregate row). The cycle callback installs the selected reporting cycle's
+# store and quarters here.
+
+EAD_MODEL_LABEL = "EAD Model A"
 
 _EAD_STORE: dict | None = None
 _EAD_QUARTERS: list[str] = []
@@ -40,18 +40,33 @@ def set_ead_metrics(store: dict | None, quarters: list[str] | None = None) -> No
 
 
 def _ead_store_key(selected_model, selected_segment) -> tuple[str, str]:
-    """Map a (model, segment) selection to a ``(level, value)`` store key."""
-    segment = selected_segment if isinstance(selected_segment, str) else None
-    if segment and segment not in ("All", "all", ""):
-        return "segment", segment
+    """Map a (model, segment) selection to a ``(model, segment)`` store key.
+
+    Segment refines whichever model is selected. Segment names can be shared
+    across models (e.g. both EAD Model A and EAD Model B have a "Defensive"
+    row), so a real segment must resolve against the *selected* model when
+    one is known; :data:`EAD_MODEL_LABEL` is only a fallback for when no
+    single model is in scope (mirrors PD's ``PD_SEGMENT_HOME_MODEL`` in
+    ``shared/domain/calculations.py``).
+    """
     if isinstance(selected_model, (list, tuple, set)):
         models = [m for m in selected_model if m]
         model = models[0] if len(models) == 1 else None
     else:
         model = selected_model
-    if model and model not in ("all", "All", EAD_ALL_MODELS_LABEL, ""):
-        return "model", str(model)
-    return "model", "All Models"
+    model = str(model) if model and model not in ("all", "All", "") else None
+
+    segment = selected_segment if isinstance(selected_segment, str) else None
+    if segment and segment not in ("All", "all", ""):
+        return model or EAD_MODEL_LABEL, segment
+    if model:
+        return model, "All"
+    return "", "All"
+
+
+def ead_store_key(selected_model, selected_segment) -> tuple[str, str]:
+    """Public wrapper for :func:`_ead_store_key`, for callers outside this module."""
+    return _ead_store_key(selected_model, selected_segment)
 
 
 def _ead_store_rows(selected_model, selected_segment) -> list[dict] | None:
@@ -138,7 +153,7 @@ def resolve_ead_models(data: dict, selected_model: str | list[str] | tuple[str, 
     if isinstance(selected_model, (list, tuple, set)):
         selected = [str(value) for value in selected_model if value in models]
         return selected
-    if selected_model in {EAD_ALL_MODELS_LABEL, "All", None, ""}:
+    if selected_model in {"All", None, ""}:
         return []
     if selected_model in models:
         return [str(selected_model)]
@@ -147,6 +162,13 @@ def resolve_ead_models(data: dict, selected_model: str | list[str] | tuple[str, 
 
 
 def get_ead_segments_for_model(data: dict, selected_model: str | list[str] | tuple[str, ...] | set[str] | None) -> list[str]:
+    """Segments available for the Segment dropdown.
+
+    Segments are a global list (shared across models), not derived from
+    ``selected_model`` -- kept as a parameter for signature parity with
+    :func:`resolve_ead_segment`. Available regardless of whether a model is
+    selected, so Segment can be browsed/chosen before Model.
+    """
     from ....shared.repositories.filters_config import segment_values
     segments = segment_values()
     if segments:
@@ -253,6 +275,24 @@ def get_ead_periods(data: dict, selected_model: str | None, selected_segment: st
 def get_ead_monitoring_point_options(data: dict, selected_model: str | None, selected_segment: str | None = "All") -> list[str]:
     periods = get_ead_periods(data, selected_model, selected_segment)
     return ["Latest", *reversed(periods)]
+
+
+def get_previous_ead_quarter(data: dict, selected_model: str | None, selected_segment: str | None, quarter: str) -> str:
+    """The monitoring period immediately before ``quarter``, or "" if there isn't one."""
+    periods = get_ead_periods(data, selected_model, selected_segment)
+    if quarter not in periods:
+        return ""
+    index = periods.index(quarter)
+    return periods[index - 1] if index > 0 else ""
+
+
+def ead_metrics_row_for_quarter(selected_model: str | None, selected_segment: str | None, quarter: str) -> dict[str, Any]:
+    """The precomputed EAD metric row for a specific monitoring period, or ``{}`` if none is loaded."""
+    rows = _ead_store_rows(selected_model, selected_segment) or []
+    for row in rows:
+        if str(row.get("Monitoring Period", "")) == str(quarter):
+            return row
+    return {}
 
 
 def resolve_ead_monitoring_point(

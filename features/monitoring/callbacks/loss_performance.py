@@ -28,12 +28,28 @@ def register_callbacks(app) -> None:
         return
 
     data = PD_PERFORMANCE_DATA
+    mev_scenarios_by_cycle = data.get("mev_scenarios_by_cycle") or {}
+
+    from ....shared.repositories.filters_config import load_filter_config as _load_filter_config
+    _cfg_scenario_options = [
+        {"label": s["label"], "value": s["value"]} for s in _load_filter_config()["scenarios"]
+    ]
 
     for value_id, toggle_id, menu_id, filter_key in (
         (layout.REPORTING_CYCLE_ID, layout.REPORTING_CYCLE_TOGGLE_ID, layout.REPORTING_CYCLE_MENU_ID, layout.REPORTING_CYCLE_FILTER_KEY),
         (layout.MONITORING_POINT_DROPDOWN_ID, layout.MONITORING_POINT_TOGGLE_ID, layout.MONITORING_POINT_MENU_ID, layout.MONITORING_POINT_FILTER_KEY),
         (layout.SEGMENT_DROPDOWN_ID, layout.SEGMENT_TOGGLE_ID, layout.SEGMENT_MENU_ID, layout.SEGMENT_FILTER_KEY),
         (layout.MODEL_DROPDOWN_ID, layout.MODEL_TOGGLE_ID, layout.MODEL_MENU_ID, layout.MODEL_FILTER_KEY),
+        # Region/Portfolio/Model Group: Loss has no entries in dummy_mev_data.xlsx
+        # (no per-model Region/Portfolio, and only one implicit "model"), so these
+        # are fixed, single-option placeholders for positional consistency with
+        # the other three tabs -- not wired to narrow anything.
+        (layout.REGION_ID, layout.REGION_TOGGLE_ID, layout.REGION_MENU_ID, layout.REGION_FILTER_KEY),
+        (layout.PORTFOLIO_ID, layout.PORTFOLIO_TOGGLE_ID, layout.PORTFOLIO_MENU_ID, layout.PORTFOLIO_FILTER_KEY),
+        (layout.MODEL_GROUP_ID, layout.MODEL_GROUP_TOGGLE_ID, layout.MODEL_GROUP_MENU_ID, layout.MODEL_GROUP_FILTER_KEY),
+        # Scenario: net new here (Loss has no Loss_Sensitivity_Projections sheet,
+        # so nothing downstream reads it) -- present for bar consistency only.
+        (layout.SCENARIO_ID, layout.SCENARIO_TOGGLE_ID, layout.SCENARIO_MENU_ID, layout.SCENARIO_FILTER_KEY),
     ):
         filter_shell.register_single_select_callbacks(
             app,
@@ -42,6 +58,29 @@ def register_callbacks(app) -> None:
             menu_id=menu_id,
             filter_key=filter_key,
         )
+
+    # -----------------------------------------------------------------
+    # Scenario options come from dummy_mev_data.xlsx's "scenario" sheet: the
+    # distinct "Scenario" values available for the "Run For" cycle matching
+    # the selected Model Use Case / Cycle -- see sync_pd_cycle_to_scenario_options.
+    # Still unwired to anything downstream (see the Scenario registration note
+    # above), but its own options/value now stay consistent with the other tabs.
+    # -----------------------------------------------------------------
+    @app.callback(
+        Output(layout.SCENARIO_ID, "options"),
+        Output(layout.SCENARIO_ID, "value"),
+        Input(layout.REPORTING_CYCLE_ID, "value"),
+        State(layout.SCENARIO_ID, "value"),
+    )
+    def sync_loss_cycle_to_scenario_options(cycle, current_scenario):
+        scenarios = mev_scenarios_by_cycle.get(cycle)
+        if scenarios:
+            options = [option for option in _cfg_scenario_options if option["value"] in set(scenarios)] or _cfg_scenario_options
+        else:
+            options = _cfg_scenario_options
+        allowed_values = {option["value"] for option in options}
+        value = current_scenario if current_scenario in allowed_values else (options[0]["value"] if options else "")
+        return options, value
 
     def _install_loss_store(reporting_cycle):
         from ..domain.loss import set_loss_metrics

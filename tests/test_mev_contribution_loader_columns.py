@@ -127,7 +127,7 @@ def test_monitoring_loader_reads_model_contribution_column(monkeypatch):
     monkeypatch.setattr(monitoring_loader.pd, "ExcelFile", lambda _path: _DummyExcelFile())
     monkeypatch.setattr(monitoring_loader.pd, "read_excel", fake_read_excel)
 
-    catalog, _mev_map, _desc_map = monitoring_loader.load_pd_mev_catalog()
+    catalog, _mev_map, _desc_map, _scenarios_by_cycle = monitoring_loader.load_pd_mev_catalog()
 
     assert catalog["Model A"]["contributions"] == {"Transformed A": 0.42}
 

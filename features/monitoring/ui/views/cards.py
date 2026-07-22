@@ -223,8 +223,9 @@ def build_pd_section_heading(index, title, description, rag, options=None):
     copy_children = [
         html.Div(index, className="pd-content-kicker"),
         html.Div(heading_row, className="pd-heading-row"),
-        html.P(description),
     ]
+    if description:
+        copy_children.append(html.P(description))
     main_children = [html.Div(copy_children, className="pd-domain-heading-copy")]
     aside_children = []
 

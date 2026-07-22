@@ -56,6 +56,7 @@ class PostSubjectiveConfig:
     model_type: str        # Scenario_Test_Thresholds model_type, e.g. "EAD" / "LGD"
     sensitivity_key: str   # data payload key, e.g. "ead_sensitivity_projections"
     scenario_filter_id: str
+    default_segment_model: str = ""  # model a segment selection resolves against, e.g. "EAD Model A"
 
 
 # ---------------------------------------------------------------------------
@@ -73,28 +74,35 @@ def _scenario_label(value: str | None) -> str:
     return str(value or "").strip() or "Scenario"
 
 
-def resolve_entity(selected_model, selected_segment) -> tuple[str, str]:
-    """Resolve the sensitivity row's (level, model_or_segment) from the selection."""
+def _entity_label(model: str, segment: str) -> str:
+    return f"{model} — {segment}" if segment and segment != "All" else (model or "—")
+
+
+def resolve_entity(selected_model, selected_segment, default_segment_model: str) -> tuple[str, str]:
+    """Resolve the sensitivity row's (model, segment) from the selection.
+
+    A real segment selection resolves against ``default_segment_model`` (the
+    tab's single model with segment-level rows); otherwise the selected
+    model is used with segment ``"All"``.
+    """
     segment = str(selected_segment or "").strip()
     if segment and segment.lower() not in {"all", "all segments"}:
-        return "segment", selected_segment
+        return default_segment_model, selected_segment
     if isinstance(selected_model, (list, tuple, set)):
         models = sorted(str(m) for m in selected_model if m)
-        if len(models) == 1:
-            return "model", models[0]
-        return "model", "All Models"
+        return (models[0] if models else ""), "All"
     model = str(selected_model or "").strip()
     if model and model.lower() not in {"all", "all models"}:
-        return "model", selected_model
-    return "model", "All Models"
+        return selected_model, "All"
+    return "", "All"
 
 
-def _projection_rows(rows, reporting_cycle, level, entity) -> list[dict]:
+def _projection_rows(rows, reporting_cycle, model, segment) -> list[dict]:
     return [
         row for row in rows or []
         if row.get("reporting_cycle") == reporting_cycle
-        and row.get("level") == level
-        and row.get("model_or_segment") == entity
+        and row.get("model") == model
+        and row.get("segment") == segment
         and row.get("scenario_variant")
     ]
 
@@ -203,7 +211,7 @@ def build_getting_started_prompt(label: str, full_name: str) -> html.Section:
                                         className="saas-getting-started-highlights",
                                         children=[
                                             html.Span("1. Choose Model Use Case / Cycle, Scenario, and Monitoring Point.", className="saas-getting-started-highlight"),
-                                            html.Span("2. Pick a Segment or a Specific Model — not both.", className="saas-getting-started-highlight"),
+                                            html.Span("2. Pick a Region/Portfolio/Model, then optionally narrow to a Segment.", className="saas-getting-started-highlight"),
                                             html.Span("3. Click Apply filters to load the dashboard.", className="saas-getting-started-highlight"),
                                         ],
                                     ),
@@ -233,13 +241,14 @@ def build_getting_started_prompt(label: str, full_name: str) -> html.Section:
                                     ]),
                                     html.Li([
                                         html.Strong("Choose your population. "),
-                                        "Select a Segment or a single Specific Model — these two filters are mutually "
-                                        "exclusive. Leaving both at “All” reads the portfolio-level (All Models) metrics.",
+                                        "Region, Portfolio, and Model Group narrow the Model list. Segment can be picked "
+                                        "independently of Model -- with no Model chosen it lists every segment; picking a "
+                                        "Model narrows it to that model's own segments.",
                                     ]),
                                     html.Li([
                                         html.Strong("Click “Apply filters”. "),
-                                        "The dashboard loads here. Nothing renders until you apply, so this starting guide "
-                                        "stays visible until the first Apply.",
+                                        "Requires a Model to be selected -- the button stays disabled until you pick one. "
+                                        "Nothing renders until you apply, so this starting guide stays visible until the first Apply.",
                                     ]),
                                     html.Li([
                                         html.Strong("Read the analysis in two chapters. "),
@@ -348,11 +357,11 @@ def _mev_range_summary(cfg: PostSubjectiveConfig, data: dict, selected_model, se
     }
 
 
-def build_overview_section(
+def compute_post_subjective_summaries(
     cfg: PostSubjectiveConfig,
     data: dict,
-    level: str,
-    entity: str,
+    model: str,
+    segment: str,
     reporting_cycle: str,
     scenario: str,
     monitoring_point: str,
@@ -361,12 +370,14 @@ def build_overview_section(
     selected_model,
     selected_segment,
     store: dict | None = None,
-) -> html.Section:
-    """Review scorecard summarising every applicable post-subjective test.
+) -> list[dict]:
+    """Headline status + key metric + takeaway for every applicable post-subjective test.
 
-    Mirrors the PD 2.1 overview (posture hero + per-test scorecard cards) for the
-    tests that apply to LGD/EAD: PSI, Scenario Ranking, Sensitivity and MEV Range.
-    (PD's Transition Matrix card is omitted -- there is no MM_P0/MM_Pm data here.)
+    Covers the tests that apply to LGD/EAD: PSI, Scenario Ranking, Sensitivity and MEV Range.
+    (PD's Transition Matrix is omitted -- there is no MM_P0/MM_Pm data here.) Shared by
+    :func:`build_overview_section` (the tab's own "2.1 Overview" page) and by callers building a
+    higher-level chapter breakdown (e.g. the LGD "0.0 Overview" and "3.1 Conclusion" RAG lifecycle
+    diagram), so both places always agree on each test's RAG.
     """
     summaries: list[dict] = []
 
@@ -381,7 +392,7 @@ def build_overview_section(
     })
 
     # Scenario Ranking + Sensitivity (shared projection rows)
-    all_rows = _projection_rows(data.get(cfg.sensitivity_key) or [], reporting_cycle, level, entity)
+    all_rows = _projection_rows(data.get(cfg.sensitivity_key) or [], reporting_cycle, model, segment)
     if all_rows:
         selected = resolve_scenario_selection(all_rows, store)
         rank = _scenario_ranking_summary([r for r in all_rows if r.get("scenario_variant") in selected])
@@ -413,6 +424,36 @@ def build_overview_section(
 
     # MEV Range
     summaries.append(_mev_range_summary(cfg, data, selected_model, selected_segment, reporting_cycle, scenario))
+
+    return summaries
+
+
+def build_overview_section(
+    cfg: PostSubjectiveConfig,
+    data: dict,
+    model: str,
+    segment: str,
+    reporting_cycle: str,
+    scenario: str,
+    monitoring_point: str,
+    summary: dict,
+    thresholds: list[dict],
+    selected_model,
+    selected_segment,
+    store: dict | None = None,
+    summaries: list[dict] | None = None,
+) -> html.Section:
+    """Review scorecard summarising every applicable post-subjective test.
+
+    Mirrors the PD 2.1 overview (posture hero + per-test scorecard cards). Pass a precomputed
+    ``summaries`` (from :func:`compute_post_subjective_summaries`) when the caller already needs it
+    elsewhere (e.g. a chapter breakdown), to avoid computing it twice.
+    """
+    if summaries is None:
+        summaries = compute_post_subjective_summaries(
+            cfg, data, model, segment, reporting_cycle, scenario, monitoring_point,
+            summary, thresholds, selected_model, selected_segment, store,
+        )
 
     attention = [s for s in summaries if s["rag"] in ("Amber", "Red")]
     red = sum(1 for s in summaries if s["rag"] == "Red")
@@ -663,14 +704,14 @@ def _scenario_filter(cfg: PostSubjectiveConfig, rows, selected) -> html.Div:
 def build_scenario_ranking_section(
     cfg: PostSubjectiveConfig,
     data: dict,
-    level: str,
-    entity: str,
+    model: str,
+    segment: str,
     reporting_cycle: str,
     monitoring_point: str,
     store: dict | None = None,
     theme: str = "light",
 ) -> html.Section:
-    available_rows = _projection_rows(data.get(cfg.sensitivity_key) or [], reporting_cycle, level, entity)
+    available_rows = _projection_rows(data.get(cfg.sensitivity_key) or [], reporting_cycle, model, segment)
     selected = resolve_scenario_selection(available_rows, store)
     rows = [r for r in available_rows if r.get("scenario_variant") in selected]
     summary = _scenario_ranking_summary(rows)
@@ -713,7 +754,7 @@ def build_scenario_ranking_section(
                     html.Div(
                         className="section-card pd-default-rate-trend-section pd-sensitivity-chart-card",
                         children=[
-                            build_chart_header(f"Projected {cfg.label} by Scenario", f"{entity} ({level}) projected {cfg.label} paths for selected scenarios."),
+                            build_chart_header(f"Projected {cfg.label} by Scenario", f"{_entity_label(model, segment)} projected {cfg.label} paths for selected scenarios."),
                             dcc.Graph(id=f"{cfg.prefix}-scenario-projection-chart", figure=build_pd_scenario_projection_figure(rows, theme=theme), config=_GRAPH_CONFIG, className="pd-default-rate-trend-chart pd-default-rate-trend-chart-medium"),
                         ],
                     ),
@@ -802,13 +843,13 @@ def _impact_summary(rows: list[dict], threshold: float | None) -> dict:
 def build_sensitivity_section(
     cfg: PostSubjectiveConfig,
     data: dict,
-    level: str,
-    entity: str,
+    model: str,
+    segment: str,
     reporting_cycle: str,
     monitoring_point: str,
     theme: str = "light",
 ) -> html.Section:
-    all_rows = _projection_rows(data.get(cfg.sensitivity_key) or [], reporting_cycle, level, entity)
+    all_rows = _projection_rows(data.get(cfg.sensitivity_key) or [], reporting_cycle, model, segment)
     rows = [r for r in all_rows if r.get("scenario_variant") in {"baseline", "baseline_2std_shock"}]
     threshold = _sensitivity_threshold(data.get("monitoring_thresholds") or {}, cfg.model_type)
     summary = _impact_summary(rows, threshold)
@@ -851,7 +892,7 @@ def build_sensitivity_section(
                 children=[
                     build_chart_header(
                         f"Projected {cfg.label} Sensitivity & Relative Shock Impact",
-                        f"{entity} ({level}): baseline vs 2SD-shock projected {cfg.label} (left) and the relative shock "
+                        f"{_entity_label(model, segment)}: baseline vs 2SD-shock projected {cfg.label} (left) and the relative shock "
                         "impact by quarter (right), RAG-rated against the scenario-test threshold.",
                     ),
                     dcc.Graph(

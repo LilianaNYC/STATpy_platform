@@ -75,8 +75,17 @@ def register_single_select_callbacks(
         prevent_initial_call=True,
     )
     def select_single_select_option(_clicks):
+        # The option buttons are re-created whenever the menu is rebuilt (e.g. a
+        # dependent filter changing the options -- the Reporting Cycle rebuilding
+        # the Monitoring Point list on load). Dash fires this pattern-matching
+        # callback once on that remount even under prevent_initial_call, with
+        # ctx.triggered_id pointing at an option but every n_clicks still 0.
+        # Without checking n_clicks, that spurious fire silently resets the value
+        # to whichever option mounted first (e.g. the earliest monitoring point),
+        # leaving the hidden value out of sync with the toggle. Only act on a real
+        # click, i.e. when some option's n_clicks has actually incremented.
         triggered = ctx.triggered_id
-        if not triggered:
+        if not triggered or not any(_clicks or []):
             return no_update, no_update
         return triggered["value"], _MENU_CLASS
 

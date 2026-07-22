@@ -150,7 +150,10 @@ bands) live in `shared/domain/constants.py`.
   (`PD/LGD/EAD/Loss_Performance_Metrics`), the `Filters` config sheet, and
   `PD_Sensitivity_Projections` (with `MM_P0` / `MM_Pm` transition margins).
 - `statpy_monitoring_thresholds.xlsm` – PD / CRR-master-scale / RAG-assignment /
-  LGD / Loss / scenario-test threshold tables.
+  LGD / Loss / scenario-test threshold tables, plus the governance action
+  playbook (`monitoring_actions` sheet): one required-action row per stage/RAG,
+  surfaced in the Conclusion's Required Actions panel and keyed off the
+  review-flow RAGs.
 - `dummy_mev_data.xlsx` – the MEV catalog (descriptions, time series, model
   characteristics) used by the PD MEV Range section and the SAAS workspace.
 
@@ -202,7 +205,8 @@ per-chart store changes. Section builders are pure functions of that state.
 - **Model Use Case / Cycle / Scenario / Monitoring Point** drive which precomputed
   metrics and projection quarters are shown.
 - **Segment vs Specific Model** are mutually exclusive (single-select); leaving
-  both at "All" reads the portfolio-level (`All Models`) metrics.
+  the model unselected lets you drill into a segment instead, and leaving both
+  unselected defaults PD to the first available model.
 - **Per-chart range controls** (`Window / From / To`) window a chart's history
   via a `range_key` entry in `pd-range-store`; **trend horizon** controls share
   one entry per section in `pd-trend-horizon-store`.

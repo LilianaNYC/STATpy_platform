@@ -14,6 +14,7 @@ from typing import Any
 
 from ....shared.domain import constants as pd_config
 from ....shared.domain.calculations import (
+    PD_SEGMENT_HOME_MODEL,
     PdFilterContext,
     calculate_pd_calibration_assignment_rag,
     calculate_pd_calibration_conservatism_details,
@@ -29,6 +30,7 @@ from ....shared.domain.calculations import (
     get_pd_performance_context_for_horizon,
     get_pd_thresholds,
     get_worst_pd_rag,
+    precomputed_row,
     precomputed_notching_components,
     set_precomputed_metrics,
 )
@@ -58,6 +60,11 @@ POST_SUBJECTIVE_COLUMNS = [
     "Sensitivity Analysis RAG",
     "MEV Range RAG",
 ]
+HEATMAP_FINAL_COLUMNS = [
+    "Post Subjective Review RAG",
+    "Pre Mitigation RAG",
+    "Post Mitigation RAG",
+]
 RAG_COLUMNS = RAG_ASSIGNMENT_COLUMNS + POST_SUBJECTIVE_COLUMNS
 # Importance ranking for a "driver" finding, most important first: Overall RAG
 # leads since it's the roll-up verdict everything else feeds into; then the
@@ -80,15 +87,16 @@ RAG_COLUMN_DESCRIPTIONS = {
     "Scenario Ranking RAG": "Whether projected values keep a consistent rank order across scenarios for the model use case / cycle.",
     "Sensitivity Analysis RAG": "Whether the baseline-vs-shocked projection stays within the sensitivity threshold.",
     "MEV Range RAG": "Worst-case RAG across in-scope MEVs outside their development range for the scenario.",
+    "Post Subjective Review RAG": "Reflects the impact of any subjective overlays and considers the post-subjective review.",
+    "Pre Mitigation RAG": "Pre-Overlay RAG obtained from the trend of the post-subjective-review model RAG.",
+    "Post Mitigation RAG": "Post-Overlay RAG based on the residual risk of the model, including compensating controls.",
 }
 # The Final RAG column is a placeholder verdict shown only in the RAG Heatmap
 # tables -- deliberately excluded from RAG_COLUMNS so it doesn't leak into the
 # RAG Trend dimension picker, governance, or findings, none of which have a
-# real value to compute yet. FINAL_RAG_PLACEHOLDER is a static stand-in until
-# the actual methodology is defined.
+# real value to compute yet.
 FINAL_RAG_COLUMN = "Final RAG"
-FINAL_RAG_PLACEHOLDER = "Amber"
-HEATMAP_COLUMNS = RAG_COLUMNS + [FINAL_RAG_COLUMN]
+HEATMAP_COLUMNS = RAG_COLUMNS + HEATMAP_FINAL_COLUMNS
 RAG_COLUMN_DESCRIPTIONS[FINAL_RAG_COLUMN] = "Placeholder for the model's final RAG verdict. Methodology is still to be defined; the value shown is a static placeholder, not a real assessment."
 # Worst-case ranking used for aggregation (max()) -- N/A is treated as Amber
 # for counting purposes (an untested model still needs review), but is always
@@ -207,6 +215,41 @@ def _pd_cycle_data(data: dict, reporting_cycle: str) -> tuple[list[str], Any, An
     return data["quarters"], data["performance_observations"], data["rating_migration_observations"], None
 
 
+def _pd_review_flow_rags(ctx: PdFilterContext, quarter: str) -> dict[str, str]:
+    row = (
+        precomputed_row(ctx, quarter, "1y")
+        or precomputed_row(ctx, quarter, "2y")
+        or precomputed_row(ctx, quarter, "nco_1y")
+        or {}
+    )
+
+    def _text(key: str) -> str:
+        value = str(row.get(key, "") or "").strip()
+        return value or "N/A"
+
+    return {
+        "Post Subjective Review RAG": _text("rag_post_sr"),
+        "Pre Mitigation RAG": _text("rag_pre_mitig"),
+        "Post Mitigation RAG": _text("rag_post_mitig"),
+        "Reviewer Commentary": str(row.get("reviewer_commentary", "") or "").strip(),
+    }
+
+
+def _review_flow_rags_from_metric_row(metric_row: dict[str, Any] | None) -> dict[str, str]:
+    row = metric_row or {}
+
+    def _text(key: str) -> str:
+        value = str(row.get(key, "") or "").strip()
+        return value or "N/A"
+
+    return {
+        "Post Subjective Review RAG": _text("rag_post_sr"),
+        "Pre Mitigation RAG": _text("rag_pre_mitig"),
+        "Post Mitigation RAG": _text("rag_post_mitig"),
+        "Reviewer Commentary": str(row.get("reviewer_commentary", "") or "").strip(),
+    }
+
+
 def _pd_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
     quarters, performance_observations, rating_migration_observations, metrics_store = _pd_cycle_data(data, reporting_cycle)
     set_precomputed_metrics(metrics_store)
@@ -217,21 +260,14 @@ def _pd_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
     performance_horizons = data["performance_horizons"]
     pd_model_names = data.get("model_names", [])
 
-    # "All Models" is PD's pooled, portfolio-level verdict across every named
-    # model -- the same default the PD Performance tab itself shows when its
-    # Models filter is left at "All models" (see _pd_scope_label /
-    # _resolve_pd_sensitivity_entity in ui/views/pd_performance.py). Only
-    # worth its own row when there's more than one model to pool; with a
-    # single model it would just duplicate that model's row.
-    model_entities = (["All Models"] if len(pd_model_names) > 1 else []) + pd_model_names
+    model_entities = pd_model_names
 
     rows: list[dict[str, Any]] = []
     for quarter in quarters:
         for model_name in model_entities:
-            # Pooled across every segment, matching the tab's default
-            # Segment: All filter -- the Models chapter no longer offers a
-            # per-segment drill-down (see the Segments chapter instead).
-            models = set(pd_model_names) if model_name == "All Models" else {model_name}
+            # Metrics stay pooled across segments here, matching the Models
+            # chapter on the PD Performance tab.
+            models = {model_name}
             ctx = PdFilterContext(quarters=quarters, models=models, segment="all", monitoring_point=quarter)
             metrics = _pd_chapter1_metrics(
                 performance_observations, rating_migration_observations, performance_horizons,
@@ -243,13 +279,15 @@ def _pd_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
                 "Model": model_name,
                 "Segment": "All",
                 **metrics,
+                **_pd_review_flow_rags(ctx, quarter),
             })
     return rows
 
 
 def _pd_segment_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
-    """One row per (real segment, quarter), pooled across every PD model --
-    the Segments chapter equivalent of ``_pd_rows``."""
+    """One row per (real segment, quarter), sourced from PD_SEGMENT_HOME_MODEL
+    (PD Model A, the only PD model with segment-level data) -- the Segments
+    chapter equivalent of ``_pd_rows``."""
     quarters, performance_observations, rating_migration_observations, metrics_store = _pd_cycle_data(data, reporting_cycle)
     set_precomputed_metrics(metrics_store)
 
@@ -270,6 +308,7 @@ def _pd_segment_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
             rows.append({
                 "Monitoring Period": quarter,
                 "Model Group": "PD",
+                "Model": PD_SEGMENT_HOME_MODEL,
                 "Segment": segment,
                 **metrics,
             })
@@ -280,7 +319,7 @@ def _lgd_segment_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
     """LGD's segment-level equivalent of ``_lgd_rows``: LGD's precomputed
     metrics store carries its own ``("segment", segment)`` bucket per
     segment (see lgd._lgd_store_key), sourced straight from the portfolio
-    workbook -- same convention as its "All Models" bucket."""
+    workbook."""
     from . import lgd as lgd_domain
 
     cycle_data = (data.get("lgd_observations_by_cycle") or {}).get(reporting_cycle)
@@ -305,12 +344,14 @@ def _lgd_segment_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
             rows.append({
                 "Monitoring Period": quarter,
                 "Model Group": "LGD",
+                "Model": lgd_domain.LGD_MODEL_LABEL,
                 "Segment": segment,
                 "Calibration RAG": calibration_rag,
                 "Discrimination RAG": discrimination_rag,
                 "Overall RAG": get_worst_pd_rag([calibration_rag, discrimination_rag]),
                 "PSI RAG": lgd_domain.lgd_metric_rag(data, "Population Stability Index", psi_value),
                 "PSI Metric": f"{psi_value:.3f}" if psi_value is not None else "—",
+                **_review_flow_rags_from_metric_row(metric_by_quarter.get(quarter)),
             })
     return rows
 
@@ -341,12 +382,14 @@ def _ead_segment_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
             rows.append({
                 "Monitoring Period": quarter,
                 "Model Group": "EAD",
+                "Model": ead_domain.EAD_MODEL_LABEL,
                 "Segment": segment,
                 "Calibration RAG": calibration_rag,
                 "Discrimination RAG": discrimination_rag,
                 "Overall RAG": get_worst_pd_rag([calibration_rag, discrimination_rag]),
                 "PSI RAG": ead_domain.ead_metric_rag(data, "Population Stability Index", psi_value),
                 "PSI Metric": f"{psi_value:.3f}" if psi_value is not None else "—",
+                **_review_flow_rags_from_metric_row(metric_by_quarter.get(quarter)),
             })
     return rows
 
@@ -369,6 +412,7 @@ def _loss_segment_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]
             rows.append({
                 "Monitoring Period": row["Monitoring Period"],
                 "Model Group": "Loss",
+                "Model": loss_domain.LOSS_MODEL_LABEL,
                 "Segment": segment,
                 "Calibration RAG": rag,
                 "Discrimination RAG": "N/A",
@@ -386,12 +430,8 @@ def _lgd_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
         cycle_data.get("quarters") if cycle_data else [],
     )
 
-    # "All Models" is its own bucket in the precomputed metrics store (see
-    # lgd._lgd_store_key), sourced straight from the portfolio workbook --
-    # not a live pool of the named model(s) -- so it's always its own row,
-    # even when there's only one named LGD model.
     rows: list[dict[str, Any]] = []
-    for model_name in ["All Models"] + model_names("lgd"):
+    for model_name in model_names("lgd"):
         metric_rows = lgd_domain.lgd_metrics_by_period(data, model_name, "All")
         if not metric_rows:
             continue
@@ -413,6 +453,7 @@ def _lgd_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
                 "Overall RAG": get_worst_pd_rag([calibration_rag, discrimination_rag]),
                 "PSI RAG": lgd_domain.lgd_metric_rag(data, "Population Stability Index", psi_value),
                 "PSI Metric": f"{psi_value:.3f}" if psi_value is not None else "—",
+                **_review_flow_rags_from_metric_row(metric_by_quarter.get(quarter)),
             })
     return rows
 
@@ -426,12 +467,8 @@ def _ead_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
         cycle_data.get("quarters") if cycle_data else [],
     )
 
-    # "All Models" is its own bucket in the precomputed metrics store (see
-    # ead._ead_store_key), sourced straight from the portfolio workbook --
-    # not a live pool of the named model(s) -- so it's always its own row,
-    # even when there's only one named EAD model.
     rows: list[dict[str, Any]] = []
-    for model_name in ["All Models"] + model_names("ead"):
+    for model_name in model_names("ead"):
         metric_rows = ead_domain.ead_metrics_by_period(data, model_name, "All")
         if not metric_rows:
             continue
@@ -453,6 +490,7 @@ def _ead_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
                 "Overall RAG": get_worst_pd_rag([calibration_rag, discrimination_rag]),
                 "PSI RAG": ead_domain.ead_metric_rag(data, "Population Stability Index", psi_value),
                 "PSI Metric": f"{psi_value:.3f}" if psi_value is not None else "—",
+                **_review_flow_rags_from_metric_row(metric_by_quarter.get(quarter)),
             })
     return rows
 
@@ -558,7 +596,10 @@ def resolve_current_rows(
 
 
 def resolve_current_segment_rows(rows: list[dict[str, Any]], monitoring_period: str = "All") -> list[dict[str, Any]]:
-    return resolve_current_rows(rows, monitoring_period, group_keys=("Model Group", "Segment"))
+    # Includes "Model" alongside "Segment" -- more than one model within a
+    # group can cover the same segment, so "latest period" is resolved per
+    # (model, segment) pair rather than pooling every model's rows together.
+    return resolve_current_rows(rows, monitoring_period, group_keys=("Model Group", "Model", "Segment"))
 
 
 # ---------------------------------------------------------------------------
@@ -577,42 +618,6 @@ def overview_summary(current_rows: list[dict[str, Any]]) -> dict[str, int]:
     counts = Counter(by_model.values())
     red, amber, green = counts.get("Red", 0), counts.get("Amber", 0), counts.get("Green", 0)
     return {"models": len(by_model), "red": red, "amber": amber, "green": green, "breaches": red + amber}
-
-
-def models_by_overall_rag(current_rows: list[dict[str, Any]]) -> dict[str, list[str]]:
-    """Model names grouped by their current worst Overall RAG tone -- the
-    named-model complement of overview_summary's red/amber/green counts."""
-    by_model: dict[tuple[str, str], str] = {}
-    for row in current_rows:
-        key = (row["Model Group"], row["Model"])
-        rag = effective_rag(row["Overall RAG"])
-        if key not in by_model or RAG_SCORE.get(rag, 0) >= RAG_SCORE.get(by_model[key], 0):
-            by_model[key] = rag
-
-    ordered_keys = sorted(by_model, key=lambda key: (MODEL_GROUPS.index(key[0]) if key[0] in MODEL_GROUPS else 99, key[1]))
-    grouped: dict[str, list[str]] = {"Red": [], "Amber": [], "Green": []}
-    for group, model in ordered_keys:
-        name = model if model.lower().startswith(group.lower()) else f"{group} {model}"
-        grouped.setdefault(by_model[(group, model)], []).append(name)
-    return grouped
-
-
-def segments_by_overall_rag(current_rows: list[dict[str, Any]]) -> dict[str, list[str]]:
-    """Segment names grouped by their current worst Overall RAG tone -- the
-    named-segment complement of segment_overview_summary's red/amber/green
-    counts, same convention as models_by_overall_rag."""
-    by_segment: dict[tuple[str, str], str] = {}
-    for row in current_rows:
-        key = (row["Model Group"], row["Segment"])
-        rag = effective_rag(row["Overall RAG"])
-        if key not in by_segment or RAG_SCORE.get(rag, 0) >= RAG_SCORE.get(by_segment[key], 0):
-            by_segment[key] = rag
-
-    ordered_keys = sorted(by_segment, key=lambda key: (MODEL_GROUPS.index(key[0]) if key[0] in MODEL_GROUPS else 99, key[1]))
-    grouped: dict[str, list[str]] = {"Red": [], "Amber": [], "Green": []}
-    for group, segment in ordered_keys:
-        grouped.setdefault(by_segment[(group, segment)], []).append(f"{group} · {segment}")
-    return grouped
 
 
 def segment_overview_summary(current_rows: list[dict[str, Any]]) -> dict[str, int]:
@@ -663,7 +668,7 @@ def heatmap_rows(current_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "Model Group": model_key[0],
             "Model": model_key[1],
             **{column: _worst_rag_from_rows(model_rows, column) for column in RAG_COLUMNS},
-            FINAL_RAG_COLUMN: FINAL_RAG_PLACEHOLDER,
+            **{column: _worst_rag_from_rows(model_rows, column) for column in HEATMAP_FINAL_COLUMNS},
         }
         # The headline metric behind each Post Subjective Review RAG (e.g. peak
         # migration gap, latest PSI, peak shock impact) -- pulled from whichever
@@ -678,20 +683,27 @@ def heatmap_rows(current_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def segment_heatmap_rows(current_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One row per (Model Group, Model, Segment) -- more than one model within
+    a group can cover the same segment, so the model disambiguates which
+    model's data a row shows."""
     output = []
     segment_keys = sorted(
-        {(row["Model Group"], row["Segment"]) for row in current_rows},
-        key=lambda key: (MODEL_GROUPS.index(key[0]) if key[0] in MODEL_GROUPS else 99, key[1]),
+        {(row["Model Group"], row.get("Model", ""), row["Segment"]) for row in current_rows},
+        key=lambda key: (MODEL_GROUPS.index(key[0]) if key[0] in MODEL_GROUPS else 99, key[1], key[2]),
     )
-    for group, segment in segment_keys:
-        segment_rows = [row for row in current_rows if row["Model Group"] == group and row["Segment"] == segment]
+    for group, model, segment in segment_keys:
+        segment_rows = [
+            row for row in current_rows
+            if row["Model Group"] == group and row.get("Model", "") == model and row["Segment"] == segment
+        ]
         selected_period = segment_rows[0]["Monitoring Period"] if segment_rows else ""
         entry = {
             "Monitoring Period": selected_period,
             "Model Group": group,
+            "Model": model,
             "Segment": segment,
             **{column: _worst_rag_from_rows(segment_rows, column) for column in RAG_COLUMNS},
-            FINAL_RAG_COLUMN: FINAL_RAG_PLACEHOLDER,
+            **{column: _worst_rag_from_rows(segment_rows, column) for column in HEATMAP_FINAL_COLUMNS},
         }
         for column in POST_SUBJECTIVE_COLUMNS:
             metric_key = column.replace(" RAG", " Metric")
@@ -753,272 +765,215 @@ def segment_top_findings(current_rows: list[dict[str, Any]], limit: int | None =
                 findings.append({
                     "Monitoring Period": row.get("Monitoring Period", "-"),
                     "Model Group": row["Model Group"],
+                    "Model": row.get("Model", ""),
                     "Segment": row["Segment"],
                     "Metric": column,
                     "Current": display_rag(rag),
                     "RAG": rag,
                 })
-    findings.sort(key=lambda row: (_finding_rank(row["RAG"]), row["Model Group"], row["Segment"], row["Metric"]))
+    findings.sort(key=lambda row: (_finding_rank(row["RAG"]), row["Model Group"], row["Model"], row["Segment"], row["Metric"]))
     return findings[:limit] if limit is not None else findings
 
 
 # ---------------------------------------------------------------------------
-# 5. Governance Summary
+# 5. Governance Summary -- escalation & next steps
 # ---------------------------------------------------------------------------
 
+# Sidebar path of each model group's own Performance tab (see page_registry),
+# so escalation records can link straight to the tab whose Conclusion section
+# owns the review-flow RAGs being acted on.
+MODEL_GROUP_TAB_PATHS = {"PD": "/", "LGD": "/lgd-performance", "EAD": "/ead-performance", "Loss": "/loss-performance"}
 
-def category_breakdown(findings: list[dict[str, Any]], columns: list[str]) -> dict[str, Any]:
-    """Red/Amber counts and leading driver for one column family (RAG
-    Assignment or Post Subjective Review) -- mirrors the escalation register's
-    own two-column split so the facts strip and the register agree."""
-    category_findings = [row for row in findings if row["Metric"] in columns]
-    red = sum(1 for row in category_findings if row["RAG"] == "Red")
-    amber = sum(1 for row in category_findings if row["RAG"] == "Amber")
+# (playbook field key, overview row column, display label) for the three
+# review-flow stages, in pipeline order. The field keys match what
+# actions.select_pd_monitoring_actions expects; the columns are the same
+# portfolio-file values each tab's 3.1 Conclusion section edits.
+REVIEW_FLOW_STAGES = [
+    ("post_subjective", "Post Subjective Review RAG", "Post Subjective Review"),
+    ("pre_mitigation", "Pre Mitigation RAG", "Pre Mitigation"),
+    ("post_mitigation", "Post Mitigation RAG", "Post Mitigation"),
+]
 
-    # Overall RAG is a roll-up verdict, not itself a "driver" -- exclude it
-    # from the leading-driver pool unless it's all there is, same convention
-    # as the portfolio-wide top_metric below.
-    driver_pool = [row for row in category_findings if row["Metric"] != "Overall RAG"] or category_findings
-    metric_counts = Counter(row["Metric"] for row in driver_pool)
-    top_metric, top_metric_n = (metric_counts.most_common(1)[0] if metric_counts else ("None", 0))
-
-    return {
-        "red": red,
-        "amber": amber,
-        "breaches": red + amber,
-        "top_metric": top_metric,
-        "top_metric_count": top_metric_n,
-    }
+# Kept out of the escalation cards' "driven by" chips: the roll-up Performance
+# verdict and the three review-flow stages are already shown as the pipeline on
+# the card, so the chips list only the underlying diagnostic tests behind them.
+DRIVER_EXCLUDED_COLUMNS = frozenset(
+    ["Overall RAG"] + [column for _field, column, _label in REVIEW_FLOW_STAGES]
+)
 
 
-def models_without_findings(current_rows: list[dict[str, Any]], findings: list[dict[str, Any]]) -> list[str]:
-    """Models present in ``current_rows`` with zero findings at all (not even
-    Amber) -- the model-level complement of "escalations", so a "clean"
-    count and an "escalating" count read at the same granularity."""
-    findings_models = {(row["Model Group"], row["Model"]) for row in findings}
-    current_models = sorted(
-        {(row["Model Group"], row["Model"]) for row in current_rows},
-        key=lambda key: (MODEL_GROUPS.index(key[0]) if key[0] in MODEL_GROUPS else 99, key[1]),
-    )
-    return [
-        model if model.lower().startswith(group.lower()) else f"{group} {model}"
-        for group, model in current_models
-        if (group, model) not in findings_models
+def _entity_label(group: str, model: str, entity: str, entity_key: str) -> str:
+    if entity_key == "Segment":
+        # More than one model within a group can cover the same segment, so
+        # the model disambiguates which model's data this card shows.
+        return f"{group} · {model} · {entity}" if model else f"{group} · {entity}"
+    return entity if entity.lower().startswith(group.lower()) else f"{group} {entity}"
+
+
+def _previous_post_mitigation_rag(
+    scoped_rows: list[dict[str, Any]], entity_key: str, group: str, model: str, entity: str, period: str,
+) -> str:
+    """The entity's saved Post Mitigation RAG in the monitoring period before ``period``.
+
+    Feeds the playbook's persistent-breach escalation (two consecutive Red
+    quarters), exactly as each tab's Conclusion section detects it.
+    """
+    prior = [
+        row for row in scoped_rows
+        if row["Model Group"] == group
+        and row.get("Model", "") == model
+        and str(row.get(entity_key, "") or "") == entity
+        and _quarter_sort_key(row["Monitoring Period"]) < _quarter_sort_key(period)
     ]
+    if not prior:
+        return ""
+    latest_prior = max(prior, key=lambda row: _quarter_sort_key(row["Monitoring Period"]))
+    value = str(latest_prior.get("Post Mitigation RAG", "") or "").strip()
+    return value if value in ("Green", "Amber", "Red") else ""
 
 
-def category_green_count(current_rows: list[dict[str, Any]], columns: list[str]) -> int:
-    """Count of (row, column) checks that came back Green for one column
-    family -- ``findings`` only ever carries Red/Amber (see ``top_findings``),
-    so Green has to be tallied straight from the full row set instead."""
-    return sum(1 for row in current_rows for column in columns if row.get(column) == "Green")
+def escalation_next_steps(
+    current_rows: list[dict[str, Any]],
+    scoped_rows: list[dict[str, Any]],
+    findings: list[dict[str, Any]],
+    monitoring_actions: list[dict[str, Any]],
+    entity_key: str = "Model",
+) -> dict[str, Any]:
+    """Escalation tiers with the governance playbook's next steps per entity.
 
+    Mirrors each Performance tab's 3.1 Conclusion: an entity's review-flow RAGs
+    (Post Subjective Review -> Pre Mitigation -> Post Mitigation, read from the
+    same portfolio columns the tabs edit) are matched against the monitoring
+    playbook via ``select_pd_monitoring_actions``, so the next step shown on the
+    Overview is always the same action the tab's own Required Actions panel
+    prescribes -- including the two-consecutive-Red persistent-breach protocol,
+    detected from the entity's prior monitoring period in ``scoped_rows``.
 
-def governance_summary(current_rows: list[dict[str, Any]], findings: list[dict[str, Any]]) -> dict[str, Any]:
-    summary = overview_summary(current_rows)
-    total = summary["models"]
-    red, amber, green = summary["red"], summary["amber"], summary["green"]
-    breach_pct = round(100 * (red + amber) / total) if total else 0
+    Tiers: ``escalate`` (any Red across Overall RAG, a review-flow stage, or an
+    underlying test finding -- or a persistent breach), ``watch`` (Amber
+    somewhere, nothing Red), ``clear`` (everything Green). Entities without
+    review-flow data (e.g. the Loss workstream) still tier off their findings;
+    they just carry no playbook selections.
+    """
+    from .actions import select_pd_monitoring_actions
 
-    group_counts = Counter(row["Model Group"] for row in findings)
-    top_group, top_group_n = (group_counts.most_common(1)[0] if group_counts else ("None", 0))
-
-    driver_findings = [row for row in findings if row["Metric"] != "Overall RAG"] or findings
-    # RAG Assignment breaches (Calibration/Discrimination/Balance Sheet) always
-    # outrank Post Subjective Review ones here, even if the latter are more
-    # frequent -- they're what actually derives Overall RAG, so they're the
-    # more meaningful "leading driver" to surface.
-    assignment_driver_findings = [row for row in driver_findings if row["Metric"] not in POST_SUBJECTIVE_COLUMNS]
-    metric_counts = Counter(row["Metric"] for row in (assignment_driver_findings or driver_findings))
-    top_metric, top_metric_n = (metric_counts.most_common(1)[0] if metric_counts else ("None", 0))
-
-    findings_groups = {row["Model Group"] for row in findings}
-    clean_groups = [group for group in MODEL_GROUPS if group not in findings_groups and any(row["Model Group"] == group for row in current_rows)]
-
-    clean_models = models_without_findings(current_rows, findings)
-
-    escalations = []
-    seen: set[tuple[str, str]] = set()
-    for row in findings:
-        if row["RAG"] != "Red":
+    # Grouped by (Model Group, Model, entity) rather than just (Model Group,
+    # entity) -- more than one model within a group can cover the same
+    # segment, so the model disambiguates which model's data an entity card
+    # shows. For entity_key == "Model", model and entity are the same value,
+    # so this is a no-op there.
+    entity_keys = sorted(
+        {(row["Model Group"], row.get("Model", ""), str(row.get(entity_key, "") or "")) for row in current_rows},
+        key=lambda key: (MODEL_GROUPS.index(key[0]) if key[0] in MODEL_GROUPS else 99, key[1], key[2]),
+    )
+    tiers: dict[str, list[dict[str, Any]]] = {"escalate": [], "watch": [], "clear": []}
+    for group, model, entity in entity_keys:
+        if not entity:
             continue
-        key = (row["Model Group"], row["Model"])
-        if key in seen:
-            continue
-        seen.add(key)
-        driver_rows = [f for f in findings if f["RAG"] == "Red" and (f["Model Group"], f["Model"]) == key]
-        drivers = sorted({f["Metric"] for f in driver_rows}, key=_driver_priority)
-        escalations.append({
-            "Model Group": row["Model Group"],
-            "Model": row["Model"],
-            "Monitoring Period": row["Monitoring Period"],
-            "Drivers": ", ".join(drivers),
-            # Per-driver RAG so the UI can color each chip by severity --
-            # currently always Red (escalations only ever list Red drivers),
-            # but keyed by metric rather than hardcoded so this stays correct
-            # if a future change ever surfaces Amber drivers here too.
-            "DriverRags": {f["Metric"]: f["RAG"] for f in driver_rows},
+        entity_rows = [
+            row for row in current_rows
+            if row["Model Group"] == group and row.get("Model", "") == model and str(row.get(entity_key, "") or "") == entity
+        ]
+        period = entity_rows[0].get("Monitoring Period", "")
+        overall = _worst_rag_from_rows(entity_rows, "Overall RAG")
+        review_flow = {field: _worst_rag_from_rows(entity_rows, column) for field, column, _ in REVIEW_FLOW_STAGES}
+        has_review_flow = any(value in ("Green", "Amber", "Red") for value in review_flow.values())
+        commentary = next(
+            (text for row in entity_rows if (text := str(row.get("Reviewer Commentary", "") or "").strip())),
+            "",
+        )
+
+        # Worst finding per metric for this entity, Red first then playbook
+        # driver priority -- the "what's driving it" chips on the card. The
+        # roll-up verdict (Overall/Performance RAG) and the three review-flow
+        # stages are excluded: they're already shown as the pipeline above, so
+        # the chips surface only the underlying diagnostic tests that drove it.
+        driver_map: dict[str, str] = {}
+        for finding in findings:
+            if (
+                finding["Model Group"] != group
+                or finding.get("Model", "") != model
+                or str(finding.get(entity_key, "") or "") != entity
+            ):
+                continue
+            if finding["RAG"] not in ("Red", "Amber"):
+                continue
+            metric = finding["Metric"]
+            if metric in DRIVER_EXCLUDED_COLUMNS:
+                continue
+            if metric not in driver_map or RAG_SCORE.get(finding["RAG"], 0) > RAG_SCORE.get(driver_map[metric], 0):
+                driver_map[metric] = finding["RAG"]
+        drivers = sorted(driver_map.items(), key=lambda kv: (0 if kv[1] == "Red" else 1, _driver_priority(kv[0])))
+
+        selections: list[dict[str, Any]] = []
+        persistent_breach = False
+        if has_review_flow and monitoring_actions:
+            previous_post_mitigation = _previous_post_mitigation_rag(scoped_rows, entity_key, group, model, entity, period)
+            selections = select_pd_monitoring_actions(monitoring_actions, review_flow, previous_post_mitigation)
+            persistent_breach = any(selection.get("persistent_breach") for selection in selections)
+
+        red_signal = (
+            persistent_breach
+            or overall == "Red"
+            or any(value == "Red" for value in review_flow.values())
+            or any(rag == "Red" for _metric, rag in drivers)
+        )
+        amber_signal = overall == "Amber" or any(value == "Amber" for value in review_flow.values()) or bool(drivers)
+        tier = "escalate" if red_signal else ("watch" if amber_signal else "clear")
+
+        tiers[tier].append({
+            "Model Group": group,
+            "Model": model,
+            "Entity": entity,
+            "Entity Label": _entity_label(group, model, entity, entity_key),
+            "Monitoring Period": period,
+            "Overall RAG": overall,
+            "Review Flow": review_flow,
+            "Has Review Flow": has_review_flow,
+            "Drivers": drivers,
+            "Selections": selections,
+            "Persistent Breach": persistent_breach,
+            "Commentary": commentary,
+            "Tab Path": MODEL_GROUP_TAB_PATHS.get(group, "/"),
         })
 
-    def _model_count(count: int) -> str:
-        return f"{count} model" if count == 1 else f"{count} models"
-
-    def _is_are(count: int) -> str:
-        return "is" if count == 1 else "are"
-
-    period = current_rows[0]["Monitoring Period"] if current_rows else "the selected period"
-    if total == 0:
-        narrative = "No models are in scope for the selected filters."
-    elif red == 0 and amber == 0 and not escalations:
-        narrative = (
-            f"As of {period}, all {_model_count(total)} across the portfolio carry a Green Overall RAG. "
-            "No escalation or review action is required this period."
+    tiers["escalate"].sort(
+        key=lambda record: (
+            0 if record["Persistent Breach"] else 1,
+            -sum(1 for value in record["Review Flow"].values() if value == "Red"),
+            MODEL_GROUPS.index(record["Model Group"]) if record["Model Group"] in MODEL_GROUPS else 99,
+            record["Entity"],
         )
-    else:
-        if red + amber:
-            sentences = [
-                f"As of {period}, {red + amber} of {total} monitored models ({breach_pct}%) carry a Red or Amber "
-                "Overall RAG."
-            ]
-        else:
-            sentences = [
-                f"As of {period}, all {_model_count(total)} carry a Green Overall RAG, but at least one "
-                "underlying test still requires escalation."
-            ]
-        if top_group_n:
-            sentences.append(
-                f"The {top_group} workstream shows the highest concentration of findings ({top_group_n} of "
-                f"{len(findings)}), driven primarily by {top_metric} breaches."
-            )
-        if escalations:
-            escalation_count = len(escalations)
-            escalation_names = ", ".join(
-                row["Model"]
-                if row["Model"].lower().startswith(row["Model Group"].lower())
-                else f"{row['Model Group']} {row['Model']}"
-                for row in escalations
-            )
-            requires = "requires" if escalation_count == 1 else "require"
-            sentences.append(
-                f"{_model_count(escalation_count)} {_is_are(escalation_count)} Red on at least one test and "
-                f"{requires} remediation planning: {escalation_names}."
-            )
-        if clean_groups:
-            sentences.append(f"{', '.join(clean_groups)} {_is_are(len(clean_groups))} fully in tolerance this period.")
-        narrative = " ".join(sentences)
-
-    return {
-        "red": red,
-        "amber": amber,
-        "green": green,
-        "total": total,
-        "breaches": red + amber,
-        "breach_pct": breach_pct,
-        "top_group": top_group,
-        "top_group_findings": top_group_n,
-        "top_metric": top_metric,
-        "top_metric_count": top_metric_n,
-        "clean_groups": clean_groups,
-        "clean_models": clean_models,
-        "escalations": escalations,
-        "narrative": narrative,
-        "rag_assignment": category_breakdown(findings, RAG_ASSIGNMENT_COLUMNS),
-        "post_subjective_review": category_breakdown(findings, POST_SUBJECTIVE_COLUMNS),
-    }
-
-
-def segment_governance_summary(current_rows: list[dict[str, Any]], findings: list[dict[str, Any]]) -> dict[str, Any]:
-    summary = segment_overview_summary(current_rows)
-    total = summary["segments"]
-    red, amber, green = summary["red"], summary["amber"], summary["green"]
-    breach_pct = round(100 * (red + amber) / total) if total else 0
-
-    driver_findings = [row for row in findings if row["Metric"] != "Overall RAG"] or findings
-    # RAG Assignment breaches always outrank Post Subjective Review ones here
-    # -- see governance_summary's identical comment for the rationale.
-    assignment_driver_findings = [row for row in driver_findings if row["Metric"] not in POST_SUBJECTIVE_COLUMNS]
-    metric_counts = Counter(row["Metric"] for row in (assignment_driver_findings or driver_findings))
-    top_metric, top_metric_n = (metric_counts.most_common(1)[0] if metric_counts else ("None", 0))
-
-    findings_keys = {(row["Model Group"], row["Segment"]) for row in findings}
-    clean_segments = sorted(
-        f"{group} · {segment}"
-        for group, segment in {(row["Model Group"], row["Segment"]) for row in current_rows}
-        if (group, segment) not in findings_keys
     )
 
-    escalations = []
-    seen: set[tuple[str, str]] = set()
-    for row in findings:
-        if row["RAG"] != "Red":
-            continue
-        key = (row["Model Group"], row["Segment"])
-        if key in seen:
-            continue
-        seen.add(key)
-        driver_rows = [f for f in findings if f["RAG"] == "Red" and (f["Model Group"], f["Segment"]) == key]
-        drivers = sorted({f["Metric"] for f in driver_rows}, key=_driver_priority)
-        escalations.append({
-            "Model Group": row["Model Group"],
-            "Segment": row["Segment"],
-            "Monitoring Period": row["Monitoring Period"],
-            "Drivers": ", ".join(drivers),
-            "DriverRags": {f["Metric"]: f["RAG"] for f in driver_rows},
-        })
+    counts = {tier: len(records) for tier, records in tiers.items()}
+    total = sum(counts.values())
+    period = current_rows[0]["Monitoring Period"] if current_rows else ""
+    noun = "segment" if entity_key == "Segment" else "model"
 
-    def _segment_count(count: int) -> str:
-        return f"{count} segment" if count == 1 else f"{count} segments"
+    def _n(count: int) -> str:
+        return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
-    def _is_are(count: int) -> str:
-        return "is" if count == 1 else "are"
-
-    period = current_rows[0]["Monitoring Period"] if current_rows else "the selected period"
     if total == 0:
-        narrative = "No segments are in scope for the selected filters."
-    elif red == 0 and amber == 0 and not escalations:
+        narrative = f"No {noun}s are in scope for the selected filters."
+    elif counts["escalate"]:
+        names = ", ".join(record["Entity Label"] for record in tiers["escalate"])
+        requires = "requires" if counts["escalate"] == 1 else "require"
         narrative = (
-            f"As of {period}, all {_segment_count(total)} across the portfolio carry a Green Overall RAG. "
-            "No escalation or review action is required this period."
+            f"As of {period}, {_n(counts['escalate'])} {requires} escalation -- Red on a review-flow stage or an "
+            f"underlying test: {names}. The next steps below come from the monitoring playbook, matching each "
+            f"Performance tab's own Conclusion section."
+        )
+        if counts["watch"]:
+            is_are = "is" if counts["watch"] == 1 else "are"
+            narrative += f" {_n(counts['watch'])} more {is_are} on watch with Amber findings."
+    elif counts["watch"]:
+        names = ", ".join(record["Entity Label"] for record in tiers["watch"])
+        narrative = (
+            f"As of {period}, no {noun} requires escalation, but {_n(counts['watch'])} carry Amber findings to "
+            f"keep on watch: {names}."
         )
     else:
-        if red + amber:
-            sentences = [
-                f"As of {period}, {red + amber} of {total} monitored segments ({breach_pct}%) carry a Red or Amber "
-                "Overall RAG."
-            ]
-        else:
-            sentences = [
-                f"As of {period}, all {_segment_count(total)} carry a Green Overall RAG, but at least one "
-                "underlying test still requires escalation."
-            ]
-        if top_metric_n:
-            sentences.append(
-                f"The most common driver is {top_metric} ({top_metric_n} of {len(findings)} findings)."
-            )
-        if escalations:
-            escalation_count = len(escalations)
-            escalation_names = ", ".join(f"{row['Model Group']} · {row['Segment']}" for row in escalations)
-            requires = "requires" if escalation_count == 1 else "require"
-            sentences.append(
-                f"{_segment_count(escalation_count)} {_is_are(escalation_count)} Red on at least one test and "
-                f"{requires} remediation planning: {escalation_names}."
-            )
-        if clean_segments:
-            sentences.append(f"{', '.join(clean_segments)} {_is_are(len(clean_segments))} fully in tolerance this period.")
-        narrative = " ".join(sentences)
+        narrative = f"As of {period}, all {_n(total)} are fully in tolerance. Continue normal monitoring."
 
-    return {
-        "red": red,
-        "amber": amber,
-        "green": green,
-        "total": total,
-        "breaches": red + amber,
-        "breach_pct": breach_pct,
-        "top_metric": top_metric,
-        "top_metric_count": top_metric_n,
-        "clean_segments": clean_segments,
-        "escalations": escalations,
-        "narrative": narrative,
-        "rag_assignment": category_breakdown(findings, RAG_ASSIGNMENT_COLUMNS),
-        "post_subjective_review": category_breakdown(findings, POST_SUBJECTIVE_COLUMNS),
-    }
+    return {"period": period, "tiers": tiers, "counts": counts, "total": total, "narrative": narrative}

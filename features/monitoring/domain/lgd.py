@@ -17,16 +17,15 @@ from ....shared.domain.calculations import calculate_pd_metric_rag, get_worst_pd
 LGD_METRICS = ["ME", "RMSE", "Kendall's Tau"]
 LGD_CALIBRATION_METRICS = ["ME", "RMSE"]
 LGD_DISCRIMINATION_METRICS = ["Kendall's Tau"]
-LGD_ALL_MODELS_LABEL = "All models"
-
-
 # ---------------------------------------------------------------------------
 # Precomputed-metrics store
 # ---------------------------------------------------------------------------
 # The LGD tab reads metric rows straight from ``LGD_Performance_Metrics`` via a
-# store keyed by ``(level, value)`` (``level`` = ``model``/``segment``;
-# ``value`` = the model name, ``"All Models"``, or a segment name). The cycle
-# callback installs the selected reporting cycle's store and quarters here.
+# store keyed by ``(model, segment)`` (segment ``"All"`` for a model's
+# aggregate row). The cycle callback installs the selected reporting cycle's
+# store and quarters here.
+
+LGD_MODEL_LABEL = "LGD Model A"
 
 _LGD_STORE: dict | None = None
 _LGD_QUARTERS: list[str] = []
@@ -40,22 +39,33 @@ def set_lgd_metrics(store: dict | None, quarters: list[str] | None = None) -> No
 
 
 def _lgd_store_key(selected_model, selected_segment) -> tuple[str, str]:
-    """Map a (model, segment) selection to a ``(level, value)`` store key.
+    """Map a (model, segment) selection to a ``(model, segment)`` store key.
 
-    The model and segment filters are mutually exclusive, so the selection
-    collapses to a single entity: a segment, a single model, or all models.
+    Segment refines whichever model is selected. Segment names can be shared
+    across models (e.g. both LGD Model A and LGD Model B have an "O&M" row),
+    so a real segment must resolve against the *selected* model when one is
+    known; :data:`LGD_MODEL_LABEL` is only a fallback for when no single
+    model is in scope (mirrors PD's ``PD_SEGMENT_HOME_MODEL`` in
+    ``shared/domain/calculations.py``).
     """
-    segment = selected_segment if isinstance(selected_segment, str) else None
-    if segment and segment not in ("All", "all", ""):
-        return "segment", segment
     if isinstance(selected_model, (list, tuple, set)):
         models = [m for m in selected_model if m]
         model = models[0] if len(models) == 1 else None
     else:
         model = selected_model
-    if model and model not in ("all", "All", LGD_ALL_MODELS_LABEL, ""):
-        return "model", str(model)
-    return "model", "All Models"
+    model = str(model) if model and model not in ("all", "All", "") else None
+
+    segment = selected_segment if isinstance(selected_segment, str) else None
+    if segment and segment not in ("All", "all", ""):
+        return model or LGD_MODEL_LABEL, segment
+    if model:
+        return model, "All"
+    return "", "All"
+
+
+def lgd_store_key(selected_model, selected_segment) -> tuple[str, str]:
+    """Public wrapper for :func:`_lgd_store_key`, for callers outside this module."""
+    return _lgd_store_key(selected_model, selected_segment)
 
 
 def _lgd_store_rows(selected_model, selected_segment) -> list[dict] | None:
@@ -142,7 +152,7 @@ def resolve_lgd_models(data: dict, selected_model: str | list[str] | tuple[str, 
     if isinstance(selected_model, (list, tuple, set)):
         selected = [str(value) for value in selected_model if value in models]
         return selected
-    if selected_model in {LGD_ALL_MODELS_LABEL, "All", None, ""}:
+    if selected_model in {"All", None, ""}:
         return []
     if selected_model in models:
         return [str(selected_model)]
@@ -151,6 +161,13 @@ def resolve_lgd_models(data: dict, selected_model: str | list[str] | tuple[str, 
 
 
 def get_lgd_segments_for_model(data: dict, selected_model: str | list[str] | tuple[str, ...] | set[str] | None) -> list[str]:
+    """Segments available for the Segment dropdown.
+
+    Segments are a global list (shared across models), not derived from
+    ``selected_model`` -- kept as a parameter for signature parity with
+    :func:`resolve_lgd_segment`. Available regardless of whether a model is
+    selected, so Segment can be browsed/chosen before Model.
+    """
     from ....shared.repositories.filters_config import segment_values
     segments = segment_values()
     if segments:
@@ -247,6 +264,24 @@ def get_lgd_periods(data: dict, selected_model: str | None, selected_segment: st
 def get_lgd_monitoring_point_options(data: dict, selected_model: str | None, selected_segment: str | None = "All") -> list[str]:
     periods = get_lgd_periods(data, selected_model, selected_segment)
     return ["Latest", *reversed(periods)]
+
+
+def get_previous_lgd_quarter(data: dict, selected_model: str | None, selected_segment: str | None, quarter: str) -> str:
+    """The monitoring period immediately before ``quarter``, or "" if there isn't one."""
+    periods = get_lgd_periods(data, selected_model, selected_segment)
+    if quarter not in periods:
+        return ""
+    index = periods.index(quarter)
+    return periods[index - 1] if index > 0 else ""
+
+
+def lgd_metrics_row_for_quarter(selected_model: str | None, selected_segment: str | None, quarter: str) -> dict[str, Any]:
+    """The precomputed LGD metric row for a specific monitoring period, or ``{}`` if none is loaded."""
+    rows = _lgd_store_rows(selected_model, selected_segment) or []
+    for row in rows:
+        if str(row.get("Monitoring Period", "")) == str(quarter):
+            return row
+    return {}
 
 
 def resolve_lgd_monitoring_point(

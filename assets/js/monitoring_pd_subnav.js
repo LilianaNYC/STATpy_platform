@@ -20,6 +20,7 @@
     "pd-scenario-ranking",
     "pd-sensitivity-analysis",
     "pd-mev-range",
+    "pd-conclusions-verdict",
   ];
 
   var scrollFrame = null;
