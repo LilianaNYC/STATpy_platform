@@ -197,14 +197,20 @@ body{background:#f8fafc;overflow:hidden}
    row above, so it needs its own template rather than reusing
    .saas-primary-filter-row's (which would reserve two extra empty tracks). */
 .monitoring-primary-filter-row{grid-template-columns:repeat(5,minmax(120px,171px))}
+/* Overview's own primary row: Model Group, Model Use Case / Cycle,
+   Monitoring Point, plus the Apply cell -- 3 filters, unlike PD/LGD/EAD/Loss's
+   5-item row, so it needs its own template; the Apply cell sizes to content
+   since it isn't a fixed-width filter. */
+.overview-primary-filter-row{grid-template-columns:repeat(3,minmax(120px,171px)) auto}
 /* Waterfall chevrons: the primary filters cascade left-to-right (each selection
    narrows the next), so draw an arrow in the grid gap before every cell after
    the first. Cells are position:relative; the glyph centers in the 14px gap,
    vertically aligned with the 32px bottom-aligned toggles. Colored (and sized
    up) in the app's accent blue, full opacity, so the cascade stands out --
    labels stay their normal muted color. */
-.saas-primary-filter-row>.monitoring-filter+.monitoring-filter::before,
-.monitoring-primary-filter-row>.monitoring-filter+.monitoring-filter::before{content:"❯";position:absolute;left:-15px;bottom:10px;width:16px;font-size:13px;font-weight:800;line-height:1;text-align:center;color:var(--blue);opacity:1;pointer-events:none}
+.saas-primary-filter-row>.monitoring-filter+.monitoring-filter:not(.saas-top-filter-action)::before,
+.monitoring-primary-filter-row>.monitoring-filter+.monitoring-filter:not(.saas-top-filter-action)::before,
+.overview-primary-filter-row>.monitoring-filter+.monitoring-filter:not(.saas-top-filter-action)::before{content:"❯";position:absolute;left:-15px;bottom:10px;width:16px;font-size:13px;font-weight:800;line-height:1;text-align:center;color:var(--blue);opacity:1;pointer-events:none}
 /* Narrower columns than the primary row (160px max, not 171px): auto-fit counts
    tracks from the max, and this row must hold six items on one line -- the five
    display filters plus the expand-all button -- when Snapshot = History un-hides
