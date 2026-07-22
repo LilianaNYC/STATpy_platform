@@ -47,8 +47,8 @@ def load_monitoring_data() -> dict:
 def save_pd_review_flow_rag(
     data: dict,
     reporting_cycle: str,
-    level: str,
-    model_or_segment: str,
+    model: str,
+    segment: str,
     quarter: str,
     field: str,
     new_value: str,
@@ -59,7 +59,7 @@ def save_pd_review_flow_rag(
     succeeded -- mutates the matching entries in ``data``'s already-loaded ``metrics_store`` in place,
     so the running app reflects the edit immediately without a process restart.
     """
-    updated_rows = _update_pd_review_flow_rag(reporting_cycle, level, model_or_segment, quarter, field, new_value)
+    updated_rows = _update_pd_review_flow_rag(reporting_cycle, model, segment, quarter, field, new_value)
     if not updated_rows:
         return False
 
@@ -67,7 +67,7 @@ def save_pd_review_flow_rag(
     metrics_store = cycle_data.get("metrics_store")
     if metrics_store is not None:
         for horizon in _PD_REVIEW_FLOW_HORIZONS:
-            row = metrics_store.get((level, model_or_segment, quarter, horizon))
+            row = metrics_store.get((model, segment, quarter, horizon))
             if row is not None:
                 row[field] = new_value
     return True
@@ -76,8 +76,8 @@ def save_pd_review_flow_rag(
 def save_lgd_review_flow_rag(
     data: dict,
     reporting_cycle: str,
-    level: str,
-    model_or_segment: str,
+    model: str,
+    segment: str,
     quarter: str,
     field: str,
     new_value: str,
@@ -86,16 +86,16 @@ def save_lgd_review_flow_rag(
 
     Same write-then-mutate-in-place pattern as :func:`save_pd_review_flow_rag`, but for
     ``LGD_Performance_Metrics``, which has no horizon dimension: one row per
-    ``(level, model_or_segment)`` list holds one entry per monitoring period.
+    ``(model, segment)`` list holds one entry per monitoring period.
     """
-    updated_rows = _update_lgd_review_flow_rag(reporting_cycle, level, model_or_segment, quarter, field, new_value)
+    updated_rows = _update_lgd_review_flow_rag(reporting_cycle, model, segment, quarter, field, new_value)
     if not updated_rows:
         return False
 
     cycle_data = (data.get("lgd_observations_by_cycle") or {}).get(reporting_cycle) or {}
     metrics_store = cycle_data.get("metrics_store")
     if metrics_store is not None:
-        for row in metrics_store.get((level, model_or_segment), []):
+        for row in metrics_store.get((model, segment), []):
             if str(row.get("Monitoring Period", "")) == str(quarter):
                 row[field] = new_value
     return True
@@ -104,8 +104,8 @@ def save_lgd_review_flow_rag(
 def save_ead_review_flow_rag(
     data: dict,
     reporting_cycle: str,
-    level: str,
-    model_or_segment: str,
+    model: str,
+    segment: str,
     quarter: str,
     field: str,
     new_value: str,
@@ -115,14 +115,14 @@ def save_ead_review_flow_rag(
     Same write-then-mutate-in-place pattern as :func:`save_lgd_review_flow_rag`, for
     ``EAD_Performance_Metrics``.
     """
-    updated_rows = _update_ead_review_flow_rag(reporting_cycle, level, model_or_segment, quarter, field, new_value)
+    updated_rows = _update_ead_review_flow_rag(reporting_cycle, model, segment, quarter, field, new_value)
     if not updated_rows:
         return False
 
     cycle_data = (data.get("ead_observations_by_cycle") or {}).get(reporting_cycle) or {}
     metrics_store = cycle_data.get("metrics_store")
     if metrics_store is not None:
-        for row in metrics_store.get((level, model_or_segment), []):
+        for row in metrics_store.get((model, segment), []):
             if str(row.get("Monitoring Period", "")) == str(quarter):
                 row[field] = new_value
     return True

@@ -34,6 +34,7 @@ from .....shared.ui.charts import build_pd_mev_range_figure
 from .....shared.theme import normalize_theme_value
 from ...domain.actions import select_pd_monitoring_actions
 from ...domain.ead import (
+    EAD_MODEL_LABEL,
     build_ead_calibration_rag_trend,
     build_ead_discrimination_rag_trend,
     build_ead_period_summary,
@@ -86,6 +87,18 @@ MONITORING_POINT_MENU_ID = "ead-monitoring-point-menu"
 MODEL_FILTER_KEY = "ead-model"
 SEGMENT_FILTER_KEY = "ead-segment"
 MONITORING_POINT_FILTER_KEY = "ead-monitoring-point"
+REGION_ID = "ead-region"
+REGION_TOGGLE_ID = "ead-region-toggle"
+REGION_MENU_ID = "ead-region-menu"
+REGION_FILTER_KEY = "ead-region"
+PORTFOLIO_ID = "ead-portfolio"
+PORTFOLIO_TOGGLE_ID = "ead-portfolio-toggle"
+PORTFOLIO_MENU_ID = "ead-portfolio-menu"
+PORTFOLIO_FILTER_KEY = "ead-portfolio"
+MODEL_GROUP_ID = "ead-model-group"
+MODEL_GROUP_TOGGLE_ID = "ead-model-group-toggle"
+MODEL_GROUP_MENU_ID = "ead-model-group-menu"
+MODEL_GROUP_FILTER_KEY = "ead-model-group"
 EAD_SUBNAV_ID = "ead-subnav"
 RANGE_STORE_ID = "ead-range-store"
 SCENARIO_RANKING_STORE_ID = "ead-scenario-ranking-store"
@@ -144,6 +157,7 @@ _POST_SUBJECTIVE = PostSubjectiveConfig(
     model_type="EAD",
     sensitivity_key="ead_sensitivity_projections",
     scenario_filter_id=SCENARIO_RANKING_FILTER_ID,
+    default_segment_model=EAD_MODEL_LABEL,
 )
 CALIBRATION_SECTION_RANGE_KEY = "ead_calibration_section"
 DISCRIMINATION_SECTION_RANGE_KEY = "ead_discrimination_section"
@@ -1837,13 +1851,13 @@ def render_ead_performance_content(
         range_store, theme_value=theme_value, reporting_cycle=reporting_cycle, scenario=scenario,
     )
 
-    level, entity = resolve_entity(selected_model, selected_segment)
+    model, segment = resolve_entity(selected_model, selected_segment, _POST_SUBJECTIVE.default_segment_model)
     chapter_2_summaries = compute_post_subjective_summaries(
-        _POST_SUBJECTIVE, data, level, entity, reporting_cycle, scenario, monitoring_point,
+        _POST_SUBJECTIVE, data, model, segment, reporting_cycle, scenario, monitoring_point,
         summary, thresholds, selected_model, selected_segment, scenario_ranking_store,
     )
     post_subjective_overview = build_overview_section(
-        _POST_SUBJECTIVE, data, level, entity, reporting_cycle, scenario, monitoring_point,
+        _POST_SUBJECTIVE, data, model, segment, reporting_cycle, scenario, monitoring_point,
         summary, thresholds, selected_model, selected_segment, scenario_ranking_store,
         summaries=chapter_2_summaries,
     )
@@ -1857,10 +1871,10 @@ def render_ead_performance_content(
         psi_range_key=PSI_SECTION_RANGE_KEY,
     )
     scenario_ranking_section = build_scenario_ranking_section(
-        _POST_SUBJECTIVE, data, level, entity, reporting_cycle, monitoring_point, scenario_ranking_store, theme=theme,
+        _POST_SUBJECTIVE, data, model, segment, reporting_cycle, monitoring_point, scenario_ranking_store, theme=theme,
     )
     sensitivity_section = build_sensitivity_section(
-        _POST_SUBJECTIVE, data, level, entity, reporting_cycle, monitoring_point, theme=theme,
+        _POST_SUBJECTIVE, data, model, segment, reporting_cycle, monitoring_point, theme=theme,
     )
 
     chapter_1_summaries = [
@@ -1969,12 +1983,20 @@ def build_ead_apply_prompt() -> html.Section:
 
 def page_layout() -> list:
     """Build the EAD page with top controls and live content."""
+    from .....shared.domain.mev_range import model_field_values
     from .....shared.repositories.filters_config import load_filter_config, model_names, segment_values
     from ...domain.ead import set_ead_metrics
     data = PD_PERFORMANCE_DATA
     cfg = load_filter_config()
     model_options = model_names("ead")
     segment_options = ["All", *segment_values()]
+    mev_catalog = data.get("mev_catalog") or {}
+    region_options = [{"label": "All", "value": "All"}] + [
+        {"label": value, "value": value} for value in model_field_values(mev_catalog, "region", model_options)
+    ]
+    portfolio_options = [{"label": "All", "value": "All"}] + [
+        {"label": value, "value": value} for value in model_field_values(mev_catalog, "portfolio", model_options)
+    ]
     reporting_cycle_options = [{"label": c["label"], "value": c["value"]} for c in cfg["reporting_cycles"]]
     scenario_options = [{"label": s["label"], "value": s["value"]} for s in cfg["scenarios"]]
     default_cycle = reporting_cycle_options[0]["value"] if reporting_cycle_options else "CCAR 2026"
@@ -2005,7 +2027,67 @@ def page_layout() -> list:
                     children=[
                         html.Div("EAD Performance Monitoring Dashboard", className="monitoring-dashboard-title"),
                         html.Div(
-                            className="monitoring-controls",
+                            className="monitoring-controls saas-top-filter-row monitoring-primary-filter-row",
+                            children=[
+                                _build_filter(
+                                    "Region",
+                                    shared_filters.build_single_select_dropdown(
+                                        value_id=REGION_ID,
+                                        toggle_id=REGION_TOGGLE_ID,
+                                        menu_id=REGION_MENU_ID,
+                                        filter_key=REGION_FILTER_KEY,
+                                        options=region_options,
+                                        value="All",
+                                    ),
+                                ),
+                                _build_filter(
+                                    "Portfolio",
+                                    shared_filters.build_single_select_dropdown(
+                                        value_id=PORTFOLIO_ID,
+                                        toggle_id=PORTFOLIO_TOGGLE_ID,
+                                        menu_id=PORTFOLIO_MENU_ID,
+                                        filter_key=PORTFOLIO_FILTER_KEY,
+                                        options=portfolio_options,
+                                        value="All",
+                                    ),
+                                ),
+                                _build_filter(
+                                    "Model Group",
+                                    shared_filters.build_single_select_dropdown(
+                                        value_id=MODEL_GROUP_ID,
+                                        toggle_id=MODEL_GROUP_TOGGLE_ID,
+                                        menu_id=MODEL_GROUP_MENU_ID,
+                                        filter_key=MODEL_GROUP_FILTER_KEY,
+                                        options=[{"label": "EAD", "value": "EAD"}],
+                                        value="EAD",
+                                    ),
+                                ),
+                                _build_filter(
+                                    "Model",
+                                    shared_filters.build_single_select_dropdown(
+                                        value_id=MODEL_DROPDOWN_ID,
+                                        toggle_id=MODEL_TOGGLE_ID,
+                                        menu_id=MODEL_MENU_ID,
+                                        filter_key=MODEL_FILTER_KEY,
+                                        options=model_select_options,
+                                        value="",
+                                    ),
+                                ),
+                                _build_filter(
+                                    "Segment",
+                                    shared_filters.build_single_select_dropdown(
+                                        value_id=SEGMENT_DROPDOWN_ID,
+                                        toggle_id=SEGMENT_TOGGLE_ID,
+                                        menu_id=SEGMENT_MENU_ID,
+                                        filter_key=SEGMENT_FILTER_KEY,
+                                        options=_dropdown_options(segment_options),
+                                        value="",
+                                    ),
+                                ),
+                            ],
+                        ),
+                        html.Div(
+                            className="monitoring-controls saas-top-filter-row saas-secondary-filter-row",
                             children=[
                                 _build_filter(
                                     "Model Use Case / Cycle",
@@ -2016,17 +2098,6 @@ def page_layout() -> list:
                                         filter_key=REPORTING_CYCLE_FILTER_KEY,
                                         options=reporting_cycle_options,
                                         value=default_cycle,
-                                    ),
-                                ),
-                                _build_filter(
-                                    "Scenario",
-                                    shared_filters.build_single_select_dropdown(
-                                        value_id=SCENARIO_ID,
-                                        toggle_id=SCENARIO_TOGGLE_ID,
-                                        menu_id=SCENARIO_MENU_ID,
-                                        filter_key=SCENARIO_FILTER_KEY,
-                                        options=scenario_options,
-                                        value=default_scenario,
                                     ),
                                 ),
                                 _build_filter(
@@ -2041,25 +2112,14 @@ def page_layout() -> list:
                                     ),
                                 ),
                                 _build_filter(
-                                    "Segment",
+                                    "Scenario",
                                     shared_filters.build_single_select_dropdown(
-                                        value_id=SEGMENT_DROPDOWN_ID,
-                                        toggle_id=SEGMENT_TOGGLE_ID,
-                                        menu_id=SEGMENT_MENU_ID,
-                                        filter_key=SEGMENT_FILTER_KEY,
-                                        options=_dropdown_options(segment_options),
-                                        value="All",
-                                    ),
-                                ),
-                                _build_filter(
-                                    "Model",
-                                    shared_filters.build_single_select_dropdown(
-                                        value_id=MODEL_DROPDOWN_ID,
-                                        toggle_id=MODEL_TOGGLE_ID,
-                                        menu_id=MODEL_MENU_ID,
-                                        filter_key=MODEL_FILTER_KEY,
-                                        options=model_select_options,
-                                        value="",
+                                        value_id=SCENARIO_ID,
+                                        toggle_id=SCENARIO_TOGGLE_ID,
+                                        menu_id=SCENARIO_MENU_ID,
+                                        filter_key=SCENARIO_FILTER_KEY,
+                                        options=scenario_options,
+                                        value=default_scenario,
                                     ),
                                 ),
                                 _build_ead_apply_button(),

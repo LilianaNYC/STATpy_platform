@@ -74,6 +74,7 @@ from .....shared.domain.quarter_labels import (
     iso_date_to_pd_quarter,
 )
 from .....shared.domain.calculations import (
+    PD_SEGMENT_HOME_MODEL,
     PdFilterContext,
     build_pd_balance_sheet_calibration_rag_trend,
     build_pd_calibration_assignment_tooltip,
@@ -339,18 +340,29 @@ def _primary_pd_model(ctx: PdFilterContext) -> str:
 
 
 def _resolve_pd_sensitivity_entity(ctx: PdFilterContext) -> tuple[str, str]:
+    """Mirrors :func:`shared.domain.calculations.ctx_store_keys`: a real segment
+    refines whichever single model is in scope; falls back to
+    :data:`PD_SEGMENT_HOME_MODEL` only when zero or more than one model is in
+    scope (e.g. Overview's pooled Segments chapter)."""
+    models = sorted(model for model in ctx.models if model)
     if ctx.segment and ctx.segment != "all":
-        return "segment", ctx.segment
-    return "model", _primary_pd_model(ctx)
+        if len(models) == 1:
+            return models[0], ctx.segment
+        return PD_SEGMENT_HOME_MODEL, ctx.segment
+    return _primary_pd_model(ctx), "All"
+
+
+def _entity_label(model: str, segment: str) -> str:
+    return f"{model} — {segment}" if segment and segment != "All" else (model or "—")
 
 
 def _filter_pd_projection_rows(rows: list[dict], reporting_cycle: str, ctx: PdFilterContext) -> list[dict]:
-    level, entity = _resolve_pd_sensitivity_entity(ctx)
+    model, segment = _resolve_pd_sensitivity_entity(ctx)
     return [
         row for row in rows or []
         if row.get("reporting_cycle") == reporting_cycle
-        and row.get("level") == level
-        and row.get("model_or_segment") == entity
+        and row.get("model") == model
+        and row.get("segment") == segment
         and row.get("scenario_variant")
     ]
 
@@ -617,7 +629,7 @@ def _build_pd_scenario_ranking_section(
         row for row in available_rows
         if row.get("scenario_variant") in selected_scenarios
     ]
-    level, entity = _resolve_pd_sensitivity_entity(ctx)
+    model, segment = _resolve_pd_sensitivity_entity(ctx)
     summary = _scenario_ranking_summary(rows)
     filter_control = _build_pd_scenario_ranking_filter(available_rows, selected_scenarios)
 
@@ -667,7 +679,7 @@ def _build_pd_scenario_ranking_section(
                         children=[
                             build_chart_header(
                                 "Projected PD by Scenario",
-                                f"{entity} ({level}) projected PD paths for selected scenarios.",
+                                f"{_entity_label(model, segment)} projected PD paths for selected scenarios.",
                             ),
                             dcc.Graph(
                                 id="pd-scenario-projection-chart",
@@ -844,7 +856,7 @@ def _build_rag_status_card(
 def _build_pd_sensitivity_section(data: dict, ctx: PdFilterContext, reporting_cycle: str, theme: str, range_store: dict | None = None) -> html.Section:
     range_store = range_store or {}
     rows = _filter_pd_sensitivity_rows(data.get("sensitivity_projections") or [], reporting_cycle, ctx)
-    level, entity = _resolve_pd_sensitivity_entity(ctx)
+    model, segment = _resolve_pd_sensitivity_entity(ctx)
     threshold_row = _get_pd_sensitivity_threshold(data.get("monitoring_thresholds") or {})
     threshold_value = threshold_row.get("threshold")
     impact_summary = _sensitivity_impact_summary(rows, threshold_value)
@@ -894,7 +906,7 @@ def _build_pd_sensitivity_section(data: dict, ctx: PdFilterContext, reporting_cy
                 children=[
                     build_chart_header(
                         "Projected PD Sensitivity & Relative Shock Impact",
-                        f"{entity} ({level}): baseline vs 2SD-shock projected PD (left) and the relative shock "
+                        f"{_entity_label(model, segment)}: baseline vs 2SD-shock projected PD (left) and the relative shock "
                         "impact by quarter (right), RAG-rated against the scenario-test threshold.",
                     ),
                     dcc.Graph(
@@ -1088,12 +1100,6 @@ def _build_pd_review_scorecard_card(summary: dict) -> html.Article:
             html.Div(summary["takeaway"], className="pd-test-meta", style={"marginTop": "8px"}),
         ],
     )
-
-
-def _pd_scope_label(ctx: PdFilterContext) -> str:
-    if ctx.segment and ctx.segment != "all":
-        return ctx.segment
-    return _primary_pd_model(ctx) or "Model"
 
 
 def _count_pd_attention(summaries: list[dict]) -> int:
@@ -3523,7 +3529,7 @@ def build_pd_apply_prompt() -> html.Section:
                                         className="saas-getting-started-highlights",
                                         children=[
                                             html.Span("1. Choose Model Use Case / Cycle, Scenario, and Monitoring Point.", className="saas-getting-started-highlight"),
-                                            html.Span("2. Pick a Segment or a Specific Model — not both.", className="saas-getting-started-highlight"),
+                                            html.Span("2. Pick a Region/Portfolio/Model, then optionally narrow to a Segment.", className="saas-getting-started-highlight"),
                                             html.Span("3. Click Apply filters to load the dashboard.", className="saas-getting-started-highlight"),
                                         ],
                                     ),
@@ -3553,13 +3559,14 @@ def build_pd_apply_prompt() -> html.Section:
                                     ]),
                                     html.Li([
                                         html.Strong("Choose your population. "),
-                                        "Select a Segment or a single Specific Model — these two filters are mutually "
-                                        "exclusive. If neither is selected, the page falls back to the first available model.",
+                                        "Region, Portfolio, and Model Group narrow the Model list. Segment can be picked "
+                                        "independently of Model -- with no Model chosen it lists every segment across all "
+                                        "models; picking a Model narrows it to that model's own segments.",
                                     ]),
                                     html.Li([
                                         html.Strong("Click “Apply filters”. "),
-                                        "The dashboard loads here. Nothing renders until you apply, so this starting guide "
-                                        "stays visible until the first Apply.",
+                                        "Requires a Model to be selected -- the button stays disabled until you pick one. "
+                                        "Nothing renders until you apply, so this starting guide stays visible until the first Apply.",
                                     ]),
                                     html.Li([
                                         html.Strong("Read the analysis in two chapters. "),

@@ -53,6 +53,16 @@ MODELS_MENU_ID = "pd-models-menu"
 FILTER_HELP_ID = "pd-filter-help"
 SINGLE_SELECT_OPTION_ID = "pd-single-select-option"
 
+REGION_ID = "pd-region"
+REGION_TOGGLE_ID = "pd-region-toggle"
+REGION_MENU_ID = "pd-region-menu"
+PORTFOLIO_ID = "pd-portfolio"
+PORTFOLIO_TOGGLE_ID = "pd-portfolio-toggle"
+PORTFOLIO_MENU_ID = "pd-portfolio-menu"
+MODEL_GROUP_ID = "pd-model-group"
+MODEL_GROUP_TOGGLE_ID = "pd-model-group-toggle"
+MODEL_GROUP_MENU_ID = "pd-model-group-menu"
+
 # Per-chart range controls use pattern-matching ids so a single set of
 # callbacks in callbacks.py can serve every chart's range selector.
 RANGE_WINDOW_ID = "pd-range-window"
@@ -178,7 +188,10 @@ def build_single_select_dropdown(
 
 
 def build_global_filters(data: dict, extra_controls=None) -> html.Div:
-    """The top filter bar: monitoring point, segment, models."""
+    """The top filter bar: region, portfolio, model group, model, segment,
+    model use case / cycle, monitoring point, scenario -- primary (cascading)
+    row followed by a secondary row, mirroring SAAS's own two-row layout."""
+    from ..domain.mev_range import model_field_values
     from ..repositories.filters_config import (
         load_filter_config, model_names as cfg_model_names, segment_values as cfg_segment_values,
     )
@@ -191,12 +204,96 @@ def build_global_filters(data: dict, extra_controls=None) -> html.Div:
     monitoring_point_options = [{"label": q, "value": q} for q in quarters_desc]
     segment_options = [{"label": "All", "value": "all"}] + [{"label": value, "value": value} for value in segment_values]
 
+    mev_catalog = data.get("mev_catalog") or {}
+    region_options = [{"label": "All", "value": "All"}] + [
+        {"label": value, "value": value} for value in model_field_values(mev_catalog, "region", model_names)
+    ]
+    portfolio_options = [{"label": "All", "value": "All"}] + [
+        {"label": value, "value": value} for value in model_field_values(mev_catalog, "portfolio", model_names)
+    ]
+
     reporting_cycle_options = [{"label": c["label"], "value": c["value"]} for c in cfg["reporting_cycles"]]
     scenario_options = [{"label": s["label"], "value": s["value"]} for s in cfg["scenarios"]]
     default_cycle = reporting_cycle_options[0]["value"] if reporting_cycle_options else "CCAR 2026"
     default_scenario = scenario_options[0]["value"] if scenario_options else "intsevere"
 
-    children = [
+    primary_row = html.Div(
+        className="monitoring-controls saas-top-filter-row monitoring-primary-filter-row",
+        children=[
+            html.Div(
+                className="monitoring-filter",
+                children=[
+                    html.Label("Region", htmlFor=REGION_TOGGLE_ID),
+                    build_single_select_dropdown(
+                        value_id=REGION_ID,
+                        toggle_id=REGION_TOGGLE_ID,
+                        menu_id=REGION_MENU_ID,
+                        filter_key="region",
+                        options=region_options,
+                        value="All",
+                    ),
+                ],
+            ),
+            html.Div(
+                className="monitoring-filter",
+                children=[
+                    html.Label("Portfolio", htmlFor=PORTFOLIO_TOGGLE_ID),
+                    build_single_select_dropdown(
+                        value_id=PORTFOLIO_ID,
+                        toggle_id=PORTFOLIO_TOGGLE_ID,
+                        menu_id=PORTFOLIO_MENU_ID,
+                        filter_key="portfolio",
+                        options=portfolio_options,
+                        value="All",
+                    ),
+                ],
+            ),
+            html.Div(
+                className="monitoring-filter",
+                children=[
+                    html.Label("Model Group", htmlFor=MODEL_GROUP_TOGGLE_ID),
+                    build_single_select_dropdown(
+                        value_id=MODEL_GROUP_ID,
+                        toggle_id=MODEL_GROUP_TOGGLE_ID,
+                        menu_id=MODEL_GROUP_MENU_ID,
+                        filter_key="model-group",
+                        options=[{"label": "PD", "value": "PD"}],
+                        value="PD",
+                    ),
+                ],
+            ),
+            html.Div(
+                className="monitoring-filter",
+                children=[
+                    html.Label("Model", htmlFor=MODELS_TOGGLE_ID),
+                    build_single_select_dropdown(
+                        value_id=MODELS_ID,
+                        toggle_id=MODELS_TOGGLE_ID,
+                        menu_id=MODELS_MENU_ID,
+                        filter_key="specific-models",
+                        options=[{"label": "Select model", "value": ""}] + [{"label": name, "value": name} for name in model_names],
+                        value="",
+                    ),
+                ],
+            ),
+            html.Div(
+                className="monitoring-filter",
+                children=[
+                    html.Label("Segment", htmlFor=PORTFOLIO_SEGMENT_TOGGLE_ID),
+                    build_single_select_dropdown(
+                        value_id=PORTFOLIO_SEGMENT_ID,
+                        toggle_id=PORTFOLIO_SEGMENT_TOGGLE_ID,
+                        menu_id=PORTFOLIO_SEGMENT_MENU_ID,
+                        filter_key="portfolio-segment",
+                        options=segment_options,
+                        value="",
+                    ),
+                ],
+            ),
+        ],
+    )
+
+    secondary_children = [
         html.Div(
             className="monitoring-filter",
             children=[
@@ -208,20 +305,6 @@ def build_global_filters(data: dict, extra_controls=None) -> html.Div:
                     filter_key="reporting-cycle",
                     options=reporting_cycle_options,
                     value=default_cycle,
-                ),
-            ],
-        ),
-        html.Div(
-            className="monitoring-filter",
-            children=[
-                html.Label("Scenario", htmlFor=SCENARIO_TOGGLE_ID),
-                build_single_select_dropdown(
-                    value_id=SCENARIO_ID,
-                    toggle_id=SCENARIO_TOGGLE_ID,
-                    menu_id=SCENARIO_MENU_ID,
-                    filter_key="scenario",
-                    options=scenario_options,
-                    value=default_scenario,
                 ),
             ],
         ),
@@ -242,37 +325,27 @@ def build_global_filters(data: dict, extra_controls=None) -> html.Div:
         html.Div(
             className="monitoring-filter",
             children=[
-                html.Label("Models", htmlFor=MODELS_TOGGLE_ID),
+                html.Label("Scenario", htmlFor=SCENARIO_TOGGLE_ID),
                 build_single_select_dropdown(
-                    value_id=MODELS_ID,
-                    toggle_id=MODELS_TOGGLE_ID,
-                    menu_id=MODELS_MENU_ID,
-                    filter_key="specific-models",
-                    options=[{"label": "Select model", "value": ""}] + [{"label": name, "value": name} for name in model_names],
-                    value="",
-                ),
-            ],
-        ),
-        html.Div(
-            className="monitoring-filter",
-            children=[
-                html.Label("Segment", htmlFor=PORTFOLIO_SEGMENT_TOGGLE_ID),
-                build_single_select_dropdown(
-                    value_id=PORTFOLIO_SEGMENT_ID,
-                    toggle_id=PORTFOLIO_SEGMENT_TOGGLE_ID,
-                    menu_id=PORTFOLIO_SEGMENT_MENU_ID,
-                    filter_key="portfolio-segment",
-                    options=segment_options,
-                    value="all",
+                    value_id=SCENARIO_ID,
+                    toggle_id=SCENARIO_TOGGLE_ID,
+                    menu_id=SCENARIO_MENU_ID,
+                    filter_key="scenario",
+                    options=scenario_options,
+                    value=default_scenario,
                 ),
             ],
         ),
     ]
     if extra_controls is not None:
-        children.append(extra_controls)
-    children.append(build_section_subnav())
+        secondary_children.append(extra_controls)
 
-    return html.Div(className="monitoring-controls", children=children)
+    secondary_row = html.Div(
+        className="monitoring-controls saas-top-filter-row saas-secondary-filter-row",
+        children=secondary_children,
+    )
+
+    return html.Div(children=[primary_row, secondary_row, build_section_subnav()])
 
 
 # ---------------------------------------------------------------------------

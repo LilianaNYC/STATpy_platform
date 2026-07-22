@@ -101,9 +101,17 @@ class PdFilterContext:
 # builds a lookup keyed by ``(model_key, segment_key, quarter, horizon_key)`` and
 # installs it here; the metric functions below consult it and return the
 # pre-calculated values verbatim. ``model_key`` is the model name, or ``"ALL"``
-# when every model is selected; ``segment_key`` is the segment name or ``"all"``.
+# when every model is selected; ``segment_key`` is the segment name or ``"All"``.
 
 _PRECOMPUTED_METRICS: dict | None = None
+
+# Fallback model for a segment selection when more than one (or zero) models
+# are in scope -- e.g. the Overview page's Segments chapter, which pools every
+# PD model per segment and has no single model to resolve against. When
+# exactly one model is in scope (the PD Performance tab's own Segment filter,
+# which now requires a model to be picked first), that model is used directly
+# instead -- see ctx_store_keys.
+PD_SEGMENT_HOME_MODEL = "PD Model A"
 
 
 def set_precomputed_metrics(store: dict | None) -> None:
@@ -113,33 +121,37 @@ def set_precomputed_metrics(store: dict | None) -> None:
 
 
 def ctx_store_keys(ctx: "PdFilterContext") -> tuple[str, str]:
-    """Resolve the (level, value) the precomputed store is keyed by.
+    """Resolve the (model, segment) the precomputed store is keyed by.
 
-    The PD filters are mutually exclusive (a portfolio segment OR specific
-    models, never both), so the selection collapses to a single entity:
-    a chosen segment or a single model. If multiple models leak through,
-    pick the first deterministically because pooled PD workbook rows are no
-    longer in use.
+    A segment selection now refines whichever model is selected (the PD
+    Performance tab's Segment filter requires a model to be chosen first, and
+    narrows its options to that model's own segments), so when exactly one
+    model is in scope and a real segment is chosen, both are used together.
+    When zero or more-than-one models are in scope with a real segment (e.g.
+    the Overview page's Segments chapter, which pools every PD model per
+    segment), fall back to :data:`PD_SEGMENT_HOME_MODEL` as before.
 
     Public (not just used by :func:`precomputed_row`): callers that need to
     write back to the same row a read resolved -- e.g. saving an edited
     review-flow RAG to the portfolio file -- reuse this so the write always
     targets the exact row the read came from.
     """
-    if ctx.segment and ctx.segment != "all":
-        return "segment", ctx.segment
     models = sorted(m for m in ctx.models if m)
+    if ctx.segment and ctx.segment != "all":
+        if len(models) == 1:
+            return models[0], ctx.segment
+        return PD_SEGMENT_HOME_MODEL, ctx.segment
     if models:
-        return "model", models[0]
-    return "model", ""
+        return models[0], "All"
+    return "", "All"
 
 
 def precomputed_row(ctx: "PdFilterContext", quarter, horizon_key):
     """Return the precomputed sheet row for ``(ctx, quarter, horizon)`` or ``None``."""
     if _PRECOMPUTED_METRICS is None:
         return None
-    level, value = ctx_store_keys(ctx)
-    return _PRECOMPUTED_METRICS.get((level, value, quarter, horizon_key))
+    model, segment = ctx_store_keys(ctx)
+    return _PRECOMPUTED_METRICS.get((model, segment, quarter, horizon_key))
 
 
 def _row_to_rag_metrics(row: dict) -> dict:

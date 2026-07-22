@@ -192,13 +192,19 @@ body{background:#f8fafc;overflow:hidden}
    Cycle column (6th) carries a 140px floor -- its label needs 138px to stay on
    one line -- while the rest can compress to 120px on narrow screens. */
 .saas-primary-filter-row{grid-template-columns:repeat(5,minmax(120px,171px)) minmax(140px,171px) minmax(120px,171px)}
+/* Monitoring's own primary row (PD/LGD/EAD/Loss Performance tabs): Region,
+   Portfolio, Model Group, Model, Segment -- 5 tracks, unlike SAAS's 7-item
+   row above, so it needs its own template rather than reusing
+   .saas-primary-filter-row's (which would reserve two extra empty tracks). */
+.monitoring-primary-filter-row{grid-template-columns:repeat(5,minmax(120px,171px))}
 /* Waterfall chevrons: the primary filters cascade left-to-right (each selection
    narrows the next), so draw an arrow in the grid gap before every cell after
    the first. Cells are position:relative; the glyph centers in the 14px gap,
    vertically aligned with the 32px bottom-aligned toggles. Colored (and sized
    up) in the app's accent blue, full opacity, so the cascade stands out --
    labels stay their normal muted color. */
-.saas-primary-filter-row>.monitoring-filter+.monitoring-filter::before{content:"❯";position:absolute;left:-15px;bottom:10px;width:16px;font-size:13px;font-weight:800;line-height:1;text-align:center;color:var(--blue);opacity:1;pointer-events:none}
+.saas-primary-filter-row>.monitoring-filter+.monitoring-filter::before,
+.monitoring-primary-filter-row>.monitoring-filter+.monitoring-filter::before{content:"❯";position:absolute;left:-15px;bottom:10px;width:16px;font-size:13px;font-weight:800;line-height:1;text-align:center;color:var(--blue);opacity:1;pointer-events:none}
 /* Narrower columns than the primary row (160px max, not 171px): auto-fit counts
    tracks from the max, and this row must hold six items on one line -- the five
    display filters plus the expand-all button -- when Snapshot = History un-hides
@@ -324,7 +330,7 @@ body{background:#f8fafc;overflow:hidden}
 /* ---------------------------------------------------------------------
    Section sub-navigation
    --------------------------------------------------------------------- */
-#pd-subnav.monitoring-section-subnav,#saas-subnav.monitoring-section-subnav,#overview-subnav.monitoring-section-subnav,#lgd-subnav.monitoring-section-subnav,#ead-subnav.monitoring-section-subnav,#loss-subnav.monitoring-section-subnav{flex-basis:100%;display:flex;flex-direction:column;gap:8px;margin-top:2px;padding:10px 12px;border:1px solid #dbe4f0;border-radius:12px;background:linear-gradient(135deg,#f8fbff 0%,#ffffff 42%,#f8fafc 100%);box-shadow:0 6px 18px rgba(15,23,42,.045)}
+#pd-subnav.monitoring-section-subnav,#saas-subnav.monitoring-section-subnav,#overview-subnav.monitoring-section-subnav,#lgd-subnav.monitoring-section-subnav,#ead-subnav.monitoring-section-subnav,#loss-subnav.monitoring-section-subnav{flex-basis:100%;display:flex;flex-direction:column;gap:8px;margin-top:16px;padding:10px 12px;border:1px solid #dbe4f0;border-radius:12px;background:linear-gradient(135deg,#f8fbff 0%,#ffffff 42%,#f8fafc 100%);box-shadow:0 6px 18px rgba(15,23,42,.045)}
 #pd-subnav.monitoring-section-subnav{gap:6px;padding:8px 10px}
 #saas-subnav.monitoring-section-subnav{margin-top:12px;padding:6px 12px}
 .monitoring-section-subnav-group{display:flex;align-items:flex-start;gap:12px}

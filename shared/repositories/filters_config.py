@@ -1,21 +1,25 @@
-"""Filter options for the monitoring tabs, sourced from the ``Filters`` tab.
+"""Filter options for the monitoring tabs.
 
-The ``Filters`` sheet in the portfolio workbook is a single, easy-to-edit long
-table that drives every dropdown in the monitoring tabs. Each row is one option:
+Each option group is sourced from whichever workbook data actually names it,
+rather than a single hand-maintained list:
 
-==================  ===================================================
-``filter_type``     ``reporting_cycle`` | ``scenario`` | ``monitoring_point``
-                    | ``segment`` | ``model``
-``value``           the value stored / matched in the app
-``parent``          scopes the option: the reporting cycle for a
-                    ``monitoring_point``, or the tab (``pd``/``lgd``/``ead``/
-                    ``loss``) for a ``model``; blank otherwise
-``label``           the text shown in the dropdown (defaults to ``value``)
-``order``           sort order within the group (lower first)
-==================  ===================================================
-
-To add or remove a filter element, add or delete a row in that sheet — no code
-changes are required.
+==================  ===================================================================
+``monitoring_points``  the portfolio workbook's ``Filters`` sheet (``monitoring_point``
+                       rows) -- the only place that records which quarters belong to
+                       which reporting cycle.
+``reporting_cycles``  the distinct ``reporting_cycle`` values across each tab's own
+                       aggregated performance-metrics sheet in the portfolio workbook
+                       (``PD_Performance_Metrics`` / ``LGD_Performance_Metrics`` / ...) --
+                       authoritative for which cycles actually have data.
+``segments``           the distinct ``segment`` values (excluding the "All" aggregate)
+                       across those same sheets.
+``models``             ``dummy_mev_data.xlsx``'s ``model_names`` sheet, grouped by
+                       Model Type -> Model Descriptive Name. Loss has no entry there
+                       and keeps a fixed "All Models" placeholder.
+``scenarios``          the distinct ``Scenario`` values in ``dummy_mev_data.xlsx``'s
+                       own scenario sheet (see also the per-cycle narrowing done in
+                       the monitoring callbacks via ``mev_scenarios_by_cycle``).
+==================  ===================================================================
 
 This module lives in its own top-level ``shared/repositories/`` package rather than
 ``features/monitoring/repositories/`` (where the rest of monitoring's
@@ -32,10 +36,27 @@ from functools import lru_cache
 import pandas as pd
 
 from ...config.settings import settings
+from ..domain.constants import (
+    DUMMY_MEV_MODEL_CHARACTERISTIC_SHEET_NAME,
+    DUMMY_MEV_TIME_SERIES_SHEET_NAME,
+)
 
 FILTERS_SHEET_NAME = "Filters"
 
-# Fallback used if the workbook has no ``Filters`` sheet, so the app still runs.
+_AGGREGATED_SHEET_NAMES = (
+    "PD_Performance_Metrics",
+    "LGD_Performance_Metrics",
+    "EAD_Performance_Metrics",
+    "Loss_Performance_Metrics",
+)
+
+# Cycles are shown most-recent-first by default; anything not in this list
+# (e.g. a brand new cycle) is appended afterwards, sorted alphabetically.
+_CYCLE_DISPLAY_ORDER = ["CCAR 2026", "CCAR 2025", "BAU 2025Q1"]
+
+_MODEL_TYPE_TO_TAB = {"PD": "pd", "LGD": "lgd", "EAD": "ead"}
+
+# Fallback used if a workbook/sheet is missing, so the app still runs.
 _DEFAULTS: dict = {
     "reporting_cycles": [
         {"value": "CCAR 2026", "label": "CCAR 2026"},
@@ -54,62 +75,117 @@ _DEFAULTS: dict = {
     },
     "segments": ["Cyclical", "Defensive", "O&M", "LoL", "IVB"],
     "models": {
-        "pd": ["PD Model A", "PD Model B"],
-        "lgd": ["LGD Model A"],
-        "ead": ["EAD Model A"],
+        "pd": ["PD Model A", "PD Model B", "PD Model C", "PD Model D"],
+        "lgd": ["LGD Model A", "LGD Model B"],
+        "ead": ["EAD Model A", "EAD Model B"],
         "loss": ["All Models"],
     },
 }
 
 
-@lru_cache(maxsize=1)
-def load_filter_config() -> dict:
-    """Return the monitoring filter options, read from the ``Filters`` sheet."""
+def _read_sheet(path, sheet_name: str) -> pd.DataFrame | None:
     try:
-        df = pd.read_excel(settings.portfolio_file, sheet_name=FILTERS_SHEET_NAME)
+        return pd.read_excel(path, sheet_name=sheet_name)
     except (FileNotFoundError, ValueError, KeyError):
-        return dict(_DEFAULTS)
+        return None
 
-    if df.empty or "filter_type" not in df.columns:
-        return dict(_DEFAULTS)
+
+def _monitoring_points_from_filters_sheet() -> dict[str, list[str]]:
+    df = _read_sheet(settings.portfolio_file, FILTERS_SHEET_NAME)
+    if df is None or df.empty or "filter_type" not in df.columns:
+        return dict(_DEFAULTS["monitoring_points"])
 
     df = df.copy()
     df["order"] = pd.to_numeric(df.get("order"), errors="coerce").fillna(0)
-    if "label" not in df.columns:
-        df["label"] = df["value"]
-    df["label"] = df["label"].fillna(df["value"])
     if "parent" not in df.columns:
         df["parent"] = ""
     df["parent"] = df["parent"].fillna("").astype(str).str.strip()
 
-    def _rows(filter_type: str) -> pd.DataFrame:
-        sub = df[df["filter_type"].astype(str).str.strip() == filter_type]
-        return sub.sort_values("order")
-
-    reporting_cycles = [
-        {"value": str(r["value"]).strip(), "label": str(r["label"]).strip()}
-        for _, r in _rows("reporting_cycle").iterrows()
-    ]
-    scenarios = [
-        {"value": str(r["value"]).strip(), "label": str(r["label"]).strip()}
-        for _, r in _rows("scenario").iterrows()
-    ]
-    segments = [str(r["value"]).strip() for _, r in _rows("segment").iterrows()]
-
+    rows = df[df["filter_type"].astype(str).str.strip() == "monitoring_point"].sort_values("order")
     monitoring_points: dict[str, list[str]] = {}
-    for _, r in _rows("monitoring_point").iterrows():
+    for _, r in rows.iterrows():
         monitoring_points.setdefault(r["parent"], []).append(str(r["value"]).strip())
+    return monitoring_points or dict(_DEFAULTS["monitoring_points"])
 
-    models: dict[str, list[str]] = {}
-    for _, r in _rows("model").iterrows():
-        models.setdefault(r["parent"] or "pd", []).append(str(r["value"]).strip())
 
+def _sort_cycles(cycles: set[str]) -> list[str]:
+    known = [c for c in _CYCLE_DISPLAY_ORDER if c in cycles]
+    unknown = sorted(cycles - set(known))
+    return known + unknown
+
+
+def _reporting_cycles_from_data() -> list[dict[str, str]]:
+    cycles: set[str] = set()
+    for sheet_name in _AGGREGATED_SHEET_NAMES:
+        df = _read_sheet(settings.portfolio_file, sheet_name)
+        if df is not None and "reporting_cycle" in df.columns:
+            cycles.update(
+                text for value in df["reporting_cycle"].dropna().unique()
+                if (text := str(value).strip())
+            )
+    if not cycles:
+        return list(_DEFAULTS["reporting_cycles"])
+    return [{"value": cycle, "label": cycle} for cycle in _sort_cycles(cycles)]
+
+
+def _segment_values_from_data() -> list[str]:
+    segments: set[str] = set()
+    for sheet_name in _AGGREGATED_SHEET_NAMES:
+        df = _read_sheet(settings.portfolio_file, sheet_name)
+        if df is not None and "segment" in df.columns:
+            segments.update(
+                text for value in df["segment"].dropna().unique()
+                if (text := str(value).strip()) and text.lower() != "all"
+            )
+    return sorted(segments) or list(_DEFAULTS["segments"])
+
+
+def _model_names_from_mev_workbook() -> dict[str, list[str]]:
+    df = _read_sheet(settings.dummy_mev_data_file, DUMMY_MEV_MODEL_CHARACTERISTIC_SHEET_NAME)
+    models: dict[str, list[str]] = {"loss": list(_DEFAULTS["models"]["loss"])}
+    if df is None or df.empty or "Model Type" not in df.columns or "Model Descriptive Name" not in df.columns:
+        for tab in ("pd", "lgd", "ead"):
+            models[tab] = list(_DEFAULTS["models"][tab])
+        return models
+
+    for model_type, group in df.groupby("Model Type"):
+        tab = _MODEL_TYPE_TO_TAB.get(str(model_type).strip().upper())
+        if not tab:
+            continue
+        seen: list[str] = []
+        for name in group["Model Descriptive Name"]:
+            name = str(name).strip()
+            if name and name not in seen:
+                seen.append(name)
+        if seen:
+            models[tab] = seen
+    for tab in ("pd", "lgd", "ead"):
+        models.setdefault(tab, list(_DEFAULTS["models"][tab]))
+    return models
+
+
+def _scenario_values_from_mev_workbook() -> list[dict[str, str]]:
+    df = _read_sheet(settings.dummy_mev_data_file, DUMMY_MEV_TIME_SERIES_SHEET_NAME)
+    if df is None or df.empty or "Scenario" not in df.columns:
+        return list(_DEFAULTS["scenarios"])
+    values = sorted({
+        text for value in df["Scenario"].dropna().unique()
+        if (text := str(value).strip())
+    })
+    if not values:
+        return list(_DEFAULTS["scenarios"])
+    return [{"value": value, "label": value} for value in values]
+
+
+@lru_cache(maxsize=1)
+def load_filter_config() -> dict:
+    """Return the monitoring filter options (see module docstring for sources)."""
     return {
-        "reporting_cycles": reporting_cycles or _DEFAULTS["reporting_cycles"],
-        "scenarios": scenarios or _DEFAULTS["scenarios"],
-        "monitoring_points": monitoring_points or _DEFAULTS["monitoring_points"],
-        "segments": segments or _DEFAULTS["segments"],
-        "models": models or _DEFAULTS["models"],
+        "reporting_cycles": _reporting_cycles_from_data(),
+        "scenarios": _scenario_values_from_mev_workbook(),
+        "monitoring_points": _monitoring_points_from_filters_sheet(),
+        "segments": _segment_values_from_data(),
+        "models": _model_names_from_mev_workbook(),
     }
 
 

@@ -14,6 +14,7 @@ from typing import Any
 
 from ....shared.domain import constants as pd_config
 from ....shared.domain.calculations import (
+    PD_SEGMENT_HOME_MODEL,
     PdFilterContext,
     calculate_pd_calibration_assignment_rag,
     calculate_pd_calibration_conservatism_details,
@@ -93,10 +94,8 @@ RAG_COLUMN_DESCRIPTIONS = {
 # The Final RAG column is a placeholder verdict shown only in the RAG Heatmap
 # tables -- deliberately excluded from RAG_COLUMNS so it doesn't leak into the
 # RAG Trend dimension picker, governance, or findings, none of which have a
-# real value to compute yet. FINAL_RAG_PLACEHOLDER is a static stand-in until
-# the actual methodology is defined.
+# real value to compute yet.
 FINAL_RAG_COLUMN = "Final RAG"
-FINAL_RAG_PLACEHOLDER = "Amber"
 HEATMAP_COLUMNS = RAG_COLUMNS + HEATMAP_FINAL_COLUMNS
 RAG_COLUMN_DESCRIPTIONS[FINAL_RAG_COLUMN] = "Placeholder for the model's final RAG verdict. Methodology is still to be defined; the value shown is a static placeholder, not a real assessment."
 # Worst-case ranking used for aggregation (max()) -- N/A is treated as Amber
@@ -286,8 +285,9 @@ def _pd_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
 
 
 def _pd_segment_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
-    """One row per (real segment, quarter), pooled across every PD model --
-    the Segments chapter equivalent of ``_pd_rows``."""
+    """One row per (real segment, quarter), sourced from PD_SEGMENT_HOME_MODEL
+    (PD Model A, the only PD model with segment-level data) -- the Segments
+    chapter equivalent of ``_pd_rows``."""
     quarters, performance_observations, rating_migration_observations, metrics_store = _pd_cycle_data(data, reporting_cycle)
     set_precomputed_metrics(metrics_store)
 
@@ -308,6 +308,7 @@ def _pd_segment_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
             rows.append({
                 "Monitoring Period": quarter,
                 "Model Group": "PD",
+                "Model": PD_SEGMENT_HOME_MODEL,
                 "Segment": segment,
                 **metrics,
             })
@@ -343,6 +344,7 @@ def _lgd_segment_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
             rows.append({
                 "Monitoring Period": quarter,
                 "Model Group": "LGD",
+                "Model": lgd_domain.LGD_MODEL_LABEL,
                 "Segment": segment,
                 "Calibration RAG": calibration_rag,
                 "Discrimination RAG": discrimination_rag,
@@ -380,6 +382,7 @@ def _ead_segment_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
             rows.append({
                 "Monitoring Period": quarter,
                 "Model Group": "EAD",
+                "Model": ead_domain.EAD_MODEL_LABEL,
                 "Segment": segment,
                 "Calibration RAG": calibration_rag,
                 "Discrimination RAG": discrimination_rag,
@@ -409,6 +412,7 @@ def _loss_segment_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]
             rows.append({
                 "Monitoring Period": row["Monitoring Period"],
                 "Model Group": "Loss",
+                "Model": loss_domain.LOSS_MODEL_LABEL,
                 "Segment": segment,
                 "Calibration RAG": rag,
                 "Discrimination RAG": "N/A",
@@ -592,7 +596,10 @@ def resolve_current_rows(
 
 
 def resolve_current_segment_rows(rows: list[dict[str, Any]], monitoring_period: str = "All") -> list[dict[str, Any]]:
-    return resolve_current_rows(rows, monitoring_period, group_keys=("Model Group", "Segment"))
+    # Includes "Model" alongside "Segment" -- more than one model within a
+    # group can cover the same segment, so "latest period" is resolved per
+    # (model, segment) pair rather than pooling every model's rows together.
+    return resolve_current_rows(rows, monitoring_period, group_keys=("Model Group", "Model", "Segment"))
 
 
 # ---------------------------------------------------------------------------
@@ -611,42 +618,6 @@ def overview_summary(current_rows: list[dict[str, Any]]) -> dict[str, int]:
     counts = Counter(by_model.values())
     red, amber, green = counts.get("Red", 0), counts.get("Amber", 0), counts.get("Green", 0)
     return {"models": len(by_model), "red": red, "amber": amber, "green": green, "breaches": red + amber}
-
-
-def models_by_overall_rag(current_rows: list[dict[str, Any]]) -> dict[str, list[str]]:
-    """Model names grouped by their current worst Overall RAG tone -- the
-    named-model complement of overview_summary's red/amber/green counts."""
-    by_model: dict[tuple[str, str], str] = {}
-    for row in current_rows:
-        key = (row["Model Group"], row["Model"])
-        rag = effective_rag(row["Overall RAG"])
-        if key not in by_model or RAG_SCORE.get(rag, 0) >= RAG_SCORE.get(by_model[key], 0):
-            by_model[key] = rag
-
-    ordered_keys = sorted(by_model, key=lambda key: (MODEL_GROUPS.index(key[0]) if key[0] in MODEL_GROUPS else 99, key[1]))
-    grouped: dict[str, list[str]] = {"Red": [], "Amber": [], "Green": []}
-    for group, model in ordered_keys:
-        name = model if model.lower().startswith(group.lower()) else f"{group} {model}"
-        grouped.setdefault(by_model[(group, model)], []).append(name)
-    return grouped
-
-
-def segments_by_overall_rag(current_rows: list[dict[str, Any]]) -> dict[str, list[str]]:
-    """Segment names grouped by their current worst Overall RAG tone -- the
-    named-segment complement of segment_overview_summary's red/amber/green
-    counts, same convention as models_by_overall_rag."""
-    by_segment: dict[tuple[str, str], str] = {}
-    for row in current_rows:
-        key = (row["Model Group"], row["Segment"])
-        rag = effective_rag(row["Overall RAG"])
-        if key not in by_segment or RAG_SCORE.get(rag, 0) >= RAG_SCORE.get(by_segment[key], 0):
-            by_segment[key] = rag
-
-    ordered_keys = sorted(by_segment, key=lambda key: (MODEL_GROUPS.index(key[0]) if key[0] in MODEL_GROUPS else 99, key[1]))
-    grouped: dict[str, list[str]] = {"Red": [], "Amber": [], "Green": []}
-    for group, segment in ordered_keys:
-        grouped.setdefault(by_segment[(group, segment)], []).append(f"{group} · {segment}")
-    return grouped
 
 
 def segment_overview_summary(current_rows: list[dict[str, Any]]) -> dict[str, int]:
@@ -712,17 +683,24 @@ def heatmap_rows(current_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def segment_heatmap_rows(current_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One row per (Model Group, Model, Segment) -- more than one model within
+    a group can cover the same segment, so the model disambiguates which
+    model's data a row shows."""
     output = []
     segment_keys = sorted(
-        {(row["Model Group"], row["Segment"]) for row in current_rows},
-        key=lambda key: (MODEL_GROUPS.index(key[0]) if key[0] in MODEL_GROUPS else 99, key[1]),
+        {(row["Model Group"], row.get("Model", ""), row["Segment"]) for row in current_rows},
+        key=lambda key: (MODEL_GROUPS.index(key[0]) if key[0] in MODEL_GROUPS else 99, key[1], key[2]),
     )
-    for group, segment in segment_keys:
-        segment_rows = [row for row in current_rows if row["Model Group"] == group and row["Segment"] == segment]
+    for group, model, segment in segment_keys:
+        segment_rows = [
+            row for row in current_rows
+            if row["Model Group"] == group and row.get("Model", "") == model and row["Segment"] == segment
+        ]
         selected_period = segment_rows[0]["Monitoring Period"] if segment_rows else ""
         entry = {
             "Monitoring Period": selected_period,
             "Model Group": group,
+            "Model": model,
             "Segment": segment,
             **{column: _worst_rag_from_rows(segment_rows, column) for column in RAG_COLUMNS},
             **{column: _worst_rag_from_rows(segment_rows, column) for column in HEATMAP_FINAL_COLUMNS},
@@ -787,12 +765,13 @@ def segment_top_findings(current_rows: list[dict[str, Any]], limit: int | None =
                 findings.append({
                     "Monitoring Period": row.get("Monitoring Period", "-"),
                     "Model Group": row["Model Group"],
+                    "Model": row.get("Model", ""),
                     "Segment": row["Segment"],
                     "Metric": column,
                     "Current": display_rag(rag),
                     "RAG": rag,
                 })
-    findings.sort(key=lambda row: (_finding_rank(row["RAG"]), row["Model Group"], row["Segment"], row["Metric"]))
+    findings.sort(key=lambda row: (_finding_rank(row["RAG"]), row["Model Group"], row["Model"], row["Segment"], row["Metric"]))
     return findings[:limit] if limit is not None else findings
 
 
@@ -823,14 +802,16 @@ DRIVER_EXCLUDED_COLUMNS = frozenset(
 )
 
 
-def _entity_label(group: str, entity: str, entity_key: str) -> str:
+def _entity_label(group: str, model: str, entity: str, entity_key: str) -> str:
     if entity_key == "Segment":
-        return f"{group} · {entity}"
+        # More than one model within a group can cover the same segment, so
+        # the model disambiguates which model's data this card shows.
+        return f"{group} · {model} · {entity}" if model else f"{group} · {entity}"
     return entity if entity.lower().startswith(group.lower()) else f"{group} {entity}"
 
 
 def _previous_post_mitigation_rag(
-    scoped_rows: list[dict[str, Any]], entity_key: str, group: str, entity: str, period: str,
+    scoped_rows: list[dict[str, Any]], entity_key: str, group: str, model: str, entity: str, period: str,
 ) -> str:
     """The entity's saved Post Mitigation RAG in the monitoring period before ``period``.
 
@@ -840,6 +821,7 @@ def _previous_post_mitigation_rag(
     prior = [
         row for row in scoped_rows
         if row["Model Group"] == group
+        and row.get("Model", "") == model
         and str(row.get(entity_key, "") or "") == entity
         and _quarter_sort_key(row["Monitoring Period"]) < _quarter_sort_key(period)
     ]
@@ -875,17 +857,22 @@ def escalation_next_steps(
     """
     from .actions import select_pd_monitoring_actions
 
+    # Grouped by (Model Group, Model, entity) rather than just (Model Group,
+    # entity) -- more than one model within a group can cover the same
+    # segment, so the model disambiguates which model's data an entity card
+    # shows. For entity_key == "Model", model and entity are the same value,
+    # so this is a no-op there.
     entity_keys = sorted(
-        {(row["Model Group"], str(row.get(entity_key, "") or "")) for row in current_rows},
-        key=lambda key: (MODEL_GROUPS.index(key[0]) if key[0] in MODEL_GROUPS else 99, key[1]),
+        {(row["Model Group"], row.get("Model", ""), str(row.get(entity_key, "") or "")) for row in current_rows},
+        key=lambda key: (MODEL_GROUPS.index(key[0]) if key[0] in MODEL_GROUPS else 99, key[1], key[2]),
     )
     tiers: dict[str, list[dict[str, Any]]] = {"escalate": [], "watch": [], "clear": []}
-    for group, entity in entity_keys:
+    for group, model, entity in entity_keys:
         if not entity:
             continue
         entity_rows = [
             row for row in current_rows
-            if row["Model Group"] == group and str(row.get(entity_key, "") or "") == entity
+            if row["Model Group"] == group and row.get("Model", "") == model and str(row.get(entity_key, "") or "") == entity
         ]
         period = entity_rows[0].get("Monitoring Period", "")
         overall = _worst_rag_from_rows(entity_rows, "Overall RAG")
@@ -903,7 +890,11 @@ def escalation_next_steps(
         # the chips surface only the underlying diagnostic tests that drove it.
         driver_map: dict[str, str] = {}
         for finding in findings:
-            if finding["Model Group"] != group or str(finding.get(entity_key, "") or "") != entity:
+            if (
+                finding["Model Group"] != group
+                or finding.get("Model", "") != model
+                or str(finding.get(entity_key, "") or "") != entity
+            ):
                 continue
             if finding["RAG"] not in ("Red", "Amber"):
                 continue
@@ -917,7 +908,7 @@ def escalation_next_steps(
         selections: list[dict[str, Any]] = []
         persistent_breach = False
         if has_review_flow and monitoring_actions:
-            previous_post_mitigation = _previous_post_mitigation_rag(scoped_rows, entity_key, group, entity, period)
+            previous_post_mitigation = _previous_post_mitigation_rag(scoped_rows, entity_key, group, model, entity, period)
             selections = select_pd_monitoring_actions(monitoring_actions, review_flow, previous_post_mitigation)
             persistent_breach = any(selection.get("persistent_breach") for selection in selections)
 
@@ -932,8 +923,9 @@ def escalation_next_steps(
 
         tiers[tier].append({
             "Model Group": group,
+            "Model": model,
             "Entity": entity,
-            "Entity Label": _entity_label(group, entity, entity_key),
+            "Entity Label": _entity_label(group, model, entity, entity_key),
             "Monitoring Period": period,
             "Overall RAG": overall,
             "Review Flow": review_flow,

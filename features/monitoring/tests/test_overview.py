@@ -468,9 +468,9 @@ def test_rag_flow_click_state_keeps_the_current_monitoring_point_slice():
         {"Model Group": "LGD", "Model": "Model B", "Monitoring Period": "2026Q2"},
     ]
     segment_rows = [
-        {"Model Group": "PD", "Segment": "Cyclical", "Monitoring Period": "2026Q2"},
-        {"Model Group": "PD", "Segment": "Cyclical", "Monitoring Period": "2026Q3"},
-        {"Model Group": "LGD", "Segment": "Defensive", "Monitoring Period": "2026Q2"},
+        {"Model Group": "PD", "Model": "PD Model A", "Segment": "Cyclical", "Monitoring Period": "2026Q2"},
+        {"Model Group": "PD", "Model": "PD Model A", "Segment": "Cyclical", "Monitoring Period": "2026Q3"},
+        {"Model Group": "LGD", "Model": "LGD Model A", "Segment": "Defensive", "Monitoring Period": "2026Q2"},
     ]
 
     current_models, current_segments = _resolve_rag_flow_current_rows(

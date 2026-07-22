@@ -26,7 +26,6 @@ from .....shared.ui.controls import build_chart_header
 from .....shared.ui.loading import build_dashboard_loading_shell
 from ...domain.overview import (
     FINAL_RAG_COLUMN,
-    FINAL_RAG_PLACEHOLDER,
     HEATMAP_COLUMNS,
     HEATMAP_FINAL_COLUMNS,
     MODEL_GROUPS,
@@ -42,14 +41,12 @@ from ...domain.overview import (
     effective_rag,
     escalation_next_steps,
     heatmap_rows,
-    models_by_overall_rag,
     overview_summary,
     periods_through,
     resolve_current_rows,
     resolve_current_segment_rows,
     segment_heatmap_rows,
     segment_overview_summary,
-    segments_by_overall_rag,
     segment_top_findings,
     top_findings,
 )
@@ -106,8 +103,6 @@ _RAG_FLOW_STAGES = [
     ("Pre Mitigation RAG", "Pre Mitigation RAG"),
     ("Post Mitigation RAG", "Post Mitigation RAG"),
 ]
-_RAG_FLOW_STAGE_X = [0.05, 0.35, 0.65, 0.95]
-_RAG_FLOW_TONE_Y = {"Green": 0.06, "Amber": 0.31, "Red": 0.56, "N/A": 0.81}
 _RAG_FLOW_TONE_ORDER = ("Green", "Amber", "Red", "N/A")
 _RAG_FLOW_VALID_TONES = ("Green", "Amber", "Red")
 _RAG_FLOW_BAND_RANGES = {
@@ -250,8 +245,10 @@ def _pd_post_subjective_rag(data: dict, models: set[str], segment: str, reportin
 def _lgd_ead_post_subjective_rag(data: dict, model_type: str, sensitivity_key: str, entity: str, reporting_cycle: str, scenario: str, level: str = "model") -> dict[str, str]:
     """``entity`` is a model name when ``level == "model"`` (Models chapter),
     or a segment name when ``level == "segment"``
-    (Segments chapter) -- mirrors the ``(level, value)`` scoping each tab's
-    own sensitivity-projections and MEV catalog already support."""
+    (Segments chapter) -- mirrors the ``(model, segment)`` scoping each tab's
+    own sensitivity-projections and MEV catalog already support. Segment
+    lookups resolve against ``f"{model_type} Model A"``, the sheet's single
+    model with segment-level rows."""
     from .post_subjective import (
         PostSubjectiveConfig, _fmt_pct, _impact_summary, _mev_range_summary, _projection_rows,
         _scenario_ranking_summary, _sensitivity_threshold, resolve_scenario_selection,
@@ -261,7 +258,8 @@ def _lgd_ead_post_subjective_rag(data: dict, model_type: str, sensitivity_key: s
         prefix=model_type.lower(), label=model_type, model_type=model_type,
         sensitivity_key=sensitivity_key, scenario_filter_id="overview-unused",
     )
-    all_rows = _projection_rows(data.get(sensitivity_key) or [], reporting_cycle, level, entity)
+    model, segment = (entity, "All") if level == "model" else (f"{model_type} Model A", entity)
+    all_rows = _projection_rows(data.get(sensitivity_key) or [], reporting_cycle, model, segment)
     if all_rows:
         selected = resolve_scenario_selection(all_rows, None)
         rank = _scenario_ranking_summary([row for row in all_rows if row.get("scenario_variant") in selected])
@@ -485,20 +483,16 @@ def _rag_flow_entity_label(row: dict) -> str:
     group = str(row.get("Model Group", "") or "").strip()
     model = str(row.get("Model", "") or "").strip()
     segment = str(row.get("Segment", "") or "").strip()
-    entity = model or segment or group
+    # A real (non-"All") segment takes precedence over the model name -- more
+    # than one model within a group can cover the same segment, so combining
+    # both disambiguates which model's data this row shows.
+    if segment and segment != "All":
+        entity = f"{model} · {segment}" if model else segment
+    else:
+        entity = model
     if group and entity and not entity.lower().startswith(group.lower()):
         return f"{group} {entity}"
     return entity or group
-
-
-def _format_rag_flow_entities(labels: list[str], max_items: int = 6, separator: str = ", ") -> str:
-    clean = [str(label).strip() for label in labels if str(label).strip()]
-    if not clean:
-        return "None"
-    ordered = sorted(dict.fromkeys(clean))
-    if len(ordered) <= max_items:
-        return separator.join(ordered)
-    return separator.join(ordered[:max_items]) + f"{separator}+{len(ordered) - max_items} more"
 
 
 def _rag_flow_help_chip() -> html.Div:
@@ -549,21 +543,6 @@ def _wrap_rag_flow_label(label: str, max_chars: int) -> str:
         return text
     parts = wrap(text, width=max_chars, break_long_words=True, break_on_hyphens=True)
     return "<br>".join(parts)
-
-
-def _rag_flow_label_layout(flow_rows: list[dict[str, object]], compact: bool = False) -> tuple[dict[str, str], int, int]:
-    wrap_width = 16 if compact else 20
-    wrapped_labels: dict[str, str] = {}
-    max_line_chars = 0
-    max_lines = 1
-    for row in flow_rows:
-        raw_label = str(row.get("Entity Label", "") or "")
-        wrapped = _wrap_rag_flow_label(raw_label, wrap_width)
-        wrapped_labels[raw_label] = wrapped
-        lines = wrapped.split("<br>") if wrapped else [""]
-        max_lines = max(max_lines, len(lines))
-        max_line_chars = max(max_line_chars, max((len(line) for line in lines), default=0))
-    return wrapped_labels, max_line_chars, max_lines
 
 
 def _rag_flow_chart_height(flow_rows: list[dict[str, object]], compact: bool = False) -> int:
@@ -1404,15 +1383,19 @@ def _rag_trend_heatmap_figure(rows: list[dict], rag_column: str, visible_periods
 
 def _segment_heatmap_figure(rows: list[dict], theme: str, columns: list[str] = RAG_COLUMNS) -> go.Figure:
     """Segments-chapter equivalent of ``_rag_heatmap_figure``: one row per
-    (Model Group, Segment) instead of per model. Keeps the same margins as
-    the model heatmap (rather than shrinking the left margin for shorter
-    labels) so both chapters share the same ``_heatmap_panel``/column-header
-    CSS."""
+    (Model Group, Model, Segment) instead of per model -- more than one model
+    within a group can cover the same segment, so the model disambiguates
+    which model's data a row shows. Keeps the same margins as the model
+    heatmap (rather than shrinking the left margin for shorter labels) so
+    both chapters share the same ``_heatmap_panel``/column-header CSS."""
     height = heatmap_chart_height(rows)
     if not rows:
         return _empty_figure("No segments are in scope for the selected filters.", height=height, theme=theme)
 
-    y_labels = [f"{row['Model Group']} · {row['Segment']}" for row in rows]
+    y_labels = [
+        f"{row['Model Group']} · {row['Model']} · {row['Segment']}" if row.get("Model") else f"{row['Model Group']} · {row['Segment']}"
+        for row in rows
+    ]
     x_labels = [_heatmap_display_label(column) for column in columns]
     heatmap_z = {"N/A": 0, "Green": 1, "Amber": 2, "Red": 3}
 
@@ -1427,7 +1410,7 @@ def _segment_heatmap_figure(rows: list[dict], theme: str, columns: list[str] = R
             z_row.append(heatmap_z.get(rag, 0))
             text_row.append(_wrap_metric_text(metric) if has_metric else "")
             metric_hover = f"<br>Metric: {metric}" if has_metric else ""
-            custom_row.append([row["Model Group"], row["Segment"], _heatmap_display_label(column), display_rag(rag), row.get("Monitoring Period", ""), metric_hover])
+            custom_row.append([row["Model Group"], row["Segment"], _heatmap_display_label(column), display_rag(rag), row.get("Monitoring Period", ""), metric_hover, row.get("Model", "")])
         z_values.append(z_row)
         text_values.append(text_row)
         customdata.append(custom_row)
@@ -1452,7 +1435,7 @@ def _segment_heatmap_figure(rows: list[dict], theme: str, columns: list[str] = R
         ],
         showscale=False,
         hovertemplate=(
-            "%{customdata[0]} — %{customdata[1]}<br>%{customdata[2]}: %{customdata[3]}"
+            "%{customdata[0]} — %{customdata[6]} — %{customdata[1]}<br>%{customdata[2]}: %{customdata[3]}"
             "%{customdata[5]}"
             "<br>As of %{customdata[4]}<extra></extra>"
         ),
@@ -1475,10 +1458,15 @@ def _segment_trend_heatmap_height(segment_keys: list[str]) -> int:
 
 
 def _segment_trend_heatmap_figure(rows: list[dict], rag_column: str, visible_periods: list[str] | None, theme: str) -> go.Figure:
-    """Segments-chapter equivalent of ``_rag_trend_heatmap_figure``."""
+    """Segments-chapter equivalent of ``_rag_trend_heatmap_figure``.
+
+    Keyed by (Model Group, Model, Segment) rather than just (Model Group,
+    Segment) -- more than one model within a group can cover the same
+    segment, so the model name disambiguates which model's data a row shows.
+    """
     segment_keys = sorted(
-        {(row["Model Group"], row["Segment"]) for row in rows},
-        key=lambda key: (MODEL_GROUPS.index(key[0]) if key[0] in MODEL_GROUPS else 99, key[1]),
+        {(row["Model Group"], row.get("Model", ""), row["Segment"]) for row in rows},
+        key=lambda key: (MODEL_GROUPS.index(key[0]) if key[0] in MODEL_GROUPS else 99, key[1], key[2]),
     )
     height = _segment_trend_heatmap_height(segment_keys)
     all_periods = available_periods(rows)
@@ -1486,17 +1474,20 @@ def _segment_trend_heatmap_figure(rows: list[dict], rag_column: str, visible_per
     if not segment_keys or not periods:
         return _empty_figure("No RAG trend data is available for the selected filters.", height=height, theme=theme)
 
-    by_key_period = {(row["Model Group"], row["Segment"], row["Monitoring Period"]): row.get(rag_column, "N/A") for row in rows}
+    by_key_period = {
+        (row["Model Group"], row.get("Model", ""), row["Segment"], row["Monitoring Period"]): row.get(rag_column, "N/A")
+        for row in rows
+    }
     heatmap_z = {"N/A": 0, "Green": 1, "Amber": 2, "Red": 3}
 
-    y_labels = [f"{group} · {segment}" for group, segment in segment_keys]
+    y_labels = [f"{group} · {model} · {segment}" if model else f"{group} · {segment}" for group, model, segment in segment_keys]
     z_values, customdata = [], []
-    for group, segment in segment_keys:
+    for group, model, segment in segment_keys:
         z_row, custom_row = [], []
         for period in periods:
-            rag = by_key_period.get((group, segment, period), "N/A")
+            rag = by_key_period.get((group, model, segment, period), "N/A")
             z_row.append(heatmap_z.get(rag, 0))
-            custom_row.append([group, segment, display_rag(rag), period])
+            custom_row.append([group, segment, display_rag(rag), period, model])
         z_values.append(z_row)
         customdata.append(custom_row)
 
@@ -1516,7 +1507,7 @@ def _segment_trend_heatmap_figure(rows: list[dict], rag_column: str, visible_per
             [0.75, "rgba(220,38,38,0.65)"], [1.00, "rgba(220,38,38,0.65)"],
         ],
         showscale=False,
-        hovertemplate="%{customdata[0]} — %{customdata[1]}<br>%{customdata[3]}: %{customdata[2]}<extra></extra>",
+        hovertemplate="%{customdata[0]} — %{customdata[4]} — %{customdata[1]}<br>%{customdata[3]}: %{customdata[2]}<extra></extra>",
     ))
     fig.update_layout(
         height=height,
@@ -1750,7 +1741,8 @@ def _build_segment_heatmap_section(current_rows: list[dict], theme: str, monitor
                 "2.2 Segment RAG Heatmap",
                 f"Cross-Segment RAG Comparison — {period_label}",
                 "Every monitored segment's RAG Assignment and Post Subjective Review tests side by side, one row "
-                "per model group per segment (PD pooled across both PD models).",
+                "per model group per model per segment (PD segments are sourced from PD Model A, the model with "
+                "segment-level data).",
                 "Green",
                 {"show_rag": False},
             ),
@@ -1839,7 +1831,7 @@ def _build_segment_trend_section(rows: list[dict], rag_trend_metric: str, range_
     rag_trend_metric = rag_trend_metric if rag_trend_metric in HEATMAP_COLUMNS else "Overall RAG"
     all_periods = periods_through(available_periods(rows), monitoring_point)
     visible_periods = filter_pd_periods_by_range((range_store or {}).get(SEGMENT_RAG_TREND_RANGE_KEY), all_periods)
-    segment_keys = sorted({(row["Model Group"], row["Segment"]) for row in rows})
+    segment_keys = sorted({(row["Model Group"], row.get("Model", ""), row["Segment"]) for row in rows})
 
     return html.Section(
         id="overview-segment-rag-trend",
@@ -2329,8 +2321,10 @@ def render_overview_content(
     chapter_1 = build_pd_chapter_heading(
         "1.",
         "Models",
-        "Cross-portfolio monitoring view combining PD, LGD, EAD, and Loss models into a single RAG posture.",
-        options={"note": f"Model use case / cycle {reporting_cycle} · Monitoring point {monitoring_point or 'All'} · Model group {segment_model_group or 'All'}"},
+        "Cross-portfolio monitoring view combining PD, LGD, EAD, and Loss models into a single RAG posture. Every "
+        "row is each model's Segment: All aggregate across the whole portfolio -- see the Segments chapter below "
+        "for a per-segment breakdown.",
+        options={"note": f"Model use case / cycle {reporting_cycle} · Monitoring point {monitoring_point or 'All'} · Model group {segment_model_group or 'All'} · Segment: All"},
     )
     chapter_1_sections = [
         _build_summary_section(current_rows, findings, monitoring_point or "All", theme),
@@ -2342,8 +2336,8 @@ def render_overview_content(
     chapter_2 = build_pd_chapter_heading(
         "2.",
         "Segments",
-        "Every model group's book of business sliced by portfolio segment instead of by model (PD pooled across "
-        "both PD models).",
+        "Every model group's book of business sliced by portfolio segment instead of by model (PD segments are "
+        "sourced from PD Model A, the model with segment-level data).",
         options={
             "note": f"Model use case / cycle {reporting_cycle} · Monitoring point {monitoring_point or 'All'} · Model group {segment_model_group or 'All'}",
             "extra_class": "overview-chapter-heading-segments",
@@ -2458,7 +2452,7 @@ def build_overview_apply_prompt() -> html.Section:
                                             className="saas-getting-started-substeps",
                                             children=[
                                                 html.Li([html.Strong("1. Models — "), "PD, LGD, EAD, and Loss, one row per model. Overview, Model RAG Heatmap, RAG Trend Analysis, and Governance Summary."]),
-                                                html.Li([html.Strong("2. Segments — "), "Every model group's book of business, one row per (model group, portfolio segment) pair (PD pooled across both PD models). The same four sub-sections, sliced by segment instead of model."]),
+                                                html.Li([html.Strong("2. Segments — "), "Every model group's book of business, one row per (model group, model, portfolio segment) triple (PD segments are sourced from PD Model A). The same four sub-sections, sliced by segment instead of model."]),
                                             ],
                                         ),
                                     ]),
@@ -2519,6 +2513,17 @@ def page_layout(data: dict) -> list:
                             className="monitoring-controls",
                             children=[
                                 _build_filter(
+                                    "Model Group",
+                                    shared_filters.build_single_select_dropdown(
+                                        value_id=SEGMENT_MODEL_GROUP_ID,
+                                        toggle_id=SEGMENT_MODEL_GROUP_TOGGLE_ID,
+                                        menu_id=SEGMENT_MODEL_GROUP_MENU_ID,
+                                        filter_key=SEGMENT_MODEL_GROUP_FILTER_KEY,
+                                        options=_dropdown_options(SEGMENT_MODEL_GROUP_OPTIONS),
+                                        value="All",
+                                    ),
+                                ),
+                                _build_filter(
                                     "Model Use Case / Cycle",
                                     shared_filters.build_single_select_dropdown(
                                         value_id=REPORTING_CYCLE_ID,
@@ -2538,17 +2543,6 @@ def page_layout(data: dict) -> list:
                                         filter_key=MONITORING_POINT_FILTER_KEY,
                                         options=monitoring_point_options,
                                         value=default_monitoring_point,
-                                    ),
-                                ),
-                                _build_filter(
-                                    "Model Group",
-                                    shared_filters.build_single_select_dropdown(
-                                        value_id=SEGMENT_MODEL_GROUP_ID,
-                                        toggle_id=SEGMENT_MODEL_GROUP_TOGGLE_ID,
-                                        menu_id=SEGMENT_MODEL_GROUP_MENU_ID,
-                                        filter_key=SEGMENT_MODEL_GROUP_FILTER_KEY,
-                                        options=_dropdown_options(SEGMENT_MODEL_GROUP_OPTIONS),
-                                        value="All",
                                     ),
                                 ),
                                 _build_overview_apply_button(),

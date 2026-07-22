@@ -7,10 +7,12 @@ from dash import ALL, Input, Output, State, ctx, no_update
 from ..ui import common as filter_shell
 from ..ui.views import ead_performance as layout
 from ....shared.ui import controls
+from ....shared.domain.mev_range import model_field_values, models_matching
 from ..domain.ead import (
     get_ead_model_options,
     get_ead_segments_for_model,
     ead_store_key,
+    resolve_ead_models,
     resolve_ead_monitoring_point,
     resolve_ead_segment,
 )
@@ -65,6 +67,9 @@ def register_callbacks(app) -> None:
         (layout.MONITORING_POINT_DROPDOWN_ID, layout.MONITORING_POINT_TOGGLE_ID, layout.MONITORING_POINT_MENU_ID, layout.MONITORING_POINT_FILTER_KEY),
         (layout.SEGMENT_DROPDOWN_ID, layout.SEGMENT_TOGGLE_ID, layout.SEGMENT_MENU_ID, layout.SEGMENT_FILTER_KEY),
         (layout.MODEL_DROPDOWN_ID, layout.MODEL_TOGGLE_ID, layout.MODEL_MENU_ID, layout.MODEL_FILTER_KEY),
+        (layout.REGION_ID, layout.REGION_TOGGLE_ID, layout.REGION_MENU_ID, layout.REGION_FILTER_KEY),
+        (layout.PORTFOLIO_ID, layout.PORTFOLIO_TOGGLE_ID, layout.PORTFOLIO_MENU_ID, layout.PORTFOLIO_FILTER_KEY),
+        (layout.MODEL_GROUP_ID, layout.MODEL_GROUP_TOGGLE_ID, layout.MODEL_GROUP_MENU_ID, layout.MODEL_GROUP_FILTER_KEY),
     ):
         filter_shell.register_single_select_callbacks(
             app,
@@ -73,6 +78,49 @@ def register_callbacks(app) -> None:
             menu_id=menu_id,
             filter_key=filter_key,
         )
+
+    mev_catalog = data.get("mev_catalog") or {}
+    ead_model_options = get_ead_model_options(data)
+    ead_model_segment_cycles = data.get("ead_model_segment_cycles") or {}
+    mev_scenarios_by_cycle = data.get("mev_scenarios_by_cycle") or {}
+
+    from ....shared.repositories.filters_config import load_filter_config as _load_filter_config
+    _cfg = _load_filter_config()
+    _cfg_cycle_options = [{"label": c["label"], "value": c["value"]} for c in _cfg["reporting_cycles"]]
+    _cfg_scenario_options = [{"label": s["label"], "value": s["value"]} for s in _cfg["scenarios"]]
+
+    def _narrow_ead_cycle_options(cycles: list[str] | None) -> list[dict[str, str]]:
+        if cycles is None:
+            return _cfg_cycle_options
+        allowed = set(cycles)
+        narrowed = [option for option in _cfg_cycle_options if option["value"] in allowed]
+        return narrowed or _cfg_cycle_options
+
+    @app.callback(
+        Output(layout.PORTFOLIO_ID, "options"),
+        Output(layout.PORTFOLIO_ID, "value"),
+        Input(layout.REGION_ID, "value"),
+        State(layout.PORTFOLIO_ID, "value"),
+    )
+    def sync_ead_region_to_portfolio_options(region, current_portfolio):
+        matches = models_matching(mev_catalog, "EAD", region, None, ead_model_options)
+        portfolios = model_field_values(mev_catalog, "portfolio", matches)
+        options = [{"label": "All", "value": "All"}] + [{"label": p, "value": p} for p in portfolios]
+        value = current_portfolio if current_portfolio in portfolios or current_portfolio == "All" else "All"
+        return options, value
+
+    @app.callback(
+        Output(layout.MODEL_DROPDOWN_ID, "options"),
+        Output(layout.MODEL_DROPDOWN_ID, "value"),
+        Input(layout.REGION_ID, "value"),
+        Input(layout.PORTFOLIO_ID, "value"),
+        State(layout.MODEL_DROPDOWN_ID, "value"),
+    )
+    def sync_ead_region_portfolio_to_model_options(region, portfolio, current_model):
+        matches = models_matching(mev_catalog, "EAD", region, portfolio, ead_model_options)
+        options = [{"label": "Select model", "value": ""}] + [{"label": m, "value": m} for m in matches]
+        value = current_model if current_model in matches else ""
+        return options, value
 
     def _install_ead_store(reporting_cycle):
         from ..domain.ead import set_ead_metrics
@@ -141,6 +189,11 @@ def register_callbacks(app) -> None:
 
         return range_store
 
+    # Segment is never disabled/blocked by Model. With no model chosen, its
+    # options still show every real segment plus a "Select segment"
+    # placeholder (mirroring Model's own "Select model" placeholder); with a
+    # model chosen, options/value resolve via get_ead_segments_for_model /
+    # resolve_ead_segment as before.
     @app.callback(
         Output(layout.SEGMENT_DROPDOWN_ID, "options"),
         Output(layout.SEGMENT_DROPDOWN_ID, "value"),
@@ -148,9 +201,69 @@ def register_callbacks(app) -> None:
         Input(layout.SEGMENT_DROPDOWN_ID, "value"),
     )
     def sync_ead_segment_dropdown(selected_model, selected_segment):
+        has_model = bool(resolve_ead_models(data, selected_model))
         segments = get_ead_segments_for_model(data, selected_model)
-        value = resolve_ead_segment(data, selected_model, selected_segment)
-        return _dropdown_options(segments), value
+        options = _dropdown_options(segments)
+        if has_model:
+            value = resolve_ead_segment(data, selected_model, selected_segment)
+        else:
+            options = [{"label": "Select segment", "value": ""}] + options
+            value = selected_segment if selected_segment in segments else ""
+        return options, value
+
+    # -----------------------------------------------------------------
+    # Model Use Case / Cycle narrows to whichever reporting cycles actually
+    # have data for the selected Model/Segment population -- see
+    # sync_pd_population_to_cycle_options for the rationale.
+    # -----------------------------------------------------------------
+    @app.callback(
+        Output(layout.REPORTING_CYCLE_ID, "options"),
+        Output(layout.REPORTING_CYCLE_ID, "value"),
+        Input(layout.MODEL_DROPDOWN_ID, "value"),
+        Input(layout.SEGMENT_DROPDOWN_ID, "value"),
+        State(layout.REPORTING_CYCLE_ID, "value"),
+    )
+    def sync_ead_population_to_cycle_options(selected_model, selected_segment, current_cycle):
+        has_model = bool(resolve_ead_models(data, selected_model))
+        segment_key = selected_segment if selected_segment and selected_segment not in ("", "all", "All") else "All"
+        if has_model:
+            cycles = ead_model_segment_cycles.get((selected_model, segment_key))
+            if cycles is None:
+                cycles = ead_model_segment_cycles.get((selected_model, "All"), [])
+        elif selected_segment and selected_segment not in ("", "all", "All"):
+            cycles = sorted({
+                cycle
+                for (population_model, population_segment), population_cycles in ead_model_segment_cycles.items()
+                if population_segment == selected_segment
+                for cycle in population_cycles
+            })
+        else:
+            cycles = None
+        options = _narrow_ead_cycle_options(cycles)
+        allowed_values = {option["value"] for option in options}
+        value = current_cycle if current_cycle in allowed_values else (options[0]["value"] if options else "")
+        return options, value
+
+    # -----------------------------------------------------------------
+    # Scenario options come from dummy_mev_data.xlsx's "scenario" sheet: the
+    # distinct "Scenario" values available for the "Run For" cycle matching
+    # the selected Model Use Case / Cycle -- see sync_pd_cycle_to_scenario_options.
+    # -----------------------------------------------------------------
+    @app.callback(
+        Output(layout.SCENARIO_ID, "options"),
+        Output(layout.SCENARIO_ID, "value"),
+        Input(layout.REPORTING_CYCLE_ID, "value"),
+        State(layout.SCENARIO_ID, "value"),
+    )
+    def sync_ead_cycle_to_scenario_options(cycle, current_scenario):
+        scenarios = mev_scenarios_by_cycle.get(cycle)
+        if scenarios:
+            options = [option for option in _cfg_scenario_options if option["value"] in set(scenarios)] or _cfg_scenario_options
+        else:
+            options = _cfg_scenario_options
+        allowed_values = {option["value"] for option in options}
+        value = current_scenario if current_scenario in allowed_values else (options[0]["value"] if options else "")
+        return options, value
 
     @app.callback(
         Output(layout.MONITORING_POINT_DROPDOWN_ID, "options"),
@@ -175,6 +288,18 @@ def register_callbacks(app) -> None:
         return {"scenarios": selected_scenarios or []}
 
     # -----------------------------------------------------------------
+    # Apply is gated on a Model being selected: Segment can be browsed/picked
+    # freely with no model chosen, but the dashboard itself always needs one
+    # explicit model to resolve data against -- see apply_pd_filters.
+    # -----------------------------------------------------------------
+    @app.callback(
+        Output(layout.APPLY_FILTERS_ID, "disabled"),
+        Input(layout.MODEL_DROPDOWN_ID, "value"),
+    )
+    def sync_ead_apply_button_availability(selected_model):
+        return not bool(selected_model)
+
+    # -----------------------------------------------------------------
     # Apply filters: snapshot current filter values into the applied store
     # -----------------------------------------------------------------
     @app.callback(
@@ -196,7 +321,7 @@ def register_callbacks(app) -> None:
         Also discards the scope-specific review-flow state (unsaved reviewer sign-off draft, staged RAG
         picks, last save-status message) -- see ``apply_pd_filters`` for why.
         """
-        if not _n_clicks:
+        if not _n_clicks or not selected_model:
             return no_update, no_update, no_update, no_update
         return {
             "reporting_cycle": reporting_cycle,
@@ -312,7 +437,7 @@ def register_callbacks(app) -> None:
             return no_update, no_update
 
         selected_model, selected_segment, monitoring_point, reporting_cycle = _resolve_ead_scope(data, applied)
-        level, value = ead_store_key(selected_model, selected_segment)
+        model, segment = ead_store_key(selected_model, selected_segment)
 
         saved_fields = []
         for field, new_value in (pending or {}).items():
@@ -322,7 +447,7 @@ def register_callbacks(app) -> None:
             if not column:
                 continue
             ok = data_service.save_ead_review_flow_rag(
-                data, reporting_cycle, level, value, monitoring_point, column, new_value,
+                data, reporting_cycle, model, segment, monitoring_point, column, new_value,
             )
             if ok:
                 saved_fields.append(field)
@@ -330,7 +455,7 @@ def register_callbacks(app) -> None:
         saved_commentary = layout.ead_reviewer_commentary(selected_model, selected_segment, monitoring_point)
         if (conclusions_notes or "") != (saved_commentary or ""):
             ok = data_service.save_ead_review_flow_rag(
-                data, reporting_cycle, level, value, monitoring_point,
+                data, reporting_cycle, model, segment, monitoring_point,
                 layout.REVIEWER_COMMENTARY_COLUMN, conclusions_notes or "",
             )
             if ok:

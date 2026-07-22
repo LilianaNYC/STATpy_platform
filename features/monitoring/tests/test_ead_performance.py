@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dash.development.base_component import Component
 
+from STATpy_platform.features.monitoring.domain.ead import EAD_MODEL_LABEL, ead_store_key
 from STATpy_platform.features.monitoring.ui.views import ead_performance as page
 
 
@@ -133,3 +134,21 @@ def test_apply_ead_filters_clears_the_reviewer_signoff_draft(monkeypatch):
     assert apply_fn(0, "CCAR 2026", "intsevere", "EAD Model A", "All", "2026Q3") == (
         no_update, no_update, no_update, no_update,
     )
+
+    # Apply requires a Model even on a real click -- Segment alone isn't enough.
+    assert apply_fn(1, "CCAR 2026", "intsevere", "", "Defensive", "2026Q3") == (
+        no_update, no_update, no_update, no_update,
+    )
+
+
+def test_ead_store_key_uses_selected_model_when_segment_is_shared_across_models():
+    # "Defensive" exists under both EAD Model A and EAD Model B -- picking Model B
+    # explicitly must resolve against Model B, not silently fall back to the
+    # hardcoded home model (EAD_MODEL_LABEL / EAD Model A).
+    assert ead_store_key("EAD Model B", "Defensive") == ("EAD Model B", "Defensive")
+    assert ead_store_key("EAD Model A", "Defensive") == ("EAD Model A", "Defensive")
+
+
+def test_ead_store_key_falls_back_to_home_model_when_no_model_selected():
+    assert ead_store_key("", "Defensive") == (EAD_MODEL_LABEL, "Defensive")
+    assert ead_store_key(None, "Defensive") == (EAD_MODEL_LABEL, "Defensive")

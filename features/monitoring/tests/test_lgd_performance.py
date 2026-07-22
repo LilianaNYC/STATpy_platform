@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dash.development.base_component import Component
 
+from STATpy_platform.features.monitoring.domain.lgd import LGD_MODEL_LABEL, lgd_store_key
 from STATpy_platform.features.monitoring.ui.views import lgd_performance as page
 
 
@@ -131,3 +132,21 @@ def test_apply_lgd_filters_clears_the_reviewer_signoff_draft(monkeypatch):
     assert apply_fn(0, "CCAR 2026", "intsevere", "LGD Model A", "All", "2026Q3") == (
         no_update, no_update, no_update, no_update,
     )
+
+    # Apply requires a Model even on a real click -- Segment alone isn't enough.
+    assert apply_fn(1, "CCAR 2026", "intsevere", "", "O&M", "2026Q3") == (
+        no_update, no_update, no_update, no_update,
+    )
+
+
+def test_lgd_store_key_uses_selected_model_when_segment_is_shared_across_models():
+    # "O&M" exists under both LGD Model A and LGD Model B -- picking Model B
+    # explicitly must resolve against Model B, not silently fall back to the
+    # hardcoded home model (LGD_MODEL_LABEL / LGD Model A).
+    assert lgd_store_key("LGD Model B", "O&M") == ("LGD Model B", "O&M")
+    assert lgd_store_key("LGD Model A", "O&M") == ("LGD Model A", "O&M")
+
+
+def test_lgd_store_key_falls_back_to_home_model_when_no_model_selected():
+    assert lgd_store_key("", "O&M") == (LGD_MODEL_LABEL, "O&M")
+    assert lgd_store_key(None, "O&M") == (LGD_MODEL_LABEL, "O&M")

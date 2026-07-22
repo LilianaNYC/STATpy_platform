@@ -19,6 +19,7 @@ from ..ui.views import pd_performance as layout
 from ....shared.ui import controls
 from ....shared.theme import APP_THEME_ID, URL_ID
 from ....shared.domain.calculations import PdFilterContext, ctx_store_keys, set_precomputed_metrics
+from ....shared.domain.mev_range import model_field_values, models_matching
 from ....shared.registration import already_registered
 from ..data_access import PD_PERFORMANCE_DATA
 from ..services import data_service
@@ -63,7 +64,66 @@ def register_callbacks(app) -> None:
         return
 
     data = PD_PERFORMANCE_DATA
-    segment_labels = {"all": "All", **{value: value for value in data["segment_values"]}}
+    pd_model_segments = data.get("pd_model_segments") or {}
+    pd_model_segment_cycles = data.get("pd_model_segment_cycles") or {}
+    mev_catalog = data.get("mev_catalog") or {}
+    all_pd_segments = sorted({segment for segments in pd_model_segments.values() for segment in segments})
+
+    mev_scenarios_by_cycle = data.get("mev_scenarios_by_cycle") or {}
+
+    from ....shared.repositories.filters_config import load_filter_config as _load_filter_config
+    _cfg = _load_filter_config()
+    _cfg_cycle_options = [{"label": c["label"], "value": c["value"]} for c in _cfg["reporting_cycles"]]
+    _cfg_scenario_options = [{"label": s["label"], "value": s["value"]} for s in _cfg["scenarios"]]
+
+    def _narrow_pd_cycle_options(cycles: list[str] | None) -> list[dict[str, str]]:
+        if cycles is None:
+            return _cfg_cycle_options
+        allowed = set(cycles)
+        narrowed = [option for option in _cfg_cycle_options if option["value"] in allowed]
+        return narrowed or _cfg_cycle_options
+
+    # -----------------------------------------------------------------
+    # Region, Portfolio, Model Group: brand new filters, registered through
+    # the shared single-select machinery (open/close, click-to-value, and
+    # menu-rebuild-on-options-change all come for free -- unlike Model/
+    # Segment above, there's no legacy hand-rolled callback set to conflict
+    # with here).
+    # -----------------------------------------------------------------
+    for value_id, toggle_id, menu_id, filter_key in (
+        (controls.REGION_ID, controls.REGION_TOGGLE_ID, controls.REGION_MENU_ID, "region"),
+        (controls.PORTFOLIO_ID, controls.PORTFOLIO_TOGGLE_ID, controls.PORTFOLIO_MENU_ID, "portfolio"),
+        (controls.MODEL_GROUP_ID, controls.MODEL_GROUP_TOGGLE_ID, controls.MODEL_GROUP_MENU_ID, "model-group"),
+    ):
+        filter_shell.register_single_select_callbacks(
+            app, value_id=value_id, toggle_id=toggle_id, menu_id=menu_id, filter_key=filter_key,
+        )
+
+    @app.callback(
+        Output(controls.PORTFOLIO_ID, "options"),
+        Output(controls.PORTFOLIO_ID, "value"),
+        Input(controls.REGION_ID, "value"),
+        State(controls.PORTFOLIO_ID, "value"),
+    )
+    def sync_pd_region_to_portfolio_options(region, current_portfolio):
+        matches = models_matching(mev_catalog, "PD", region, None, data["model_names"])
+        portfolios = model_field_values(mev_catalog, "portfolio", matches)
+        options = [{"label": "All", "value": "All"}] + [{"label": p, "value": p} for p in portfolios]
+        value = current_portfolio if current_portfolio in portfolios or current_portfolio == "All" else "All"
+        return options, value
+
+    @app.callback(
+        Output(controls.MODELS_ID, "options"),
+        Output(controls.MODELS_ID, "value"),
+        Input(controls.REGION_ID, "value"),
+        Input(controls.PORTFOLIO_ID, "value"),
+        State(controls.MODELS_ID, "value"),
+    )
+    def sync_pd_region_portfolio_to_model_options(region, portfolio, current_model):
+        matches = models_matching(mev_catalog, "PD", region, portfolio, data["model_names"])
+        options = [{"label": "Select model", "value": ""}] + [{"label": m, "value": m} for m in matches]
+        value = current_model if current_model in matches else ""
+        return options, value
 
     # -----------------------------------------------------------------
     # Discard unsaved review-flow state whenever the PD page is (re)entered.
@@ -118,24 +178,67 @@ def register_callbacks(app) -> None:
         return options, value
 
     # -----------------------------------------------------------------
-    # Portfolio segment <-> specific models mutual exclusivity
+    # Segment is never disabled/blocked by Model: with a model chosen, its
+    # options narrow to that model's own real segments (unchanged). With no
+    # model chosen, Segment still works -- it shows every segment across all
+    # PD models plus a "Select segment" placeholder (mirroring Model's own
+    # "Select model" placeholder) so Segment can be Browse/picked first.
+    # Models is never disabled by Segment either way.
     # -----------------------------------------------------------------
     @app.callback(
-        Output(controls.PORTFOLIO_SEGMENT_ID, "disabled"),
-        Output(controls.PORTFOLIO_SEGMENT_TOGGLE_ID, "disabled"),
-        Output(controls.MODELS_TOGGLE_ID, "disabled"),
-        Input(controls.PORTFOLIO_SEGMENT_ID, "value"),
+        Output(controls.PORTFOLIO_SEGMENT_ID, "options"),
+        Output(controls.PORTFOLIO_SEGMENT_ID, "value"),
         Input(controls.MODELS_ID, "value"),
+        State(controls.PORTFOLIO_SEGMENT_ID, "value"),
     )
-    def sync_pd_segment_model_exclusivity(segment, model):
-        has_segment_selection = segment != "all"
-        has_specific_model_selection = model not in (None, "")
+    def sync_pd_model_to_segment_options(model, current_segment):
+        if model:
+            segments = pd_model_segments.get(model, [])
+            options = [{"label": "All", "value": "all"}] + [{"label": s, "value": s} for s in segments]
+            value = current_segment if current_segment in segments else "all"
+        else:
+            options = (
+                [{"label": "Select segment", "value": ""}, {"label": "All", "value": "all"}]
+                + [{"label": s, "value": s} for s in all_pd_segments]
+            )
+            value = current_segment if current_segment in all_pd_segments or current_segment == "all" else ""
+        return options, value
 
-        return (
-            has_specific_model_selection,  # disable Segment when a specific model is chosen
-            has_specific_model_selection,  # ...and its toggle
-            has_segment_selection,         # disable Models when a segment is chosen
-        )
+    # -----------------------------------------------------------------
+    # Model Use Case / Cycle narrows to whichever reporting cycles actually
+    # have data for the selected Model/Segment population -- e.g. PD Model C
+    # only has CCAR 2025/2026 rows (no BAU 2025Q1), and PD Model B's Cyclical/
+    # Defensive segment breakdown starts later than its own "All" aggregate.
+    # With no Model chosen but a real Segment picked, cycles are pooled across
+    # every model that has that segment; with neither chosen, the full global
+    # cycle list shows (unchanged from before this cascade existed).
+    # -----------------------------------------------------------------
+    @app.callback(
+        Output(controls.REPORTING_CYCLE_ID, "options"),
+        Output(controls.REPORTING_CYCLE_ID, "value"),
+        Input(controls.MODELS_ID, "value"),
+        Input(controls.PORTFOLIO_SEGMENT_ID, "value"),
+        State(controls.REPORTING_CYCLE_ID, "value"),
+    )
+    def sync_pd_population_to_cycle_options(model, segment, current_cycle):
+        segment_key = segment if segment and segment != "all" else "All"
+        if model:
+            cycles = pd_model_segment_cycles.get((model, segment_key))
+            if cycles is None:
+                cycles = pd_model_segment_cycles.get((model, "All"), [])
+        elif segment and segment != "all":
+            cycles = sorted({
+                cycle
+                for (population_model, population_segment), population_cycles in pd_model_segment_cycles.items()
+                if population_segment == segment
+                for cycle in population_cycles
+            })
+        else:
+            cycles = None
+        options = _narrow_pd_cycle_options(cycles)
+        allowed_values = {option["value"] for option in options}
+        value = current_cycle if current_cycle in allowed_values else (options[0]["value"] if options else "")
+        return options, value
 
     # -----------------------------------------------------------------
     # Single-select dropdown open/close toggles
@@ -155,12 +258,9 @@ def register_callbacks(app) -> None:
         Output(controls.PORTFOLIO_SEGMENT_MENU_ID, "className"),
         Input(controls.PORTFOLIO_SEGMENT_TOGGLE_ID, "n_clicks"),
         State(controls.PORTFOLIO_SEGMENT_MENU_ID, "className"),
-        State(controls.PORTFOLIO_SEGMENT_TOGGLE_ID, "disabled"),
         prevent_initial_call=True,
     )
-    def toggle_segment_menu(_n_clicks, current_class, is_disabled):
-        if is_disabled:
-            return "checkbox-dropdown-menu single-select-menu"
+    def toggle_segment_menu(_n_clicks, current_class):
         if "open" in (current_class or "").split():
             return "checkbox-dropdown-menu single-select-menu"
         return "checkbox-dropdown-menu single-select-menu open"
@@ -202,27 +302,34 @@ def register_callbacks(app) -> None:
         prevent_initial_call=True,
     )
     def select_segment(_clicks):
+        # The option buttons are re-created whenever Models changes (the Segment
+        # menu narrows to that model's own segments), so this pattern-matching
+        # callback can fire on that remount with ctx.triggered_id pointing at an
+        # option whose n_clicks never actually incremented. Only act on a real
+        # click (mirrors ui/common.py's select_single_select_option).
         triggered = ctx.triggered_id
-        if not triggered:
+        if not triggered or not any(_clicks or []):
             return no_update, no_update
         return triggered["value"], "checkbox-dropdown-menu single-select-menu"
 
     # -----------------------------------------------------------------
-    # Single-select dropdown shell sync (toggle label + option highlights)
+    # Single-select dropdown shell sync (toggle label + full menu rebuild --
+    # the Segment menu's option set now changes per selected model, so the
+    # menu itself must be rebuilt rather than just re-highlighting a fixed
+    # button set; mirrors sync_monitoring_point_shell above).
     # -----------------------------------------------------------------
     @app.callback(
         Output(controls.PORTFOLIO_SEGMENT_TOGGLE_ID, "children"),
-        Output({"type": controls.SINGLE_SELECT_OPTION_ID, "filter": "portfolio-segment", "value": ALL}, "className"),
+        Output(controls.PORTFOLIO_SEGMENT_MENU_ID, "children"),
         Input(controls.PORTFOLIO_SEGMENT_ID, "value"),
-        State({"type": controls.SINGLE_SELECT_OPTION_ID, "filter": "portfolio-segment", "value": ALL}, "id"),
+        Input(controls.PORTFOLIO_SEGMENT_ID, "options"),
     )
-    def sync_segment_shell(value, option_ids):
-        label = segment_labels.get(value, value or "Select")
-        classes = [
-            "single-select-option is-selected" if option_id["value"] == value else "single-select-option"
-            for option_id in option_ids
-        ]
-        return label, classes
+    def sync_segment_shell(value, options):
+        return filter_shell.build_single_select_shell(
+            options=options,
+            value=value,
+            filter_key="portfolio-segment",
+        )
 
     # Reporting Cycle toggle
     @app.callback(
@@ -243,26 +350,57 @@ def register_callbacks(app) -> None:
         prevent_initial_call=True,
     )
     def select_reporting_cycle(_clicks):
+        # The option buttons are re-created whenever Model/Segment changes (the
+        # Cycle menu narrows to that population's real cycles), so this
+        # pattern-matching callback can fire on that remount with
+        # ctx.triggered_id pointing at an option whose n_clicks never actually
+        # incremented. Only act on a real click (mirrors select_model/select_segment).
         triggered = ctx.triggered_id
-        if not triggered:
+        if not triggered or not any(_clicks or []):
             return no_update, no_update
         return triggered["value"], "checkbox-dropdown-menu single-select-menu"
 
+    # -----------------------------------------------------------------
+    # Single-select dropdown shell sync (toggle label + full menu rebuild --
+    # the Cycle menu's option set now changes per selected Model/Segment, so
+    # the menu itself must be rebuilt rather than just re-highlighting a
+    # fixed button set; mirrors sync_monitoring_point_shell/sync_segment_shell).
+    # -----------------------------------------------------------------
     @app.callback(
         Output(controls.REPORTING_CYCLE_TOGGLE_ID, "children"),
-        Output({"type": controls.SINGLE_SELECT_OPTION_ID, "filter": "reporting-cycle", "value": ALL}, "className"),
+        Output(controls.REPORTING_CYCLE_MENU_ID, "children"),
         Input(controls.REPORTING_CYCLE_ID, "value"),
-        State({"type": controls.SINGLE_SELECT_OPTION_ID, "filter": "reporting-cycle", "value": ALL}, "id"),
+        Input(controls.REPORTING_CYCLE_ID, "options"),
     )
-    def sync_reporting_cycle_shell(value, option_ids):
-        classes = [
-            "single-select-option is-selected" if option_id["value"] == value else "single-select-option"
-            for option_id in option_ids
-        ]
-        return value or "Select", classes
+    def sync_reporting_cycle_shell(value, options):
+        return filter_shell.build_single_select_shell(
+            options=options,
+            value=value,
+            filter_key="reporting-cycle",
+        )
 
-    # Scenario toggle
-    scenario_labels = {"intsevere": "intsevere", "baseline": "baseline", "other": "other"}
+    # -----------------------------------------------------------------
+    # Scenario options come from dummy_mev_data.xlsx's "scenario" sheet: the
+    # distinct "Scenario" values available for the "Run For" cycle matching
+    # the selected Model Use Case / Cycle (not a static config list). Falls
+    # back to the full config list for cycles with no scenario-sheet rows
+    # (e.g. BAU 2025Q1, which the sheet doesn't cover at all).
+    # -----------------------------------------------------------------
+    @app.callback(
+        Output(controls.SCENARIO_ID, "options"),
+        Output(controls.SCENARIO_ID, "value"),
+        Input(controls.REPORTING_CYCLE_ID, "value"),
+        State(controls.SCENARIO_ID, "value"),
+    )
+    def sync_pd_cycle_to_scenario_options(cycle, current_scenario):
+        scenarios = mev_scenarios_by_cycle.get(cycle)
+        if scenarios:
+            options = [option for option in _cfg_scenario_options if option["value"] in set(scenarios)] or _cfg_scenario_options
+        else:
+            options = _cfg_scenario_options
+        allowed_values = {option["value"] for option in options}
+        value = current_scenario if current_scenario in allowed_values else (options[0]["value"] if options else "")
+        return options, value
 
     @app.callback(
         Output(controls.SCENARIO_MENU_ID, "className"),
@@ -282,36 +420,43 @@ def register_callbacks(app) -> None:
         prevent_initial_call=True,
     )
     def select_scenario(_clicks):
+        # The option buttons are re-created whenever Model Use Case / Cycle
+        # changes (the Scenario menu narrows to that cycle's real scenarios),
+        # so this pattern-matching callback can fire on that remount with
+        # ctx.triggered_id pointing at an option whose n_clicks never actually
+        # incremented. Only act on a real click (mirrors select_model/select_segment).
         triggered = ctx.triggered_id
-        if not triggered:
+        if not triggered or not any(_clicks or []):
             return no_update, no_update
         return triggered["value"], "checkbox-dropdown-menu single-select-menu"
 
+    # -----------------------------------------------------------------
+    # Single-select dropdown shell sync (toggle label + full menu rebuild --
+    # the Scenario menu's option set now changes per selected Cycle, so the
+    # menu itself must be rebuilt rather than just re-highlighting a fixed
+    # button set; mirrors sync_reporting_cycle_shell above).
+    # -----------------------------------------------------------------
     @app.callback(
         Output(controls.SCENARIO_TOGGLE_ID, "children"),
-        Output({"type": controls.SINGLE_SELECT_OPTION_ID, "filter": "scenario", "value": ALL}, "className"),
+        Output(controls.SCENARIO_MENU_ID, "children"),
         Input(controls.SCENARIO_ID, "value"),
-        State({"type": controls.SINGLE_SELECT_OPTION_ID, "filter": "scenario", "value": ALL}, "id"),
+        Input(controls.SCENARIO_ID, "options"),
     )
-    def sync_scenario_shell(value, option_ids):
-        label = scenario_labels.get(value, value or "Select")
-        classes = [
-            "single-select-option is-selected" if option_id["value"] == value else "single-select-option"
-            for option_id in option_ids
-        ]
-        return label, classes
+    def sync_scenario_shell(value, options):
+        return filter_shell.build_single_select_shell(
+            options=options,
+            value=value,
+            filter_key="scenario",
+        )
 
     # Models toggle
     @app.callback(
         Output(controls.MODELS_MENU_ID, "className"),
         Input(controls.MODELS_TOGGLE_ID, "n_clicks"),
         State(controls.MODELS_MENU_ID, "className"),
-        State(controls.MODELS_TOGGLE_ID, "disabled"),
         prevent_initial_call=True,
     )
-    def toggle_models_menu(_n_clicks, current_class, is_disabled):
-        if is_disabled:
-            return "checkbox-dropdown-menu single-select-menu"
+    def toggle_models_menu(_n_clicks, current_class):
         if "open" in (current_class or "").split():
             return "checkbox-dropdown-menu single-select-menu"
         return "checkbox-dropdown-menu single-select-menu open"
@@ -323,26 +468,34 @@ def register_callbacks(app) -> None:
         prevent_initial_call=True,
     )
     def select_model(_clicks):
+        # The option buttons are re-created whenever Region/Portfolio changes
+        # (the Model menu narrows to matching models), so this pattern-matching
+        # callback can fire on that remount with ctx.triggered_id pointing at an
+        # option whose n_clicks never actually incremented. Only act on a real
+        # click (mirrors ui/common.py's select_single_select_option).
         triggered = ctx.triggered_id
-        if not triggered:
+        if not triggered or not any(_clicks or []):
             return no_update, no_update
         return triggered["value"], "checkbox-dropdown-menu single-select-menu"
 
-    model_labels = {"": "Select model", **{name: name for name in data["model_names"]}}
-
+    # -----------------------------------------------------------------
+    # Single-select dropdown shell sync (toggle label + full menu rebuild --
+    # the Model menu's option set now changes per selected Region/Portfolio,
+    # so the menu itself must be rebuilt rather than just re-highlighting a
+    # fixed button set; mirrors sync_monitoring_point_shell/sync_segment_shell).
+    # -----------------------------------------------------------------
     @app.callback(
         Output(controls.MODELS_TOGGLE_ID, "children"),
-        Output({"type": controls.SINGLE_SELECT_OPTION_ID, "filter": "specific-models", "value": ALL}, "className"),
+        Output(controls.MODELS_MENU_ID, "children"),
         Input(controls.MODELS_ID, "value"),
-        State({"type": controls.SINGLE_SELECT_OPTION_ID, "filter": "specific-models", "value": ALL}, "id"),
+        Input(controls.MODELS_ID, "options"),
     )
-    def sync_models_shell(value, option_ids):
-        label = model_labels.get(value, value or "Select")
-        classes = [
-            "single-select-option is-selected" if option_id["value"] == value else "single-select-option"
-            for option_id in option_ids
-        ]
-        return label, classes
+    def sync_models_shell(value, options):
+        return filter_shell.build_single_select_shell(
+            options=options,
+            value=value,
+            filter_key="specific-models",
+        )
 
     # -----------------------------------------------------------------
     # Per-chart range controls (Window / From / To) -> pd-range-store
@@ -436,6 +589,20 @@ def register_callbacks(app) -> None:
         return {"scenarios": selected_scenarios or []}
 
     # -----------------------------------------------------------------
+    # Apply is gated on a Model being selected: Segment can be browsed/picked
+    # freely with no model chosen, but the dashboard itself always needs one
+    # explicit model to resolve data against, so the button stays disabled
+    # (and the callback below no-ops even if clicked via a stale event) until
+    # the user picks one.
+    # -----------------------------------------------------------------
+    @app.callback(
+        Output(layout.APPLY_FILTERS_ID, "disabled"),
+        Input(controls.MODELS_ID, "value"),
+    )
+    def sync_pd_apply_button_availability(model):
+        return not bool(model)
+
+    # -----------------------------------------------------------------
     # Apply filters: snapshot current filter values into the applied store
     # -----------------------------------------------------------------
     @app.callback(
@@ -463,10 +630,11 @@ def register_callbacks(app) -> None:
         re-render reads the cleared values and falls back to the new scope's
         saved values from the portfolio file.
 
-        Guard against spurious fires when the page is (re)inserted by the router:
-        only snapshot once the button has actually been clicked.
+        Guard against spurious fires when the page is (re)inserted by the router
+        (no click yet) or when no Model is selected (the button should already be
+        disabled in that case, but a stale click event is still guarded here).
         """
-        if not _n_clicks:
+        if not _n_clicks or not models:
             return no_update, no_update, no_update, no_update
         return {
             "monitoring_point": monitoring_point,
@@ -611,7 +779,7 @@ def register_callbacks(app) -> None:
             return no_update, no_update
 
         filter_ctx, reporting_cycle, monitoring_point = _resolve_pd_scope(data, applied)
-        level, value = ctx_store_keys(filter_ctx)
+        model, segment = ctx_store_keys(filter_ctx)
 
         saved_fields = []
         for field, new_value in (pending or {}).items():
@@ -621,7 +789,7 @@ def register_callbacks(app) -> None:
             if not column:
                 continue
             ok = data_service.save_pd_review_flow_rag(
-                data, reporting_cycle, level, value, monitoring_point, column, new_value,
+                data, reporting_cycle, model, segment, monitoring_point, column, new_value,
             )
             if ok:
                 saved_fields.append(field)
@@ -629,7 +797,7 @@ def register_callbacks(app) -> None:
         saved_commentary = layout.pd_reviewer_commentary(filter_ctx, monitoring_point)
         if (conclusions_notes or "") != (saved_commentary or ""):
             ok = data_service.save_pd_review_flow_rag(
-                data, reporting_cycle, level, value, monitoring_point,
+                data, reporting_cycle, model, segment, monitoring_point,
                 layout.REVIEWER_COMMENTARY_COLUMN, conclusions_notes or "",
             )
             if ok:

@@ -263,6 +263,42 @@ def get_mev_selected_models_simple(
     return available
 
 
+def models_matching(
+    mev_catalog: dict[str, Any],
+    model_type: str,
+    region: str | None,
+    portfolio: str | None,
+    candidates: list[str],
+) -> list[str]:
+    """Narrow ``candidates`` (a tab's own model list) to those matching the
+    selected Region/Portfolio, used to cascade the Region -> Portfolio ->
+    Model Group -> Model filter chain (Model Group is ``model_type``, fixed
+    per tab, so it isn't itself a filter argument here).
+
+    A real (non-"All") ``region``/``portfolio`` requires an exact match
+    against the catalog's ``region``/``portfolio`` fields (see
+    ``load_pd_mev_catalog``); ``None``/``""``/``"All"`` leaves that dimension
+    unfiltered.
+    """
+    mt = model_type.strip().upper()
+    matches = [
+        name for name in candidates
+        if (mev_catalog.get(name, {}).get("model_type") or "").upper() == mt
+    ]
+    if region and region != "All":
+        matches = [name for name in matches if mev_catalog.get(name, {}).get("region") == region]
+    if portfolio and portfolio != "All":
+        matches = [name for name in matches if mev_catalog.get(name, {}).get("portfolio") == portfolio]
+    return matches
+
+
+def model_field_values(mev_catalog: dict[str, Any], field: str, candidates: list[str]) -> list[str]:
+    """Distinct, sorted non-blank ``field`` values (e.g. ``"region"``,
+    ``"portfolio"``) across ``candidates`` -- builds a cascading filter's
+    option list from whichever models are still in scope."""
+    return sorted({value for name in candidates if (value := mev_catalog.get(name, {}).get(field))})
+
+
 def get_pd_mev_chart_id(model_name: str, mev_name: str) -> str:
     """Port of ``getPdMevChartId``."""
     return f"pd-mev-chart-{slugify_pd_token(model_name)}-{slugify_pd_token(mev_name)}"
