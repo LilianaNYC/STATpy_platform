@@ -337,12 +337,20 @@ body{background:#f8fafc;overflow:hidden}
    Section sub-navigation
    --------------------------------------------------------------------- */
 #pd-subnav.monitoring-section-subnav,#saas-subnav.monitoring-section-subnav,#overview-subnav.monitoring-section-subnav,#lgd-subnav.monitoring-section-subnav,#ead-subnav.monitoring-section-subnav,#loss-subnav.monitoring-section-subnav{flex-basis:100%;display:flex;flex-direction:column;gap:8px;margin-top:16px;padding:10px 12px;border:1px solid #dbe4f0;border-radius:12px;background:linear-gradient(135deg,#f8fbff 0%,#ffffff 42%,#f8fafc 100%);box-shadow:0 6px 18px rgba(15,23,42,.045)}
-#pd-subnav.monitoring-section-subnav{gap:6px;padding:8px 10px}
+#pd-subnav.monitoring-section-subnav,#lgd-subnav.monitoring-section-subnav,#ead-subnav.monitoring-section-subnav,#loss-subnav.monitoring-section-subnav,#overview-subnav.monitoring-section-subnav{gap:6px;padding:8px 10px}
 #saas-subnav.monitoring-section-subnav{margin-top:12px;padding:6px 12px}
 .monitoring-section-subnav-group{display:flex;align-items:flex-start;gap:12px}
 .monitoring-section-subnav-group+.monitoring-section-subnav-group{padding-top:8px;border-top:1px solid #e2e8f0}
-.monitoring-section-subnav#pd-subnav .monitoring-section-subnav-group{gap:10px}
-.monitoring-section-subnav#pd-subnav .monitoring-section-subnav-group+.monitoring-section-subnav-group{padding-top:6px}
+.monitoring-section-subnav#pd-subnav .monitoring-section-subnav-group,
+.monitoring-section-subnav#lgd-subnav .monitoring-section-subnav-group,
+.monitoring-section-subnav#ead-subnav .monitoring-section-subnav-group,
+.monitoring-section-subnav#loss-subnav .monitoring-section-subnav-group,
+.monitoring-section-subnav#overview-subnav .monitoring-section-subnav-group{gap:10px}
+.monitoring-section-subnav#pd-subnav .monitoring-section-subnav-group+.monitoring-section-subnav-group,
+.monitoring-section-subnav#lgd-subnav .monitoring-section-subnav-group+.monitoring-section-subnav-group,
+.monitoring-section-subnav#ead-subnav .monitoring-section-subnav-group+.monitoring-section-subnav-group,
+.monitoring-section-subnav#loss-subnav .monitoring-section-subnav-group+.monitoring-section-subnav-group,
+.monitoring-section-subnav#overview-subnav .monitoring-section-subnav-group+.monitoring-section-subnav-group{padding-top:6px}
 .pd-subnav-group-overview{--pd-subnav-edge-start:#2563eb;--pd-subnav-edge-end:#1d4ed8;--pd-subnav-label-tone:#1d4ed8;--pd-subnav-label-active:#0f172a;--pd-subnav-active-bg:#1d4ed8;--pd-subnav-active-border:#1d4ed8;--pd-subnav-active-shadow:0 6px 16px rgba(37,99,235,.16)}
 .pd-subnav-group-rag{--pd-subnav-edge-start:#0f766e;--pd-subnav-edge-end:#0d9488;--pd-subnav-label-tone:#0f766e;--pd-subnav-label-active:#115e59;--pd-subnav-active-bg:#0f766e;--pd-subnav-active-border:#0f766e;--pd-subnav-active-shadow:0 6px 16px rgba(15,118,110,.16)}
 .pd-subnav-group-post-review{--pd-subnav-edge-start:#c2410c;--pd-subnav-edge-end:#9a3412;--pd-subnav-label-tone:#9a3412;--pd-subnav-label-active:#7c2d12;--pd-subnav-active-bg:#9a3412;--pd-subnav-active-border:#9a3412;--pd-subnav-active-shadow:0 6px 16px rgba(154,52,18,.16)}
@@ -350,12 +358,24 @@ body{background:#f8fafc;overflow:hidden}
 .monitoring-section-subnav-group.active::before{content:'';position:absolute;left:-12px;top:1px;bottom:1px;width:3px;border-radius:999px;background:linear-gradient(180deg,var(--pd-subnav-edge-start,#2563eb) 0%,var(--pd-subnav-edge-end,#1d4ed8) 100%)}
 .pd-subnav-group .monitoring-section-subnav-label{color:var(--pd-subnav-label-tone,var(--navy))}
 .monitoring-section-subnav-label{min-width:198px;padding-top:1px;color:var(--navy);font-size:10px;font-weight:800;letter-spacing:.65px;text-transform:uppercase}
-.monitoring-section-subnav#pd-subnav .monitoring-section-subnav-label{min-width:182px;padding-top:0;font-size:9.5px;letter-spacing:.58px}
+.monitoring-section-subnav#pd-subnav .monitoring-section-subnav-label,
+.monitoring-section-subnav#lgd-subnav .monitoring-section-subnav-label,
+.monitoring-section-subnav#ead-subnav .monitoring-section-subnav-label,
+.monitoring-section-subnav#loss-subnav .monitoring-section-subnav-label,
+.monitoring-section-subnav#overview-subnav .monitoring-section-subnav-label{min-width:182px;padding-top:0;font-size:9.5px;letter-spacing:.58px}
 .monitoring-section-subnav-group.active .monitoring-section-subnav-label{color:var(--pd-subnav-label-active,#0f172a)}
 .monitoring-section-subnav-links{display:flex;flex-wrap:wrap;gap:6px}
-.monitoring-section-subnav#pd-subnav .monitoring-section-subnav-links{gap:5px}
+.monitoring-section-subnav#pd-subnav .monitoring-section-subnav-links,
+.monitoring-section-subnav#lgd-subnav .monitoring-section-subnav-links,
+.monitoring-section-subnav#ead-subnav .monitoring-section-subnav-links,
+.monitoring-section-subnav#loss-subnav .monitoring-section-subnav-links,
+.monitoring-section-subnav#overview-subnav .monitoring-section-subnav-links{gap:5px}
 .monitoring-section-subnav-links button{display:inline-flex;align-items:center;justify-content:center;min-height:30px;padding:6px 11px;border:1px solid #dbe4f0;border-radius:999px;background:rgba(255,255,255,.96);color:#475569;font-size:10px;font-weight:700;line-height:1.2;text-align:center;cursor:pointer;box-shadow:0 1px 0 rgba(255,255,255,.95) inset;transition:background .15s,border-color .15s,color .15s,transform .15s}
-.monitoring-section-subnav#pd-subnav .monitoring-section-subnav-links button{min-height:27px;padding:4px 10px;font-size:9.5px}
+.monitoring-section-subnav#pd-subnav .monitoring-section-subnav-links button,
+.monitoring-section-subnav#lgd-subnav .monitoring-section-subnav-links button,
+.monitoring-section-subnav#ead-subnav .monitoring-section-subnav-links button,
+.monitoring-section-subnav#loss-subnav .monitoring-section-subnav-links button,
+.monitoring-section-subnav#overview-subnav .monitoring-section-subnav-links button{min-height:27px;padding:4px 10px;font-size:9.5px}
 .monitoring-section-subnav-links button:hover,.monitoring-section-subnav-links button:focus{background:#eff6ff;border-color:#bfdbfe;color:var(--navy);outline:none;transform:translateY(-1px)}
 .monitoring-section-subnav-links button.active{background:var(--navy);border-color:var(--navy);color:#fff;box-shadow:0 6px 16px rgba(15,29,53,.14)}
 .pd-subnav-group .monitoring-section-subnav-links button.active{background:var(--pd-subnav-active-bg,var(--navy));border-color:var(--pd-subnav-active-border,var(--navy));box-shadow:var(--pd-subnav-active-shadow,0 6px 16px rgba(15,29,53,.14))}
