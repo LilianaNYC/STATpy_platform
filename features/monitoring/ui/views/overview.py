@@ -2510,7 +2510,7 @@ def page_layout(data: dict) -> list:
                     children=[
                         html.Div("Wholesale Portfolio Model Monitoring Dashboard", className="monitoring-dashboard-title"),
                         html.Div(
-                            className="monitoring-controls",
+                            className="monitoring-controls saas-top-filter-row overview-primary-filter-row",
                             children=[
                                 _build_filter(
                                     "Model Group",
