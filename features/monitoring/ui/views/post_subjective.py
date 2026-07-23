@@ -210,8 +210,8 @@ def build_getting_started_prompt(label: str, full_name: str) -> html.Section:
                                     html.Div(
                                         className="saas-getting-started-highlights",
                                         children=[
-                                            html.Span("1. Choose Model Use Case / Cycle, Scenario, and Monitoring Point.", className="saas-getting-started-highlight"),
-                                            html.Span("2. Pick a Region/Portfolio/Model, then optionally narrow to a Segment.", className="saas-getting-started-highlight"),
+                                            html.Span("1. Narrow by Region/Portfolio/Model Group, then Model and/or Segment (each narrows the other).", className="saas-getting-started-highlight"),
+                                            html.Span("2. Choose Model Use Case / Cycle, Monitoring Point, and Scenario.", className="saas-getting-started-highlight"),
                                             html.Span("3. Click Apply filters to load the dashboard.", className="saas-getting-started-highlight"),
                                         ],
                                     ),
@@ -225,14 +225,23 @@ def build_getting_started_prompt(label: str, full_name: str) -> html.Section:
                                 className="saas-getting-started-steps",
                                 children=[
                                     html.Li([
+                                        html.Strong("Choose your population. "),
+                                        "Five filters work together to pick the model you're reviewing:",
+                                        html.Ul(
+                                            className="saas-getting-started-substeps",
+                                            children=[
+                                                html.Li([html.Strong("Region — "), "each model's geography (e.g. HBUS); narrows the Model list."]),
+                                                html.Li([html.Strong("Portfolio — "), "each model's business portfolio (e.g. C&I); narrows the Model list."]),
+                                                html.Li([html.Strong("Model Group — "), f"fixed to “{label}” on this tab (Overview's cross-portfolio view is where it's a real choice across PD/LGD/EAD/Loss)."]),
+                                                html.Li([html.Strong("Model — "), f"the specific {label} model to inspect; required before Apply. Narrowed by Region/Portfolio/Model Group, and by Segment once one is picked."]),
+                                                html.Li([html.Strong("Segment — "), "a portfolio segment (e.g. Cyclical, Defensive) within the chosen Model. With no Model picked, Segment lists every segment across all models; picking a Segment first narrows Model down to only the models that have it."]),
+                                            ],
+                                        ),
+                                    ]),
+                                    html.Li([
                                         html.Strong("Pick a Model Use Case / Cycle. "),
                                         "Choose the cycle to review (e.g. CCAR 2026). This sets which monitoring points and "
                                         "precomputed metrics are available for every section.",
-                                    ]),
-                                    html.Li([
-                                        html.Strong("Choose a Scenario. "),
-                                        "Select the macro scenario (e.g. intsevere, baseline). The scenario drives the MEV "
-                                        "Range and sensitivity sections and the scenario-conditioned views.",
                                     ]),
                                     html.Li([
                                         html.Strong("Set the Monitoring Point. "),
@@ -240,10 +249,9 @@ def build_getting_started_prompt(label: str, full_name: str) -> html.Section:
                                         "model use case / cycle, and trends are shown up to this point.",
                                     ]),
                                     html.Li([
-                                        html.Strong("Choose your population. "),
-                                        "Region, Portfolio, and Model Group narrow the Model list. Segment can be picked "
-                                        "independently of Model -- with no Model chosen it lists every segment; picking a "
-                                        "Model narrows it to that model's own segments.",
+                                        html.Strong("Choose a Scenario. "),
+                                        "Select the macro scenario (e.g. intsevere, baseline). The scenario drives the MEV "
+                                        "Range and sensitivity sections and the scenario-conditioned views.",
                                     ]),
                                     html.Li([
                                         html.Strong("Click “Apply filters”. "),
@@ -268,6 +276,13 @@ def build_getting_started_prompt(label: str, full_name: str) -> html.Section:
                                                 ]),
                                             ],
                                         ),
+                                    ]),
+                                    html.Li([
+                                        html.Strong("Jump between sections with the subnav bar. "),
+                                        "Once the dashboard has loaded, the subnav rows just below the top filter bar list "
+                                        "every section by name -- Overview & Conclusion, Chapter 1: RAG Assignment, and "
+                                        "Chapter 2: Post Subjective Review Analysis -- click any of them to scroll straight "
+                                        "there instead of scrolling manually.",
                                     ]),
                                     html.Li([
                                         html.Strong("Fine-tune within each section. "),

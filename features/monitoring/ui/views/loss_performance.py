@@ -447,8 +447,8 @@ def build_loss_apply_prompt() -> html.Section:
                                     html.Div(
                                         className="saas-getting-started-highlights",
                                         children=[
-                                            html.Span("1. Choose Model Use Case / Cycle and Monitoring Point.", className="saas-getting-started-highlight"),
-                                            html.Span("2. Optionally narrow to a Segment (Loss has a single model).", className="saas-getting-started-highlight"),
+                                            html.Span("1. Optionally narrow to a Segment (Region, Portfolio, Model Group, and Model are fixed).", className="saas-getting-started-highlight"),
+                                            html.Span("2. Choose Model Use Case / Cycle, Monitoring Point, and Scenario.", className="saas-getting-started-highlight"),
                                             html.Span("3. Click Apply filters to load the dashboard.", className="saas-getting-started-highlight"),
                                         ],
                                     ),
@@ -462,6 +462,20 @@ def build_loss_apply_prompt() -> html.Section:
                                 className="saas-getting-started-steps",
                                 children=[
                                     html.Li([
+                                        html.Strong("Choose your population. "),
+                                        "Five filters appear in the top bar, though only one is a real choice for Loss:",
+                                        html.Ul(
+                                            className="saas-getting-started-substeps",
+                                            children=[
+                                                html.Li([html.Strong("Region — "), "fixed to “All” (Loss has no regional breakdown)."]),
+                                                html.Li([html.Strong("Portfolio — "), "fixed to “All” (Loss has no portfolio breakdown)."]),
+                                                html.Li([html.Strong("Model Group — "), "fixed to “Loss”."]),
+                                                html.Li([html.Strong("Model — "), "effectively fixed too; Loss has a single model, and the “All models” option reads the same portfolio-level data."]),
+                                                html.Li([html.Strong("Segment — "), "the one real choice. Narrows to a specific portfolio segment; leaving it at “All” reads the portfolio-level (All Models) metrics."]),
+                                            ],
+                                        ),
+                                    ]),
+                                    html.Li([
                                         html.Strong("Pick a Model Use Case / Cycle. "),
                                         "Choose the cycle to review (e.g. CCAR 2026). This sets which monitoring points and "
                                         "precomputed metrics are available.",
@@ -472,10 +486,9 @@ def build_loss_apply_prompt() -> html.Section:
                                         "model use case / cycle, and trends are shown up to this point.",
                                     ]),
                                     html.Li([
-                                        html.Strong("Choose your population. "),
-                                        "Region, Portfolio, and Model Group are fixed (Loss has a single model). "
-                                        "Segment narrows to a specific portfolio segment; leaving it at “All” reads "
-                                        "the portfolio-level (All Models) metrics.",
+                                        html.Strong("Choose a Scenario. "),
+                                        "Select the macro scenario (e.g. intsevere, baseline). Its options follow the "
+                                        "selected model use case / cycle.",
                                     ]),
                                     html.Li([
                                         html.Strong("Click “Apply filters”. "),
@@ -500,6 +513,12 @@ def build_loss_apply_prompt() -> html.Section:
                                                 ]),
                                             ],
                                         ),
+                                    ]),
+                                    html.Li([
+                                        html.Strong("Jump between sections with the subnav bar. "),
+                                        "Once the dashboard has loaded, the Chapter 1: RAG Assignment subnav row just below "
+                                        "the top filter bar lists Overview and Performance -- click either to scroll "
+                                        "straight there instead of scrolling manually.",
                                     ]),
                                     html.Li([
                                         html.Strong("Fine-tune within each section. "),
