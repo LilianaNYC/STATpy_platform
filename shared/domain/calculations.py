@@ -259,7 +259,7 @@ def filter_pd_performance_observations(observations, quarter, ctx: PdFilterConte
     )
 
 
-def _pd_quarters_with_data(quarters, observations, horizon_keys, ctx: PdFilterContext):
+def pd_quarters_with_data(quarters, observations, horizon_keys, ctx: PdFilterContext):
     """Restrict ``quarters`` to those where the selected model/segment actually
     has a row for at least one of ``horizon_keys`` -- otherwise a model with a
     shorter history than the reporting cycle's full quarter range pads trend
@@ -955,9 +955,16 @@ def get_worst_pd_rag(rags):
 
 
 def calculate_pd_discrimination_section_rag(thresholds, values, default_count_1y=None):
+    accuracy_rag = calculate_pd_metric_rag(thresholds, "Accuracy Ratio", values.get("Accuracy Ratio"))
+    if accuracy_rag == "N/A":
+        # No Accuracy Ratio at all means no data for this scope -- distinct
+        # from a real low-default-count caution, which requires data to exist
+        # in the first place (see calculate_pd_default_count_for_horizon,
+        # which returns 0 -- "finite and < 15" -- for a missing precomputed
+        # row just as readily as for a genuinely low-default population).
+        return "N/A"
     if default_count_1y is not None and math.isfinite(default_count_1y) and default_count_1y < 15:
         return "Amber"
-    accuracy_rag = calculate_pd_metric_rag(thresholds, "Accuracy Ratio", values.get("Accuracy Ratio"))
     delta_accuracy_rag = calculate_pd_metric_rag(thresholds, "Delta Accuracy Ratio", values.get("Delta Accuracy Ratio"))
     if delta_accuracy_rag == "Red" and accuracy_rag == "Green":
         return "Amber"
@@ -1205,7 +1212,7 @@ def build_pd_calibration_assignment_tooltip(label, confidence_interval, signed_n
 
 def build_pd_calibration_rag_trend(observations, rating_observations, monitoring_quarter, ctx: PdFilterContext, crr_scale, monitoring_thresholds):
     quarters = sorted({q for q in ctx.quarters if q and q <= monitoring_quarter})
-    quarters = _pd_quarters_with_data(quarters, observations, ("1y", "2y"), ctx)
+    quarters = pd_quarters_with_data(quarters, observations, ("1y", "2y"), ctx)
     trend = []
     for quarter in quarters:
         details = calculate_pd_calibration_conservatism_details(
@@ -1224,7 +1231,7 @@ def build_pd_calibration_rag_trend(observations, rating_observations, monitoring
 def build_pd_discrimination_rag_trend(observations, rating_observations, monitoring_quarter, ctx: PdFilterContext, crr_scale, monitoring_thresholds):
     thresholds = get_pd_thresholds(monitoring_thresholds)
     quarters = sorted({q for q in ctx.quarters if q and q <= monitoring_quarter})
-    quarters = _pd_quarters_with_data(quarters, observations, ("1y",), ctx)
+    quarters = pd_quarters_with_data(quarters, observations, ("1y",), ctx)
     trend = []
     for quarter in quarters:
         values = calculate_pd_rag_metrics_for_horizon(observations, rating_observations, quarter, "1y", ctx, crr_scale)
@@ -1251,7 +1258,7 @@ def build_pd_discrimination_rag_trend(observations, rating_observations, monitor
 def build_pd_balance_sheet_calibration_rag_trend(observations, rating_observations, monitoring_quarter, ctx: PdFilterContext, crr_scale, monitoring_thresholds):
     thresholds = get_pd_thresholds(monitoring_thresholds)
     quarters = sorted({q for q in ctx.quarters if q and q <= monitoring_quarter})
-    quarters = _pd_quarters_with_data(quarters, observations, ("nco_1y",), ctx)
+    quarters = pd_quarters_with_data(quarters, observations, ("nco_1y",), ctx)
     trend = []
     for quarter in quarters:
         values = calculate_pd_rag_metrics_for_horizon(observations, rating_observations, quarter, "nco_1y", ctx, crr_scale)
@@ -1320,7 +1327,7 @@ def _precomputed_trend_row(precomp: dict, quarter: str, crr_scale) -> dict:
 
 def build_pd_performance_trend_for_horizon(observations, rating_observations, snapshot_quarter, horizon_key, ctx: PdFilterContext, crr_scale):
     quarters = sorted({q for q in ctx.quarters if q and q <= snapshot_quarter})
-    quarters = _pd_quarters_with_data(quarters, observations, (horizon_key,), ctx)
+    quarters = pd_quarters_with_data(quarters, observations, (horizon_key,), ctx)
     trend = []
     for quarter in quarters:
         precomp = precomputed_row(ctx, quarter, horizon_key)

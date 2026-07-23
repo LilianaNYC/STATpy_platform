@@ -14,7 +14,6 @@ from typing import Any
 
 from ....shared.domain import constants as pd_config
 from ....shared.domain.calculations import (
-    PD_SEGMENT_HOME_MODEL,
     PdFilterContext,
     calculate_pd_calibration_assignment_rag,
     calculate_pd_calibration_conservatism_details,
@@ -30,6 +29,7 @@ from ....shared.domain.calculations import (
     get_pd_performance_context_for_horizon,
     get_pd_thresholds,
     get_worst_pd_rag,
+    pd_quarters_with_data,
     precomputed_row,
     precomputed_notching_components,
     set_precomputed_metrics,
@@ -263,11 +263,16 @@ def _pd_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
     model_entities = pd_model_names
 
     rows: list[dict[str, Any]] = []
-    for quarter in quarters:
-        for model_name in model_entities:
-            # Metrics stay pooled across segments here, matching the Models
-            # chapter on the PD Performance tab.
-            models = {model_name}
+    for model_name in model_entities:
+        # Metrics stay pooled across segments here, matching the Models
+        # chapter on the PD Performance tab.
+        models = {model_name}
+        probe_ctx = PdFilterContext(quarters=quarters, models=models, segment="all", monitoring_point="")
+        # Skip quarters before this model has any real data, so a model with a
+        # shorter history than the reporting cycle's full quarter range doesn't
+        # pad the RAG Trend Analysis heatmap with a long empty stretch.
+        model_quarters = pd_quarters_with_data(quarters, performance_observations, ("1y", "2y", "nco_1y"), probe_ctx)
+        for quarter in model_quarters:
             ctx = PdFilterContext(quarters=quarters, models=models, segment="all", monitoring_point=quarter)
             metrics = _pd_chapter1_metrics(
                 performance_observations, rating_migration_observations, performance_horizons,
@@ -285,9 +290,11 @@ def _pd_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
 
 
 def _pd_segment_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
-    """One row per (real segment, quarter), sourced from PD_SEGMENT_HOME_MODEL
-    (PD Model A, the only PD model with segment-level data) -- the Segments
-    chapter equivalent of ``_pd_rows``."""
+    """One row per (model, real segment, quarter) for every PD model that owns
+    that segment -- more than one model can cover the same segment name (e.g.
+    both PD Model A and PD Model D have Cyclical), so each row is scoped to a
+    single model instead of pooling onto PD_SEGMENT_HOME_MODEL, letting the
+    Segment RAG Heatmap show every model's own segment data distinctly."""
     quarters, performance_observations, rating_migration_observations, metrics_store = _pd_cycle_data(data, reporting_cycle)
     set_precomputed_metrics(metrics_store)
 
@@ -295,23 +302,31 @@ def _pd_segment_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
     thresholds = get_pd_thresholds(monitoring_thresholds)
     crr_scale = get_pd_crr_master_scale(monitoring_thresholds)
     performance_horizons = data["performance_horizons"]
-    all_pd_models = set(data.get("model_names", []))
+    pd_model_segments = data.get("pd_model_segments") or {}
 
     rows: list[dict[str, Any]] = []
-    for quarter in quarters:
-        for segment in data.get("segment_values", []):
-            ctx = PdFilterContext(quarters=quarters, models=all_pd_models, segment=segment, monitoring_point=quarter)
-            metrics = _pd_chapter1_metrics(
-                performance_observations, rating_migration_observations, performance_horizons,
-                monitoring_thresholds, thresholds, crr_scale, ctx, quarter,
-            )
-            rows.append({
-                "Monitoring Period": quarter,
-                "Model Group": "PD",
-                "Model": PD_SEGMENT_HOME_MODEL,
-                "Segment": segment,
-                **metrics,
-            })
+    for model_name, segments in pd_model_segments.items():
+        for segment in segments:
+            probe_ctx = PdFilterContext(quarters=quarters, models={model_name}, segment=segment, monitoring_point="")
+            # Skip quarters before this model/segment has any real data, so a
+            # model with a shorter history than the reporting cycle's full
+            # quarter range doesn't pad the RAG Trend Analysis heatmap with a
+            # long empty stretch.
+            segment_quarters = pd_quarters_with_data(quarters, performance_observations, ("1y", "2y", "nco_1y"), probe_ctx)
+            for quarter in segment_quarters:
+                ctx = PdFilterContext(quarters=quarters, models={model_name}, segment=segment, monitoring_point=quarter)
+                metrics = _pd_chapter1_metrics(
+                    performance_observations, rating_migration_observations, performance_horizons,
+                    monitoring_thresholds, thresholds, crr_scale, ctx, quarter,
+                )
+                rows.append({
+                    "Monitoring Period": quarter,
+                    "Model Group": "PD",
+                    "Model": model_name,
+                    "Segment": segment,
+                    **metrics,
+                    **_pd_review_flow_rags(ctx, quarter),
+                })
     return rows
 
 
@@ -530,6 +545,25 @@ def build_overview_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]
     the right one -- mirroring how each tab's own callback scopes its data.
     """
     return _pd_rows(data, reporting_cycle) + _lgd_rows(data, reporting_cycle) + _ead_rows(data, reporting_cycle) + _loss_rows(data, reporting_cycle)
+
+
+def overview_model_options(data: dict, model_group: str = "All") -> list[dict[str, str]]:
+    """Every (Model Group, Model) pair Overview's Models chapter can ever
+    produce, optionally narrowed to one Model Group -- source for the top
+    filter bar's Model checkbox dropdown. LGD/EAD/Loss come from the same
+    config-driven per-tab list ``_lgd_rows``/``_ead_rows``/``_loss_rows``
+    themselves iterate (``model_names`` below); their Segments-chapter
+    equivalents narrow each group down to one fixed model (LGD_MODEL_LABEL /
+    EAD_MODEL_LABEL / LOSS_MODEL_LABEL), which this list already includes."""
+    groups: list[tuple[str, str]] = (
+        [("PD", model) for model in data.get("model_names", [])]
+        + [("LGD", model) for model in model_names("lgd")]
+        + [("EAD", model) for model in model_names("ead")]
+        + [("Loss", model) for model in model_names("loss")]
+    )
+    if model_group and model_group != "All":
+        groups = [(group, model) for group, model in groups if group == model_group]
+    return [{"label": model, "value": model} for group, model in groups]
 
 
 # ---------------------------------------------------------------------------
