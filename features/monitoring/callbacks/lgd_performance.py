@@ -82,6 +82,7 @@ def register_callbacks(app) -> None:
     mev_catalog = data.get("mev_catalog") or {}
     lgd_model_options = get_lgd_model_options(data)
     lgd_model_segment_cycles = data.get("lgd_model_segment_cycles") or {}
+    lgd_segment_models = data.get("lgd_segment_models") or {}
     mev_scenarios_by_cycle = data.get("mev_scenarios_by_cycle") or {}
 
     from ....shared.repositories.filters_config import load_filter_config as _load_filter_config
@@ -114,10 +115,14 @@ def register_callbacks(app) -> None:
         Output(layout.MODEL_DROPDOWN_ID, "value"),
         Input(layout.REGION_ID, "value"),
         Input(layout.PORTFOLIO_ID, "value"),
+        Input(layout.SEGMENT_DROPDOWN_ID, "value"),
         State(layout.MODEL_DROPDOWN_ID, "value"),
     )
-    def sync_lgd_region_portfolio_to_model_options(region, portfolio, current_model):
+    def sync_lgd_region_portfolio_to_model_options(region, portfolio, segment, current_model):
         matches = models_matching(mev_catalog, "LGD", region, portfolio, lgd_model_options)
+        if segment and segment not in ("All", ""):
+            segment_models = set(lgd_segment_models.get(segment, []))
+            matches = [m for m in matches if m in segment_models]
         options = [{"label": "Select model", "value": ""}] + [{"label": m, "value": m} for m in matches]
         value = current_model if current_model in matches else ""
         return options, value

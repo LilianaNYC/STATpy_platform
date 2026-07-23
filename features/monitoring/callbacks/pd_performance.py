@@ -65,6 +65,7 @@ def register_callbacks(app) -> None:
 
     data = PD_PERFORMANCE_DATA
     pd_model_segments = data.get("pd_model_segments") or {}
+    pd_segment_models = data.get("pd_segment_models") or {}
     pd_model_segment_cycles = data.get("pd_model_segment_cycles") or {}
     mev_catalog = data.get("mev_catalog") or {}
     all_pd_segments = sorted({segment for segments in pd_model_segments.values() for segment in segments})
@@ -117,10 +118,14 @@ def register_callbacks(app) -> None:
         Output(controls.MODELS_ID, "value"),
         Input(controls.REGION_ID, "value"),
         Input(controls.PORTFOLIO_ID, "value"),
+        Input(controls.PORTFOLIO_SEGMENT_ID, "value"),
         State(controls.MODELS_ID, "value"),
     )
-    def sync_pd_region_portfolio_to_model_options(region, portfolio, current_model):
+    def sync_pd_filters_to_model_options(region, portfolio, segment, current_model):
         matches = models_matching(mev_catalog, "PD", region, portfolio, data["model_names"])
+        if segment and segment != "all":
+            segment_models = set(pd_segment_models.get(segment, []))
+            matches = [m for m in matches if m in segment_models]
         options = [{"label": "Select model", "value": ""}] + [{"label": m, "value": m} for m in matches]
         value = current_model if current_model in matches else ""
         return options, value
@@ -183,7 +188,9 @@ def register_callbacks(app) -> None:
     # model chosen, Segment still works -- it shows every segment across all
     # PD models plus a "Select segment" placeholder (mirroring Model's own
     # "Select model" placeholder) so Segment can be Browse/picked first.
-    # Models is never disabled by Segment either way.
+    # Models is narrowed by Segment (see sync_pd_filters_to_model_options
+    # above) -- picking a segment restricts Models to models that actually
+    # own it, clearing a now-invalid selection.
     # -----------------------------------------------------------------
     @app.callback(
         Output(controls.PORTFOLIO_SEGMENT_ID, "options"),
