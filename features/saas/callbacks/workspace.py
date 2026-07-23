@@ -977,8 +977,10 @@ def _register_filter_callbacks(app) -> None:
                 region=region, model_group=model_group, portfolio=portfolio, model_names=selected_raw_models,
             )
         ]
-        model_options = _model_options_for_filters(None, region=region, model_group=model_group, portfolio=portfolio, disabled=False)
-        toggle_label = _model_toggle_label(current_values, all_options, False)
+        model_options = _model_options_for_filters(segment, region=region, model_group=model_group, portfolio=portfolio, disabled=False)
+        model_option_values = {option["value"] for option in model_options}
+        current_values = [value for value in current_values if value in model_option_values]
+        toggle_label = _model_toggle_label(current_values, model_options, False)
 
         if segment_active and has_specific_model_selection:
             help_text = "Both Segment and Models are set. Segment takes priority while it's active."

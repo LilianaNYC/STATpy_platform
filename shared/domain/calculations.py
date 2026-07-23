@@ -191,12 +191,6 @@ def get_previous_pd_quarter(quarter):
     return f"{year - 1}Q4" if quarter_number == 1 else f"{year}Q{quarter_number - 1}"
 
 
-def shift_monitoring_quarter_year(quarter, year_delta):
-    match = _QUARTER_RE.match(quarter or "")
-    if not match:
-        return ""
-    return f"{int(match.group(1)) + year_delta}Q{match.group(2)}"
-
 
 # ---------------------------------------------------------------------------
 # Performance context (getPdPerformanceHorizonKey / getPdPerformanceContext*)
@@ -213,7 +207,7 @@ def get_pd_performance_horizon_key(ctx: PdFilterContext) -> str:
 def get_pd_performance_context_for_horizon(performance_horizons, horizon_key, ctx: PdFilterContext):
     horizon_years = 2 if horizon_key == "2y" else 1
     horizon = (performance_horizons or {}).get(horizon_key) or {}
-    snapshot_quarter = shift_monitoring_quarter_year(ctx.monitoring_point, -horizon_years)
+    snapshot_quarter = ctx.monitoring_point
     return {
         "monitoring_point": ctx.monitoring_point,
         "horizon_key": horizon_key,
@@ -263,6 +257,18 @@ def filter_pd_performance_observations(observations, quarter, ctx: PdFilterConte
     return filter_pd_performance_observations_for_horizon(
         observations, quarter, get_pd_performance_horizon_key(ctx), ctx,
     )
+
+
+def _pd_quarters_with_data(quarters, observations, horizon_keys, ctx: PdFilterContext):
+    """Restrict ``quarters`` to those where the selected model/segment actually
+    has a row for at least one of ``horizon_keys`` -- otherwise a model with a
+    shorter history than the reporting cycle's full quarter range pads trend
+    charts with a long empty stretch before its first real data point."""
+    return [
+        quarter for quarter in quarters
+        if any(precomputed_row(ctx, quarter, key) is not None for key in horizon_keys)
+        or any(filter_pd_performance_observations_for_horizon(observations, quarter, key, ctx) for key in horizon_keys)
+    ]
 
 
 def filter_pd_rating_observations(observations, quarter, ctx: PdFilterContext):
@@ -1065,12 +1071,9 @@ def calculate_pd_calibration_conservatism_details(observations, rating_observati
         return {"rag": "N/A", "weighted_average": None, "rounded_score": None, "horizons": [], "total_weight": 0}
 
     ead_summaries = calculate_pd_ead_summaries(observations, monitoring_quarter, ctx)
-    horizon_configs = [("1y", 1), ("2y", 2)]
     weighted_scores = []
-    for horizon_key, years in horizon_configs:
-        snapshot_quarter = shift_monitoring_quarter_year(monitoring_quarter, -years)
-        if not snapshot_quarter:
-            continue
+    for horizon_key in ("1y", "2y"):
+        snapshot_quarter = monitoring_quarter
 
         precomp = precomputed_row(ctx, snapshot_quarter, horizon_key)
         if precomp is not None:
@@ -1202,6 +1205,7 @@ def build_pd_calibration_assignment_tooltip(label, confidence_interval, signed_n
 
 def build_pd_calibration_rag_trend(observations, rating_observations, monitoring_quarter, ctx: PdFilterContext, crr_scale, monitoring_thresholds):
     quarters = sorted({q for q in ctx.quarters if q and q <= monitoring_quarter})
+    quarters = _pd_quarters_with_data(quarters, observations, ("1y", "2y"), ctx)
     trend = []
     for quarter in quarters:
         details = calculate_pd_calibration_conservatism_details(
@@ -1220,6 +1224,7 @@ def build_pd_calibration_rag_trend(observations, rating_observations, monitoring
 def build_pd_discrimination_rag_trend(observations, rating_observations, monitoring_quarter, ctx: PdFilterContext, crr_scale, monitoring_thresholds):
     thresholds = get_pd_thresholds(monitoring_thresholds)
     quarters = sorted({q for q in ctx.quarters if q and q <= monitoring_quarter})
+    quarters = _pd_quarters_with_data(quarters, observations, ("1y",), ctx)
     trend = []
     for quarter in quarters:
         values = calculate_pd_rag_metrics_for_horizon(observations, rating_observations, quarter, "1y", ctx, crr_scale)
@@ -1246,6 +1251,7 @@ def build_pd_discrimination_rag_trend(observations, rating_observations, monitor
 def build_pd_balance_sheet_calibration_rag_trend(observations, rating_observations, monitoring_quarter, ctx: PdFilterContext, crr_scale, monitoring_thresholds):
     thresholds = get_pd_thresholds(monitoring_thresholds)
     quarters = sorted({q for q in ctx.quarters if q and q <= monitoring_quarter})
+    quarters = _pd_quarters_with_data(quarters, observations, ("nco_1y",), ctx)
     trend = []
     for quarter in quarters:
         values = calculate_pd_rag_metrics_for_horizon(observations, rating_observations, quarter, "nco_1y", ctx, crr_scale)
@@ -1314,6 +1320,7 @@ def _precomputed_trend_row(precomp: dict, quarter: str, crr_scale) -> dict:
 
 def build_pd_performance_trend_for_horizon(observations, rating_observations, snapshot_quarter, horizon_key, ctx: PdFilterContext, crr_scale):
     quarters = sorted({q for q in ctx.quarters if q and q <= snapshot_quarter})
+    quarters = _pd_quarters_with_data(quarters, observations, (horizon_key,), ctx)
     trend = []
     for quarter in quarters:
         precomp = precomputed_row(ctx, quarter, horizon_key)

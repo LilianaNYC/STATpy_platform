@@ -871,6 +871,41 @@ def _build_model_segment_map(agg_df: pd.DataFrame) -> dict[str, list[str]]:
     }
 
 
+def _build_model_segment_map_from_sheet(sheet_name: str) -> dict[str, list[str]]:
+    """Same as :func:`_build_model_segment_map`, reading ``sheet_name`` directly.
+
+    Used for LGD/EAD, whose sheet rows use model names verbatim (no
+    normalization needed, unlike PD's).
+    """
+    try:
+        df = pd.read_excel(settings.portfolio_file, sheet_name=sheet_name)
+    except (FileNotFoundError, ValueError, KeyError):
+        return {}
+    df = df.dropna(how="all")
+    if df.empty or "model" not in df.columns or "segment" not in df.columns:
+        return {}
+    return {
+        model: sorted({
+            s for s in group["segment"].dropna().astype(str).str.strip().unique()
+            if s and s.lower() != "all"
+        })
+        for model, group in df.groupby(df["model"].astype(str).str.strip())
+    }
+
+
+def _invert_str_list_map(mapping: dict[str, list[str]]) -> dict[str, list[str]]:
+    """Invert a ``key -> [values]`` map into ``value -> [keys]``.
+
+    Used to derive a segment -> models map from each tab's model -> segments
+    map, so the Segment filter can narrow the Model filter's options.
+    """
+    result: dict[str, list[str]] = {}
+    for key, values in mapping.items():
+        for value in values:
+            result.setdefault(value, []).append(key)
+    return result
+
+
 def load_pd_performance_data_from_aggregated() -> dict[str, Any]:
     """Load from the PD_Performance_Metrics sheet instead of facility-level data."""
     log.info("Loading PD aggregated metrics from %s [%s]", settings.portfolio_file, PD_AGGREGATED_SHEET_NAME)
@@ -899,6 +934,9 @@ def load_pd_performance_data_from_aggregated() -> dict[str, Any]:
     segment_values = data_segment_values or ["Cyclical", "Defensive", "O&M", "LoL", "IVB"]
     pd_model_segments = _build_model_segment_map(agg_df)
     pd_model_segment_cycles = _build_model_segment_cycle_map(agg_df)
+    pd_segment_models = _invert_str_list_map(pd_model_segments)
+    lgd_model_segments = _build_model_segment_map_from_sheet(LGD_AGGREGATED_SHEET_NAME)
+    ead_model_segments = _build_model_segment_map_from_sheet(EAD_AGGREGATED_SHEET_NAME)
 
     monitoring_thresholds = load_monitoring_thresholds()
 
@@ -945,6 +983,11 @@ def load_pd_performance_data_from_aggregated() -> dict[str, Any]:
         "segment_values": segment_values,
         "pd_model_segments": pd_model_segments,
         "pd_model_segment_cycles": pd_model_segment_cycles,
+        "pd_segment_models": pd_segment_models,
+        "lgd_model_segments": lgd_model_segments,
+        "lgd_segment_models": _invert_str_list_map(lgd_model_segments),
+        "ead_model_segments": ead_model_segments,
+        "ead_segment_models": _invert_str_list_map(ead_model_segments),
         "lgd_model_segment_cycles": _build_model_segment_cycle_map_from_sheet(LGD_AGGREGATED_SHEET_NAME),
         "ead_model_segment_cycles": _build_model_segment_cycle_map_from_sheet(EAD_AGGREGATED_SHEET_NAME),
         "mev_scenarios_by_cycle": mev_scenarios_by_cycle,
