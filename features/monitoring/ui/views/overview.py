@@ -2477,8 +2477,9 @@ def build_overview_apply_prompt() -> html.Section:
                                     html.Div(
                                     className="saas-getting-started-highlights",
                                     children=[
-                                        html.Span("1. Choose Model Use Case / Cycle and Monitoring Point.", className="saas-getting-started-highlight"),
-                                        html.Span("2. Click Apply filters to load the overview.", className="saas-getting-started-highlight"),
+                                        html.Span("1. Optionally narrow by Model Group and Model.", className="saas-getting-started-highlight"),
+                                        html.Span("2. Choose Model Use Case / Cycle and Monitoring Point.", className="saas-getting-started-highlight"),
+                                        html.Span("3. Click Apply filters to load the overview.", className="saas-getting-started-highlight"),
                                     ],
                                 ),
                                     html.Div(
@@ -2490,6 +2491,14 @@ def build_overview_apply_prompt() -> html.Section:
                             html.Ol(
                                 className="saas-getting-started-steps",
                                 children=[
+                                    html.Li([
+                                        html.Strong("Narrow by Model Group and Model (optional). "),
+                                        "Model Group restricts everything to one workstream (PD, LGD, EAD, or Loss); "
+                                        "Model then lets you check or uncheck individual models within whatever "
+                                        "Model Group allows — its options narrow live as Model Group changes, and "
+                                        "the “All” checkbox at the top selects or clears every visible model at "
+                                        "once. Leave both at their defaults to see every model.",
+                                    ]),
                                     html.Li([
                                         html.Strong("Pick a Model Use Case / Cycle. "),
                                         "LGD, EAD, and Loss keep a separate precomputed dataset per cycle (e.g. CCAR 2026); "
@@ -2511,10 +2520,16 @@ def build_overview_apply_prompt() -> html.Section:
                                         html.Ul(
                                             className="saas-getting-started-substeps",
                                             children=[
-                                                html.Li([html.Strong("1. Models — "), "PD, LGD, EAD, and Loss, one row per model. Overview, Model RAG Heatmap, Model RAG Trend Analysis, and Model Governance Summary."]),
-                                                html.Li([html.Strong("2. Segments — "), "Every model group's book of business, one row per (model group, model, portfolio segment) triple. The same four sub-sections, sliced by segment instead of model."]),
+                                                html.Li([html.Strong("1. Models — "), "PD, LGD, EAD, and Loss, one row per model. Model Overview, Model RAG Heatmap, Model RAG Trend Analysis, and Model Governance Summary."]),
+                                                html.Li([html.Strong("2. Segments — "), "Every model group's book of business, one row per (model group, model, portfolio segment) triple. Segment Overview, Segment RAG Heatmap, Segment RAG Trend Analysis, and Segment Governance Summary -- the same four sub-sections, sliced by segment instead of model."]),
                                             ],
                                         ),
+                                    ]),
+                                    html.Li([
+                                        html.Strong("Jump between sections with the subnav bar. "),
+                                        "Once the overview has loaded, the Models and Segments rows just below the top "
+                                        "filter bar list all eight sub-sections by name -- click any of them to scroll "
+                                        "straight there instead of scrolling manually.",
                                     ]),
                                     html.Li([
                                         html.Strong("Fine-tune within each section. "),

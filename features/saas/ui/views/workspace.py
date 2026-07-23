@@ -988,9 +988,9 @@ def build_apply_prompt() -> html.Div:
                     html.Div(
                         className="saas-getting-started-highlights",
                         children=[
-                            html.Span("1. Narrow by Region / Portfolio / Model Group, choose your Segment or Model scope, then set Model Use Case / Cycle and view options.", className="saas-getting-started-highlight"),
-                            html.Span("2. Click Apply filters to load charts and unlock Export.", className="saas-getting-started-highlight"),
-                            html.Span("3. Use Compare To only when you want cycle-to-cycle comparisons.", className="saas-getting-started-highlight"),
+                            html.Span("1. Narrow by Region / Portfolio / Model Group, choose your Segment or Model scope, then pick Model Use Case / Cycle.", className="saas-getting-started-highlight"),
+                            html.Span("2. Optionally add Compare To and set view options (Snapshot Period, Reference Lines, MEV Label).", className="saas-getting-started-highlight"),
+                            html.Span("3. Click Apply filters to load charts and unlock Export.", className="saas-getting-started-highlight"),
                         ],
                     ),
                     html.Div(
@@ -1003,15 +1003,6 @@ def build_apply_prompt() -> html.Div:
                 className="saas-getting-started-steps",
                 children=[
                     html.Li([
-                        html.Strong("Pick a Model Use Case / Cycle. "),
-                        "Choose the cycle to review (e.g. CCAR 2026). This sets the primary “Projection starts” point for every chart.",
-                    ]),
-                    html.Li([
-                        html.Strong("(Optional) Compare To. "),
-                        "Add one or more model use case / cycles to overlay against the primary cycle for benchmarking. "
-                        "Compare To also powers the Historical Reconciliation and Projection Comparison exports.",
-                    ]),
-                    html.Li([
                         html.Strong("(Optional) Narrow by Region, Portfolio, or Model Group. "),
                         "Each narrows which models are offered in the filters to its right — set any of "
                         "them to focus on a subset before picking Segment or Model. Leave them at “All” "
@@ -1023,9 +1014,19 @@ def build_apply_prompt() -> html.Div:
                         "pick from, but if a Segment is active it takes priority over any Model selection.",
                     ]),
                     html.Li([
+                        html.Strong("Pick a Model Use Case / Cycle. "),
+                        "Choose the cycle to review (e.g. CCAR 2026). This sets the primary “Projection starts” point for every chart.",
+                    ]),
+                    html.Li([
+                        html.Strong("(Optional) Compare To. "),
+                        "Add one or more model use case / cycles to overlay against the primary cycle for benchmarking. "
+                        "Compare To also powers the Historical Reconciliation and Projection Comparison exports.",
+                    ]),
+                    html.Li([
                         html.Strong("Set the view options. "),
                         "Adjust Snapshot Period (History, Projection, or History & Projection), Reference Lines "
-                        "(None, Min-Max, or Monitoring), and the MEV Label convention.",
+                        "(None, Min-Max, or Monitoring), and the MEV Label convention. Setting Snapshot Period to "
+                        "“History” also reveals a Historical Statistics toggle.",
                         html.Ul(
                             className="saas-getting-started-substeps",
                             children=[
@@ -1052,6 +1053,12 @@ def build_apply_prompt() -> html.Div:
                     html.Li([
                         html.Strong("Click “Apply filters”. "),
                         "The charts load here, one card per model. Nothing renders until you apply, and the Export menu stays disabled until this step is complete.",
+                    ]),
+                    html.Li([
+                        html.Strong("Jump to a model with the subnav bar. "),
+                        "Once the charts have loaded, the “Models in Scope” row just below the top filter bar lists "
+                        "every rendered model by name -- click one to scroll straight to its chart card instead of "
+                        "scrolling manually.",
                     ]),
                     html.Li([
                         html.Strong("Fine-tune each model card. "),
