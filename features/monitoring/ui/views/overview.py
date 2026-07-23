@@ -41,6 +41,7 @@ from ...domain.overview import (
     effective_rag,
     escalation_next_steps,
     heatmap_rows,
+    overview_model_options,
     overview_summary,
     periods_through,
     resolve_current_rows,
@@ -69,6 +70,10 @@ SEGMENT_MODEL_GROUP_TOGGLE_ID = "overview-segment-model-group-toggle"
 SEGMENT_MODEL_GROUP_MENU_ID = "overview-segment-model-group-menu"
 SEGMENT_MODEL_GROUP_FILTER_KEY = "overview-segment-model-group"
 SEGMENT_MODEL_GROUP_OPTIONS = ["All", "PD", "LGD", "EAD", "Loss"]
+OVERVIEW_MODEL_ID = "overview-model"
+OVERVIEW_MODEL_SELECT_ALL_ID = "overview-model-select-all"
+OVERVIEW_MODEL_TOGGLE_ID = "overview-model-toggle"
+OVERVIEW_MODEL_MENU_ID = "overview-model-menu"
 RAG_TREND_METRIC_ID = "overview-rag-trend-metric"
 RAG_TREND_METRIC_TOGGLE_ID = "overview-rag-trend-metric-toggle"
 RAG_TREND_METRIC_MENU_ID = "overview-rag-trend-metric-menu"
@@ -363,6 +368,54 @@ def _build_filter(label: str, component) -> html.Div:
     return html.Div(className="monitoring-filter", children=[html.Label(label), component])
 
 
+def model_toggle_label(value: list[str] | None, options: list[dict] | None) -> str:
+    """Summarize the Model checkbox dropdown's selection for its toggle button,
+    mirroring SAAS workspace's own Model Name toggle label."""
+    values = list(value or [])
+    option_values = [option["value"] for option in (options or [])]
+    if not values:
+        return "Select models"
+    if option_values and set(values) == set(option_values):
+        return "All"
+    if len(values) == 1:
+        return values[0]
+    return f"{len(values)} models selected"
+
+
+def _build_model_filter(options: list[dict], value: list[str]) -> html.Div:
+    all_checked = bool(options) and set(value) == {option["value"] for option in options}
+    return html.Div(
+        className="checkbox-dropdown",
+        children=[
+            html.Button(
+                model_toggle_label(value, options),
+                id=OVERVIEW_MODEL_TOGGLE_ID,
+                type="button",
+                n_clicks=0,
+                className="checkbox-dropdown-toggle",
+            ),
+            html.Div(
+                id=OVERVIEW_MODEL_MENU_ID,
+                className="checkbox-dropdown-menu",
+                children=[
+                    dcc.Checklist(
+                        id=OVERVIEW_MODEL_SELECT_ALL_ID,
+                        options=[{"label": "All", "value": "all"}],
+                        value=["all"] if all_checked else [],
+                        className="pd-models-select-all",
+                    ),
+                    dcc.Checklist(
+                        id=OVERVIEW_MODEL_ID,
+                        options=options,
+                        value=list(value),
+                        className="pd-models-checklist",
+                    ),
+                ],
+            ),
+        ],
+    )
+
+
 def _subnav_link(section_id: str, label: str, active: bool = False) -> html.Button:
     return html.Button(
         label,
@@ -384,10 +437,10 @@ def _build_overview_subnav() -> html.Div:
                     html.Div(
                         className="monitoring-section-subnav-links",
                         children=[
-                            _subnav_link("overview-summary", "Overview", active=True),
+                            _subnav_link("overview-summary", "Model Overview", active=True),
                             _subnav_link("overview-heatmap", "Model RAG Heatmap"),
-                            _subnav_link("overview-rag-trend", "RAG Trend Analysis"),
-                            _subnav_link("overview-governance-summary", "Governance Summary"),
+                            _subnav_link("overview-rag-trend", "Model RAG Trend Analysis"),
+                            _subnav_link("overview-governance-summary", "Model Governance Summary"),
                         ],
                     ),
                 ],
@@ -399,10 +452,10 @@ def _build_overview_subnav() -> html.Div:
                     html.Div(
                         className="monitoring-section-subnav-links",
                         children=[
-                            _subnav_link("overview-segment-summary", "Overview"),
+                            _subnav_link("overview-segment-summary", "Segment Overview"),
                             _subnav_link("overview-segment-heatmap", "Segment RAG Heatmap"),
-                            _subnav_link("overview-segment-rag-trend", "RAG Trend Analysis"),
-                            _subnav_link("overview-segment-governance-summary", "Governance Summary"),
+                            _subnav_link("overview-segment-rag-trend", "Segment RAG Trend Analysis"),
+                            _subnav_link("overview-segment-governance-summary", "Segment Governance Summary"),
                         ],
                     ),
                 ],
@@ -1532,7 +1585,7 @@ def _build_summary_section(current_rows: list[dict], findings: list[dict], monit
         className="pd-content-section pd-overview-section pd-live-section",
         children=[
             build_pd_section_heading(
-                "1.1 Overview",
+                "1.1 Model Overview",
                 "RAG Assignment Overview",
                 "",
                 "Red" if summary["red"] else ("Amber" if summary["amber"] else "Green"),
@@ -1553,7 +1606,7 @@ def _build_segment_summary_section(current_rows: list[dict], findings: list[dict
         className="pd-content-section pd-overview-section pd-live-section",
         children=[
             build_pd_section_heading(
-                "2.1 Overview",
+                "2.1 Segment Overview",
                 "Segment RAG Assignment Overview",
                 "",
                 "Red" if summary["red"] else ("Amber" if summary["amber"] else "Green"),
@@ -1741,8 +1794,8 @@ def _build_segment_heatmap_section(current_rows: list[dict], theme: str, monitor
                 "2.2 Segment RAG Heatmap",
                 f"Cross-Segment RAG Comparison — {period_label}",
                 "Every monitored segment's RAG Assignment and Post Subjective Review tests side by side, one row "
-                "per model group per model per segment (PD segments are sourced from PD Model A, the model with "
-                "segment-level data).",
+                "per model group per model per segment (more than one model can cover the same segment name, so "
+                "each row is scoped to a single model).",
                 "Green",
                 {"show_rag": False},
             ),
@@ -1779,7 +1832,7 @@ def _build_trend_section(rows: list[dict], rag_trend_metric: str, range_store: d
         className="pd-content-section pd-live-section",
         children=[
             build_pd_section_heading(
-                "1.3 RAG Trend Analysis",
+                "1.3 Model RAG Trend Analysis",
                 "Period-over-Period RAG Movement",
                 "Every model's RAG for the selected dimension, one row per model and one column per quarter.",
                 "Green",
@@ -1838,7 +1891,7 @@ def _build_segment_trend_section(rows: list[dict], rag_trend_metric: str, range_
         className="pd-content-section pd-live-section",
         children=[
             build_pd_section_heading(
-                "2.3 RAG Trend Analysis",
+                "2.3 Segment RAG Trend Analysis",
                 "Period-over-Period RAG Movement",
                 "Every segment's RAG for the selected dimension, one row per segment and one column per quarter.",
                 "Green",
@@ -2233,7 +2286,7 @@ def _build_governance_section(
         className="pd-content-section pd-live-section",
         children=[
             build_pd_section_heading(
-                "1.4 Governance Summary",
+                "1.4 Model Governance Summary",
                 "Escalation & Next Steps",
                 "Models that require escalation, their review-flow verdicts, and the playbook actions to take "
                 "next — mirroring each Performance tab's Conclusion section.",
@@ -2254,7 +2307,7 @@ def _build_segment_governance_section(
         className="pd-content-section pd-live-section",
         children=[
             build_pd_section_heading(
-                "2.4 Governance Summary",
+                "2.4 Segment Governance Summary",
                 "Escalation & Next Steps",
                 "Segments that require escalation, their review-flow verdicts, and the playbook actions to take "
                 "next — mirroring each Performance tab's Conclusion section.",
@@ -2280,6 +2333,7 @@ def render_overview_content(
     range_store: dict | None,
     theme_value: str | None = None,
     segment_model_group: str = "All",
+    selected_models: list[str] | None = None,
 ) -> tuple[list, list[dict], list[dict]]:
     """Returns ``(content_children, scoped_rows, segment_scoped_rows)``, cached into
     ``SCOPED_ROWS_STORE_ID`` / ``SEGMENT_SCOPED_ROWS_STORE_ID`` so each chapter's RAG-trend
@@ -2303,6 +2357,12 @@ def render_overview_content(
     if segment_model_group and segment_model_group != "All":
         scoped_rows = [row for row in scoped_rows if row["Model Group"] == segment_model_group]
         segment_scoped_rows = [row for row in segment_scoped_rows if row["Model Group"] == segment_model_group]
+    # Model filter (top filter bar) -- narrows to the checked models only;
+    # unset (None) means "not wired up yet" and keeps every model.
+    if selected_models is not None:
+        selected_model_set = set(selected_models)
+        scoped_rows = [row for row in scoped_rows if row["Model"] in selected_model_set]
+        segment_scoped_rows = [row for row in segment_scoped_rows if row["Model"] in selected_model_set]
     current_rows = resolve_current_rows(scoped_rows, monitoring_point or "All")
     current_segment_rows = resolve_current_segment_rows(segment_scoped_rows, monitoring_point or "All")
     # The Models chapter now reflects only named model rows for PD, plus each
@@ -2337,7 +2397,7 @@ def render_overview_content(
         "2.",
         "Segments",
         "Every model group's book of business sliced by portfolio segment instead of by model (PD segments are "
-        "sourced from PD Model A, the model with segment-level data).",
+        "broken out per model, since more than one PD model can cover the same segment name).",
         options={
             "note": f"Model use case / cycle {reporting_cycle} · Monitoring point {monitoring_point or 'All'} · Model group {segment_model_group or 'All'}",
             "extra_class": "overview-chapter-heading-segments",
@@ -2451,8 +2511,8 @@ def build_overview_apply_prompt() -> html.Section:
                                         html.Ul(
                                             className="saas-getting-started-substeps",
                                             children=[
-                                                html.Li([html.Strong("1. Models — "), "PD, LGD, EAD, and Loss, one row per model. Overview, Model RAG Heatmap, RAG Trend Analysis, and Governance Summary."]),
-                                                html.Li([html.Strong("2. Segments — "), "Every model group's book of business, one row per (model group, model, portfolio segment) triple (PD segments are sourced from PD Model A). The same four sub-sections, sliced by segment instead of model."]),
+                                                html.Li([html.Strong("1. Models — "), "PD, LGD, EAD, and Loss, one row per model. Overview, Model RAG Heatmap, Model RAG Trend Analysis, and Model Governance Summary."]),
+                                                html.Li([html.Strong("2. Segments — "), "Every model group's book of business, one row per (model group, model, portfolio segment) triple. The same four sub-sections, sliced by segment instead of model."]),
                                             ],
                                         ),
                                     ]),
@@ -2495,6 +2555,8 @@ def page_layout(data: dict) -> list:
     cycle_quarters = shared_filters.REPORTING_CYCLE_QUARTERS.get(default_cycle, [])
     monitoring_point_options = [{"label": q, "value": q} for q in cycle_quarters]
     default_monitoring_point = shared_filters.resolve_monitoring_point_value(cycle_quarters, None)
+    model_options = overview_model_options(data)
+    default_models = [option["value"] for option in model_options]
 
     return [
         dcc.Store(id=RANGE_STORE_ID, data={}),
@@ -2522,6 +2584,10 @@ def page_layout(data: dict) -> list:
                                         options=_dropdown_options(SEGMENT_MODEL_GROUP_OPTIONS),
                                         value="All",
                                     ),
+                                ),
+                                _build_filter(
+                                    "Model",
+                                    _build_model_filter(model_options, default_models),
                                 ),
                                 _build_filter(
                                     "Model Use Case / Cycle",

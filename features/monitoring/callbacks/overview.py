@@ -10,6 +10,7 @@ from ....shared.ui import controls
 from ....shared.registration import already_registered
 from ....shared.theme import APP_THEME_ID, URL_ID, normalize_theme_value
 from ..data_access import PD_PERFORMANCE_DATA
+from ..domain.overview import overview_model_options
 
 _RANGE_PRESET_COUNTS = {"last-4": 4, "last-8": 8, "last-12": 12}
 _OVERVIEW_PATH = "/overview"
@@ -19,6 +20,7 @@ def _overview_filter_snapshot(
     reporting_cycle: str | None,
     monitoring_point: str | None,
     segment_model_group: str | None,
+    selected_models: list[str] | None = None,
 ) -> dict[str, str]:
     """Build an applied snapshot that matches the values visible in the top bar."""
     cycle = str(reporting_cycle or "").strip()
@@ -28,6 +30,7 @@ def _overview_filter_snapshot(
         "reporting_cycle": cycle,
         "monitoring_point": resolved_point,
         "segment_model_group": str(segment_model_group or "All"),
+        "models": list(selected_models or []),
     }
 
 
@@ -88,6 +91,62 @@ def register_callbacks(app) -> None:
         options = controls.REPORTING_CYCLE_QUARTERS.get(reporting_cycle, [])
         value = filter_shell.resolve_monitoring_point_value(options, selected_monitoring_point)
         return [{"label": option, "value": option} for option in options], value
+
+    # -----------------------------------------------------------------
+    # Model checkbox dropdown: open/close, options narrowed by Model Group
+    # (live, like sync_overview_monitoring_point_dropdown above), and the
+    # toggle button's summary label.
+    # -----------------------------------------------------------------
+    @app.callback(
+        Output(layout.OVERVIEW_MODEL_MENU_ID, "className"),
+        Input(layout.OVERVIEW_MODEL_TOGGLE_ID, "n_clicks"),
+        State(layout.OVERVIEW_MODEL_MENU_ID, "className"),
+        prevent_initial_call=True,
+    )
+    def toggle_overview_model_menu(_n_clicks, current_class):
+        if "open" in (current_class or "").split():
+            return "checkbox-dropdown-menu"
+        return "checkbox-dropdown-menu open"
+
+    @app.callback(
+        Output(layout.OVERVIEW_MODEL_ID, "options"),
+        Output(layout.OVERVIEW_MODEL_ID, "value"),
+        Input(layout.SEGMENT_MODEL_GROUP_ID, "value"),
+        State(layout.OVERVIEW_MODEL_ID, "value"),
+    )
+    def sync_overview_model_options(segment_model_group, current_value):
+        options = overview_model_options(data, segment_model_group)
+        option_values = {option["value"] for option in options}
+        value = [v for v in (current_value or []) if v in option_values]
+        if not value:
+            value = list(option_values)
+        return options, value
+
+    @app.callback(
+        Output(layout.OVERVIEW_MODEL_TOGGLE_ID, "children"),
+        Input(layout.OVERVIEW_MODEL_ID, "value"),
+        Input(layout.OVERVIEW_MODEL_ID, "options"),
+    )
+    def sync_overview_model_toggle_label(value, options):
+        return layout.model_toggle_label(value, options)
+
+    @app.callback(
+        Output(layout.OVERVIEW_MODEL_ID, "value", allow_duplicate=True),
+        Output(layout.OVERVIEW_MODEL_SELECT_ALL_ID, "value"),
+        Input(layout.OVERVIEW_MODEL_SELECT_ALL_ID, "value"),
+        Input(layout.OVERVIEW_MODEL_ID, "value"),
+        State(layout.OVERVIEW_MODEL_ID, "options"),
+        prevent_initial_call=True,
+    )
+    def sync_overview_model_select_all(select_all_value, models_value, options):
+        option_values = [option["value"] for option in (options or [])]
+        current_values = list(models_value or [])
+        if ctx.triggered_id == layout.OVERVIEW_MODEL_SELECT_ALL_ID:
+            if "all" in (select_all_value or []):
+                return list(option_values), no_update
+            return [], no_update
+        select_all = ["all"] if option_values and set(option_values).issubset(current_values) else []
+        return no_update, select_all
 
     # -----------------------------------------------------------------
     # RAG trend range picker (on-page control, no re-Apply required).
@@ -162,6 +221,7 @@ def register_callbacks(app) -> None:
         State(layout.REPORTING_CYCLE_ID, "value"),
         State(layout.MONITORING_POINT_ID, "value"),
         State(layout.SEGMENT_MODEL_GROUP_ID, "value"),
+        State(layout.OVERVIEW_MODEL_ID, "value"),
         State(
             {
                 "type": controls.SINGLE_SELECT_OPTION_ID,
@@ -185,6 +245,7 @@ def register_callbacks(app) -> None:
         reporting_cycle,
         monitoring_point,
         segment_model_group,
+        selected_models,
         monitoring_point_option_ids,
         monitoring_point_option_classes,
     ):
@@ -204,6 +265,7 @@ def register_callbacks(app) -> None:
             reporting_cycle,
             checked_monitoring_point,
             segment_model_group,
+            selected_models,
         )
 
     # -----------------------------------------------------------------
@@ -245,6 +307,7 @@ def register_callbacks(app) -> None:
             range_store or {},
             theme_value=theme_value,
             segment_model_group=applied.get("segment_model_group") or "All",
+            selected_models=applied.get("models"),
         )
         return children, scoped_rows, segment_scoped_rows
 

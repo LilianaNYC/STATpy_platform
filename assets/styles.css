@@ -197,11 +197,11 @@ body{background:#f8fafc;overflow:hidden}
    row above, so it needs its own template rather than reusing
    .saas-primary-filter-row's (which would reserve two extra empty tracks). */
 .monitoring-primary-filter-row{grid-template-columns:repeat(5,minmax(120px,171px))}
-/* Overview's own primary row: Model Group, Model Use Case / Cycle,
-   Monitoring Point, plus the Apply cell -- 3 filters, unlike PD/LGD/EAD/Loss's
+/* Overview's own primary row: Model Group, Model, Model Use Case / Cycle,
+   Monitoring Point, plus the Apply cell -- 4 filters, unlike PD/LGD/EAD/Loss's
    5-item row, so it needs its own template; the Apply cell sizes to content
    since it isn't a fixed-width filter. */
-.overview-primary-filter-row{grid-template-columns:repeat(3,minmax(120px,171px)) auto}
+.overview-primary-filter-row{grid-template-columns:repeat(4,minmax(120px,171px)) auto}
 /* Waterfall chevrons: the primary filters cascade left-to-right (each selection
    narrows the next), so draw an arrow in the grid gap before every cell after
    the first. Cells are position:relative; the glyph centers in the 14px gap,

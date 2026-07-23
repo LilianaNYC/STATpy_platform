@@ -508,11 +508,13 @@ def test_overview_initial_filter_snapshot_matches_visible_monitoring_point():
         "reporting_cycle": "CCAR 2026",
         "monitoring_point": "2026Q3",
         "segment_model_group": "All",
+        "models": [],
     }
     assert invalid_snapshot == {
         "reporting_cycle": "CCAR 2026",
         "monitoring_point": "2026Q3",
         "segment_model_group": "PD",
+        "models": [],
     }
 
 
