@@ -36,7 +36,7 @@ def _resolve_pd_scope(data: dict, applied: dict | None) -> tuple[PdFilterContext
     """
     from ....shared.repositories.filters_config import load_filter_config
     cfg = load_filter_config()
-    default_cycle = cfg["reporting_cycles"][0]["value"] if cfg["reporting_cycles"] else "CCAR 2026"
+    default_cycle = cfg["reporting_cycles"][0]["value"]
 
     applied = applied or {}
     reporting_cycle = applied.get("reporting_cycle") or default_cycle
@@ -69,6 +69,16 @@ def register_callbacks(app) -> None:
     pd_model_segment_cycles = data.get("pd_model_segment_cycles") or {}
     mev_catalog = data.get("mev_catalog") or {}
     all_pd_segments = sorted({segment for segments in pd_model_segments.values() for segment in segments})
+    # Which models actually have a literal (model, "All") row in each cycle's
+    # precomputed store -- e.g. "PD Corp Model" in CCAR 2025 only has a
+    # "Cyclical" row, no "All" aggregate. Picking "All" for such a model
+    # silently resolves to a missing store key and every metric on the tab
+    # goes blank, so sync_pd_model_to_segment_options below omits "All" from
+    # the Segment dropdown whenever it wouldn't actually return data.
+    pd_models_with_all_by_cycle: dict[str, set[str]] = {
+        cycle: {model for (model, segment, _quarter, _horizon) in (cycle_data.get("metrics_store") or {}) if segment == "All"}
+        for cycle, cycle_data in (data.get("observations_by_cycle") or {}).items()
+    }
 
     mev_scenarios_by_cycle = data.get("mev_scenarios_by_cycle") or {}
 
@@ -192,17 +202,26 @@ def register_callbacks(app) -> None:
     # above) -- picking a segment restricts Models to models that actually
     # own it, clearing a now-invalid selection.
     # -----------------------------------------------------------------
+    # reporting_cycle is read as State, not Input: sync_pd_population_to_cycle_options
+    # below already reacts to PORTFOLIO_SEGMENT_ID and writes REPORTING_CYCLE_ID,
+    # so making this callback also react to REPORTING_CYCLE_ID would form a cycle
+    # (Segment -> Cycle -> Segment -> ...), which Dash rejects at registration.
     @app.callback(
         Output(controls.PORTFOLIO_SEGMENT_ID, "options"),
         Output(controls.PORTFOLIO_SEGMENT_ID, "value"),
         Input(controls.MODELS_ID, "value"),
+        State(controls.REPORTING_CYCLE_ID, "value"),
         State(controls.PORTFOLIO_SEGMENT_ID, "value"),
     )
-    def sync_pd_model_to_segment_options(model, current_segment):
+    def sync_pd_model_to_segment_options(model, reporting_cycle, current_segment):
         if model:
             segments = pd_model_segments.get(model, [])
-            options = [{"label": "All", "value": "all"}] + [{"label": s, "value": s} for s in segments]
-            value = current_segment if current_segment in segments else "all"
+            has_all = model in pd_models_with_all_by_cycle.get(reporting_cycle, set())
+            options = ([{"label": "All", "value": "all"}] if has_all else []) + [{"label": s, "value": s} for s in segments]
+            if current_segment in segments or (has_all and current_segment == "all"):
+                value = current_segment
+            else:
+                value = "all" if has_all else (segments[0] if segments else "")
         else:
             options = (
                 [{"label": "Select segment", "value": ""}, {"label": "All", "value": "all"}]
@@ -678,8 +697,8 @@ def register_callbacks(app) -> None:
 
         from ....shared.repositories.filters_config import load_filter_config
         cfg = load_filter_config()
-        default_cycle = cfg["reporting_cycles"][0]["value"] if cfg["reporting_cycles"] else "CCAR 2026"
-        default_scenario = cfg["scenarios"][0]["value"] if cfg["scenarios"] else "intsevere"
+        default_cycle = cfg["reporting_cycles"][0]["value"]
+        default_scenario = cfg["scenarios"][0]["value"]
 
         applied = applied or {}
         reporting_cycle = applied.get("reporting_cycle") or default_cycle

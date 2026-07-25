@@ -38,7 +38,7 @@ def _resolve_lgd_scope(data: dict, applied: dict | None) -> tuple[str | None, st
     """
     from ....shared.repositories.filters_config import load_filter_config
     cfg = load_filter_config()
-    default_cycle = cfg["reporting_cycles"][0]["value"] if cfg["reporting_cycles"] else "CCAR 2026"
+    default_cycle = cfg["reporting_cycles"][0]["value"]
 
     applied = applied or {}
     reporting_cycle = applied.get("reporting_cycle") or default_cycle
@@ -359,8 +359,8 @@ def register_callbacks(app) -> None:
 
         from ....shared.repositories.filters_config import load_filter_config
         cfg = load_filter_config()
-        default_cycle = cfg["reporting_cycles"][0]["value"] if cfg["reporting_cycles"] else "CCAR 2026"
-        default_scenario = cfg["scenarios"][0]["value"] if cfg["scenarios"] else "intsevere"
+        default_cycle = cfg["reporting_cycles"][0]["value"]
+        default_scenario = cfg["scenarios"][0]["value"]
 
         reporting_cycle = applied.get("reporting_cycle") or default_cycle
         scenario = applied.get("scenario") or default_scenario

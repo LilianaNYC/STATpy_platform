@@ -156,6 +156,12 @@ def register_callbacks(app) -> None:
 
         return range_store
 
+    # Segment is never disabled/blocked by Model. With no model chosen, its
+    # options still show every real segment plus a "Select segment"
+    # placeholder (mirroring Model's own "Select model" placeholder); with a
+    # model chosen, options/value resolve via get_loss_segments_for_model /
+    # resolve_loss_segment as before -- matches LGD/EAD's
+    # sync_lgd_segment_dropdown / sync_ead_segment_dropdown.
     @app.callback(
         Output(layout.SEGMENT_DROPDOWN_ID, "options"),
         Output(layout.SEGMENT_DROPDOWN_ID, "value"),
@@ -163,9 +169,15 @@ def register_callbacks(app) -> None:
         Input(layout.SEGMENT_DROPDOWN_ID, "value"),
     )
     def sync_loss_segment_dropdown(selected_model, selected_segment):
+        has_model = bool(selected_model)
         segments = get_loss_segments_for_model(data, selected_model)
-        value = resolve_loss_segment(data, selected_model, selected_segment)
-        return _dropdown_options(segments), value
+        options = _dropdown_options(segments)
+        if has_model:
+            value = resolve_loss_segment(data, selected_model, selected_segment)
+        else:
+            options = [{"label": "Select segment", "value": ""}] + options
+            value = selected_segment if selected_segment in segments else ""
+        return options, value
 
     @app.callback(
         Output(layout.MONITORING_POINT_DROPDOWN_ID, "options"),
@@ -216,7 +228,7 @@ def register_callbacks(app) -> None:
 
         from ....shared.repositories.filters_config import load_filter_config
         cfg = load_filter_config()
-        default_cycle = cfg["reporting_cycles"][0]["value"] if cfg["reporting_cycles"] else "CCAR 2026"
+        default_cycle = cfg["reporting_cycles"][0]["value"]
 
         reporting_cycle = applied.get("reporting_cycle") or default_cycle
         _install_loss_store(reporting_cycle)

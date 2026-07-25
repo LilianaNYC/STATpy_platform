@@ -559,8 +559,8 @@ def page_layout(data: dict) -> list:
     segment_options = ["All", *segment_values()]
     reporting_cycle_options = [{"label": c["label"], "value": c["value"]} for c in cfg["reporting_cycles"]]
     scenario_options = [{"label": s["label"], "value": s["value"]} for s in cfg["scenarios"]]
-    default_cycle = reporting_cycle_options[0]["value"] if reporting_cycle_options else "CCAR 2026"
-    default_scenario = scenario_options[0]["value"] if scenario_options else "intsevere"
+    default_cycle = reporting_cycle_options[0]["value"]
+    default_scenario = scenario_options[0]["value"]
     cycle_data = (data.get("loss_observations_by_cycle") or {}).get(default_cycle)
     if cycle_data:
         set_loss_metrics(cycle_data.get("metrics_store"), cycle_data.get("quarters"))
@@ -570,7 +570,10 @@ def page_layout(data: dict) -> list:
     monitoring_options = cycle_quarters if cycle_quarters else get_loss_monitoring_point_options(data, None, "All")
     default_monitoring_point = shared_filters.resolve_monitoring_point_value(monitoring_options, None)
 
-    model_select_options = [{"label": "All models", "value": "all"}] + [{"label": name, "value": name} for name in model_options]
+    model_select_options = (
+        [{"label": "Select model", "value": ""}, {"label": "All models", "value": "all"}]
+        + [{"label": name, "value": name} for name in model_options]
+    )
 
     return [
         dcc.Store(id=RANGE_STORE_ID, data={}),
@@ -626,7 +629,7 @@ def page_layout(data: dict) -> list:
                                         menu_id=MODEL_MENU_ID,
                                         filter_key=MODEL_FILTER_KEY,
                                         options=model_select_options,
-                                        value="all",
+                                        value="",
                                     ),
                                 ),
                                 _build_filter(
@@ -637,7 +640,7 @@ def page_layout(data: dict) -> list:
                                         menu_id=SEGMENT_MENU_ID,
                                         filter_key=SEGMENT_FILTER_KEY,
                                         options=_dropdown_options(segment_options),
-                                        value="All",
+                                        value="",
                                     ),
                                 ),
                             ],

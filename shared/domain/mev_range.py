@@ -124,11 +124,25 @@ def get_pd_mev_selected_models(mev_catalog: dict[str, Any], ctx: PdFilterContext
     return model_names
 
 
-def get_pd_mev_available_names_for_models(mev_catalog: dict[str, Any], model_names: list[str]) -> list[str]:
-    """Port of ``getPdMevAvailableNamesForModels``."""
+def get_pd_mev_available_names_for_models(
+    mev_catalog: dict[str, Any], model_names: list[str], segment: str | None = None,
+) -> list[str]:
+    """Port of ``getPdMevAvailableNamesForModels``.
+
+    With a real ``segment`` selected (not "All"/"all"/None/""), only MEVs
+    tagged with that segment are included -- a model can own different MEVs
+    per segment (see loader.py's ``model_mev_segments``, which stamps each
+    catalog MEV entry with its own ``"segments"`` list). With no segment (or
+    "All"), every MEV across all the model's segments is included, as before.
+    """
+    is_real_segment = bool(segment) and segment not in ("All", "all")
     names: set[str] = set()
     for model_name in model_names:
-        names.update((mev_catalog.get(model_name, {}).get("mevs") or {}).keys())
+        mevs = mev_catalog.get(model_name, {}).get("mevs") or {}
+        for name, mev_data in mevs.items():
+            if is_real_segment and segment not in (mev_data.get("segments") or []):
+                continue
+            names.add(name)
     return sorted(names)
 
 

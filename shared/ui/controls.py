@@ -214,8 +214,8 @@ def build_global_filters(data: dict, extra_controls=None) -> html.Div:
 
     reporting_cycle_options = [{"label": c["label"], "value": c["value"]} for c in cfg["reporting_cycles"]]
     scenario_options = [{"label": s["label"], "value": s["value"]} for s in cfg["scenarios"]]
-    default_cycle = reporting_cycle_options[0]["value"] if reporting_cycle_options else "CCAR 2026"
-    default_scenario = scenario_options[0]["value"] if scenario_options else "intsevere"
+    default_cycle = reporting_cycle_options[0]["value"]
+    default_scenario = scenario_options[0]["value"]
 
     primary_row = html.Div(
         className="monitoring-controls saas-top-filter-row monitoring-primary-filter-row",

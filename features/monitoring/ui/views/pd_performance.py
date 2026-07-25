@@ -1055,9 +1055,13 @@ def _pd_post_review_summaries(
     catalog = data.get("mev_catalog") or {}
     counts = {"Green": 0, "Amber": 0, "Red": 0, "N/A": 0}
     total = 0
-    for model_name in get_pd_mev_selected_models(catalog, ctx):
+    mev_selected_models = get_pd_mev_selected_models(catalog, ctx)
+    mev_available_names = get_pd_mev_available_names_for_models(catalog, mev_selected_models, ctx.segment)
+    for model_name in mev_selected_models:
         model_data = catalog.get(model_name, {})
-        for _, mev_data in (model_data.get("mevs") or {}).items():
+        for name, mev_data in (model_data.get("mevs") or {}).items():
+            if name not in mev_available_names:
+                continue
             sq = get_pd_mev_scenario_quarter(mev_data, reporting_cycle, scenario)
             rag = calculate_pd_mev_worst_rag_after_quarter(mev_data, sq, reporting_cycle, scenario)
             counts[rag] = counts.get(rag, 0) + 1
@@ -1799,14 +1803,17 @@ def _build_mev_rag_summary_panel(
 # ---------------------------------------------------------------------------
 
 
-def _build_mev_range_section(data: dict, ctx: PdFilterContext, range_store: dict, mev_filter_store: dict, theme_value: str | None = None, reporting_cycle: str = "CCAR 2026", scenario: str = "intsevere") -> html.Section:
+def _build_mev_range_section(
+    data: dict, ctx: PdFilterContext, range_store: dict, mev_filter_store: dict, theme_value: str | None = None,
+    *, reporting_cycle: str, scenario: str,
+) -> html.Section:
     catalog = data["mev_catalog"]
     mev_mnemonic_map = data.get("mev_mnemonic_map") or {}
     mev_description_map = data.get("mev_description_map") or {}
     selected_models = get_pd_mev_selected_models(catalog, ctx)
 
     chart_model_names = resolve_pd_mev_chart_model_names(selected_models, mev_filter_store.get("model"))
-    available_mev_names = get_pd_mev_available_names_for_models(catalog, chart_model_names)
+    available_mev_names = get_pd_mev_available_names_for_models(catalog, chart_model_names, ctx.segment)
     chart_mev_names = resolve_pd_mev_chart_names(available_mev_names, mev_filter_store.get("names"))
     mev_periods = get_pd_mev_visible_periods(catalog, chart_model_names, chart_mev_names)
 
@@ -2549,8 +2556,9 @@ def render_pd_performance_content(
     mev_filter_store: dict,
     scenario_ranking_store: dict | None = None,
     theme_value: str | None = None,
-    reporting_cycle: str = "CCAR 2026",
-    scenario: str = "intsevere",
+    *,
+    reporting_cycle: str,
+    scenario: str,
     conclusions_notes: str | None = None,
     review_flow_pending_edits: dict | None = None,
     review_flow_save_status: str | None = None,

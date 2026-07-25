@@ -163,11 +163,25 @@ def resolve_lgd_models(data: dict, selected_model: str | list[str] | tuple[str, 
 def get_lgd_segments_for_model(data: dict, selected_model: str | list[str] | tuple[str, ...] | set[str] | None) -> list[str]:
     """Segments available for the Segment dropdown.
 
-    Segments are a global list (shared across models), not derived from
-    ``selected_model`` -- kept as a parameter for signature parity with
-    :func:`resolve_lgd_segment`. Available regardless of whether a model is
-    selected, so Segment can be browsed/chosen before Model.
+    With exactly one real model selected, narrows to that model's own real
+    segments (``data["lgd_model_segments"]``, built by
+    ``loader.py::_build_model_segment_map_from_sheet`` -- mirrors the PD
+    Performance tab's Model->Segment narrowing). With no model selected (or
+    more than one), falls back to every real segment across all LGD models,
+    so Segment can still be browsed/chosen before Model.
     """
+    models = resolve_lgd_models(data, selected_model)
+    if len(models) == 1:
+        model_segments = (data.get("lgd_model_segments") or {}).get(models[0])
+        if model_segments is not None:
+            # Omit "All" when this model has no literal (model, "All") row in
+            # the currently-installed cycle's store -- picking it would
+            # resolve to a missing store key and every metric on the tab
+            # would go blank (mirrors the PD Performance tab's
+            # pd_models_with_all_by_cycle check).
+            has_all = bool((_LGD_STORE or {}).get((models[0], "All")))
+            return (["All"] if has_all else []) + list(model_segments)
+
     from ....shared.repositories.filters_config import segment_values
     segments = segment_values()
     if segments:
@@ -187,7 +201,9 @@ def resolve_lgd_segment(
     selected_segment: str | None,
 ) -> str:
     segments = get_lgd_segments_for_model(data, selected_model)
-    return selected_segment if selected_segment in segments else "All"
+    if selected_segment in segments:
+        return selected_segment
+    return "All" if "All" in segments else (segments[0] if segments else "All")
 
 
 def filter_lgd_portfolio(

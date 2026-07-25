@@ -350,7 +350,7 @@ def _mev_range_summary(cfg: PostSubjectiveConfig, data: dict, selected_model, se
     """Worst-case MEV-range RAG across the entity's in-scope MEVs (2.5 MEV Range)."""
     catalog = data.get("mev_catalog") or {}
     selected_models = get_mev_selected_models_simple(catalog, selected_model, selected_segment, model_type=cfg.model_type)
-    available = get_pd_mev_available_names_for_models(catalog, selected_models)
+    available = get_pd_mev_available_names_for_models(catalog, selected_models, selected_segment)
     counts = {"Green": 0, "Amber": 0, "Red": 0, "N/A": 0}
     total = 0
     for model_name in selected_models:

@@ -9,6 +9,7 @@ what each individual tab shows. No thresholds are re-derived here.
 
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from typing import Any
 
@@ -35,6 +36,8 @@ from ....shared.domain.calculations import (
     set_precomputed_metrics,
 )
 from ....shared.repositories.filters_config import model_names
+
+log = logging.getLogger(__name__)
 
 MODEL_GROUPS = ["PD", "LGD", "EAD", "Loss"]
 
@@ -250,7 +253,63 @@ def _review_flow_rags_from_metric_row(metric_row: dict[str, Any] | None) -> dict
     }
 
 
-def _pd_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
+def _pd_chapter1_scope(
+    quarters: list[str], performance_observations: Any, model_name: str, pd_model_segments: dict[str, list[str]],
+    reporting_cycle: str,
+) -> tuple[str, str, list[str], dict[str, Any] | None]:
+    """Chapter 1 pools each PD model across every segment via ``ctx.segment ==
+    "all"`` (mirroring the PD Performance tab's own Models chapter), which
+    resolves to a literal ``(model, "All")`` precomputed-store lookup (see
+    ``ctx_store_keys``). A model with no such aggregate row -- only real-
+    segment rows -- would otherwise vanish from Chapter 1 entirely (e.g. "PD
+    Corp Model" in CCAR 2025, which only has a "Cyclical" row). If it owns
+    exactly one real segment, use that segment directly instead of dropping
+    the model -- mirrors LGD/EAD's ``_chapter1_model_metric_rows``. Two or
+    more real segments is left unsupported (no principled way to collapse
+    several segments' rows into one without either recomputing metrics from
+    raw observations or picking a worse-RAG-wins rollup, neither of which is
+    implemented here) -- logged, and returned as an exclusion entry so the
+    Overview page can surface it in the UI (see ``_chapter1_gap_notice``).
+
+    Returns ``(ctx_segment, display_segment, quarters_with_data, exclusion)``.
+    """
+    models = {model_name}
+    probe_ctx = PdFilterContext(quarters=quarters, models=models, segment="all", monitoring_point="")
+    quarters_with_data = pd_quarters_with_data(quarters, performance_observations, ("1y", "2y", "nco_1y"), probe_ctx)
+    if quarters_with_data:
+        return "all", "All", quarters_with_data, None
+    real_segments = pd_model_segments.get(model_name, [])
+    if len(real_segments) == 1:
+        segment = real_segments[0]
+        probe_ctx = PdFilterContext(quarters=quarters, models=models, segment=segment, monitoring_point="")
+        quarters_with_data = pd_quarters_with_data(quarters, performance_observations, ("1y", "2y", "nco_1y"), probe_ctx)
+        return segment, segment, quarters_with_data, None
+    if len(real_segments) > 1:
+        # pd_model_segments is built across every reporting cycle, not scoped
+        # to this one -- a model can own 2+ segments overall while having no
+        # rows at all in this particular cycle (that's just "not in this
+        # cycle", not a data gap). Only treat it as a genuine gap, worth
+        # logging/surfacing, if at least one of its segments actually has
+        # data here.
+        has_any_segment_data = any(
+            pd_quarters_with_data(
+                quarters, performance_observations, ("1y", "2y", "nco_1y"),
+                PdFilterContext(quarters=quarters, models=models, segment=segment, monitoring_point=""),
+            )
+            for segment in real_segments
+        )
+        if has_any_segment_data:
+            log.warning(
+                "Overview Chapter 1 [%s/PD/%s]: no 'All' aggregate row and %d real segments (%s); "
+                "dropping from Chapter 1 Models.",
+                reporting_cycle, model_name, len(real_segments), ", ".join(real_segments),
+            )
+            exclusion = {"Model Group": "PD", "Model": model_name, "Segments": real_segments}
+            return "all", "All", [], exclusion
+    return "all", "All", [], None
+
+
+def _pd_rows(data: dict, reporting_cycle: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     quarters, performance_observations, rating_migration_observations, metrics_store = _pd_cycle_data(data, reporting_cycle)
     set_precomputed_metrics(metrics_store)
 
@@ -259,21 +318,24 @@ def _pd_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
     crr_scale = get_pd_crr_master_scale(monitoring_thresholds)
     performance_horizons = data["performance_horizons"]
     pd_model_names = data.get("model_names", [])
+    pd_model_segments = data.get("pd_model_segments") or {}
 
     model_entities = pd_model_names
 
     rows: list[dict[str, Any]] = []
+    exclusions: list[dict[str, Any]] = []
     for model_name in model_entities:
-        # Metrics stay pooled across segments here, matching the Models
-        # chapter on the PD Performance tab.
         models = {model_name}
-        probe_ctx = PdFilterContext(quarters=quarters, models=models, segment="all", monitoring_point="")
+        ctx_segment, display_segment, model_quarters, exclusion = _pd_chapter1_scope(
+            quarters, performance_observations, model_name, pd_model_segments, reporting_cycle,
+        )
+        if exclusion:
+            exclusions.append(exclusion)
         # Skip quarters before this model has any real data, so a model with a
         # shorter history than the reporting cycle's full quarter range doesn't
         # pad the RAG Trend Analysis heatmap with a long empty stretch.
-        model_quarters = pd_quarters_with_data(quarters, performance_observations, ("1y", "2y", "nco_1y"), probe_ctx)
         for quarter in model_quarters:
-            ctx = PdFilterContext(quarters=quarters, models=models, segment="all", monitoring_point=quarter)
+            ctx = PdFilterContext(quarters=quarters, models=models, segment=ctx_segment, monitoring_point=quarter)
             metrics = _pd_chapter1_metrics(
                 performance_observations, rating_migration_observations, performance_horizons,
                 monitoring_thresholds, thresholds, crr_scale, ctx, quarter,
@@ -282,11 +344,11 @@ def _pd_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
                 "Monitoring Period": quarter,
                 "Model Group": "PD",
                 "Model": model_name,
-                "Segment": "All",
+                "Segment": display_segment,
                 **metrics,
                 **_pd_review_flow_rags(ctx, quarter),
             })
-    return rows
+    return rows, exclusions
 
 
 def _pd_segment_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
@@ -436,7 +498,47 @@ def _loss_segment_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]
     return rows
 
 
-def _lgd_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
+def _chapter1_model_metric_rows(
+    metrics_by_period_fn, data: dict, model_name: str, model_segments_key: str, model_group: str, reporting_cycle: str,
+) -> tuple[list[dict[str, Any]], str, dict[str, Any] | None]:
+    """Chapter 1 rows are keyed off each model's ``Segment: All`` aggregate row.
+
+    A model with no literal ``All`` row (only real-segment rows) would
+    otherwise vanish from Chapter 1 entirely. If it owns exactly one real
+    segment, use that segment's rows as a stand-in. Two or more real segments
+    is left unsupported (no principled way to collapse several segments' rows
+    into one without either recomputing metrics from raw observations or
+    picking a worse-RAG-wins rollup, neither of which is implemented here) --
+    logged, and returned as an exclusion entry so the Overview page can
+    surface it in the UI (see ``_chapter1_gap_notice``).
+    """
+    metric_rows = metrics_by_period_fn(data, model_name, "All")
+    if metric_rows:
+        return metric_rows, "All", None
+    real_segments = (data.get(model_segments_key) or {}).get(model_name, [])
+    if len(real_segments) == 1:
+        segment = real_segments[0]
+        return metrics_by_period_fn(data, model_name, segment), segment, None
+    if len(real_segments) > 1:
+        # model_segments_key is built across every reporting cycle, not
+        # scoped to this one -- a model can own 2+ segments overall while
+        # having no rows at all in this particular cycle (that's just "not in
+        # this cycle", not a data gap). Only treat it as a genuine gap, worth
+        # logging/surfacing, if at least one of its segments actually has
+        # data here.
+        segment_rows_by_segment = {segment: metrics_by_period_fn(data, model_name, segment) for segment in real_segments}
+        if any(segment_rows_by_segment.values()):
+            log.warning(
+                "Overview Chapter 1 [%s/%s/%s]: no 'All' aggregate row and %d real segments (%s); "
+                "dropping from Chapter 1 Models.",
+                reporting_cycle, model_group, model_name, len(real_segments), ", ".join(real_segments),
+            )
+            exclusion = {"Model Group": model_group, "Model": model_name, "Segments": real_segments}
+            return [], "All", exclusion
+    return [], "All", None
+
+
+def _lgd_rows(data: dict, reporting_cycle: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     from . import lgd as lgd_domain
 
     cycle_data = (data.get("lgd_observations_by_cycle") or {}).get(reporting_cycle)
@@ -446,8 +548,13 @@ def _lgd_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
     )
 
     rows: list[dict[str, Any]] = []
+    exclusions: list[dict[str, Any]] = []
     for model_name in model_names("lgd"):
-        metric_rows = lgd_domain.lgd_metrics_by_period(data, model_name, "All")
+        metric_rows, segment, exclusion = _chapter1_model_metric_rows(
+            lgd_domain.lgd_metrics_by_period, data, model_name, "lgd_model_segments", "LGD", reporting_cycle,
+        )
+        if exclusion:
+            exclusions.append(exclusion)
         if not metric_rows:
             continue
         metric_by_quarter = {row["Monitoring Period"]: row for row in metric_rows}
@@ -462,7 +569,7 @@ def _lgd_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
                 "Monitoring Period": quarter,
                 "Model Group": "LGD",
                 "Model": model_name,
-                "Segment": "All",
+                "Segment": segment,
                 "Calibration RAG": calibration_rag,
                 "Discrimination RAG": discrimination_rag,
                 "Overall RAG": get_worst_pd_rag([calibration_rag, discrimination_rag]),
@@ -470,10 +577,10 @@ def _lgd_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
                 "PSI Metric": f"{psi_value:.3f}" if psi_value is not None else "—",
                 **_review_flow_rags_from_metric_row(metric_by_quarter.get(quarter)),
             })
-    return rows
+    return rows, exclusions
 
 
-def _ead_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
+def _ead_rows(data: dict, reporting_cycle: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     from . import ead as ead_domain
 
     cycle_data = (data.get("ead_observations_by_cycle") or {}).get(reporting_cycle)
@@ -483,8 +590,13 @@ def _ead_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
     )
 
     rows: list[dict[str, Any]] = []
+    exclusions: list[dict[str, Any]] = []
     for model_name in model_names("ead"):
-        metric_rows = ead_domain.ead_metrics_by_period(data, model_name, "All")
+        metric_rows, segment, exclusion = _chapter1_model_metric_rows(
+            ead_domain.ead_metrics_by_period, data, model_name, "ead_model_segments", "EAD", reporting_cycle,
+        )
+        if exclusion:
+            exclusions.append(exclusion)
         if not metric_rows:
             continue
         metric_by_quarter = {row["Monitoring Period"]: row for row in metric_rows}
@@ -499,7 +611,7 @@ def _ead_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
                 "Monitoring Period": quarter,
                 "Model Group": "EAD",
                 "Model": model_name,
-                "Segment": "All",
+                "Segment": segment,
                 "Calibration RAG": calibration_rag,
                 "Discrimination RAG": discrimination_rag,
                 "Overall RAG": get_worst_pd_rag([calibration_rag, discrimination_rag]),
@@ -507,10 +619,10 @@ def _ead_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
                 "PSI Metric": f"{psi_value:.3f}" if psi_value is not None else "—",
                 **_review_flow_rags_from_metric_row(metric_by_quarter.get(quarter)),
             })
-    return rows
+    return rows, exclusions
 
 
-def _loss_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
+def _loss_rows(data: dict, reporting_cycle: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     from . import loss as loss_domain
 
     cycle_data = (data.get("loss_observations_by_cycle") or {}).get(reporting_cycle)
@@ -520,7 +632,10 @@ def _loss_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
     )
 
     model_label = (model_names("loss") or ["All Models"])[0]
-    metric_rows = loss_domain.loss_metrics_by_period(data, model_label, "All")
+    metric_rows, segment, exclusion = _chapter1_model_metric_rows(
+        loss_domain.loss_metrics_by_period, data, model_label, "loss_model_segments", "Loss", reporting_cycle,
+    )
+    exclusions = [exclusion] if exclusion else []
 
     rows: list[dict[str, Any]] = []
     for row in metric_rows:
@@ -529,22 +644,33 @@ def _loss_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
             "Monitoring Period": row["Monitoring Period"],
             "Model Group": "Loss",
             "Model": model_label,
-            "Segment": "All",
+            "Segment": segment,
             "Calibration RAG": rag,
             "Discrimination RAG": "N/A",
             "Overall RAG": rag,
         })
-    return rows
+    return rows, exclusions
 
 
-def build_overview_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
+def build_overview_rows(data: dict, reporting_cycle: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Build the full cross-portfolio row set for one reporting cycle.
 
     PD, LGD, EAD, and Loss each keep a separate precomputed metrics store per
     reporting cycle, so every row builder needs ``reporting_cycle`` to pick
     the right one -- mirroring how each tab's own callback scopes its data.
+
+    Returns ``(rows, chapter1_exclusions)`` -- ``chapter1_exclusions`` lists
+    any model that owns 2+ real segments but no ``All`` aggregate row, and so
+    couldn't be given a Chapter 1 row (see ``_pd_chapter1_scope`` /
+    ``_chapter1_model_metric_rows``).
     """
-    return _pd_rows(data, reporting_cycle) + _lgd_rows(data, reporting_cycle) + _ead_rows(data, reporting_cycle) + _loss_rows(data, reporting_cycle)
+    pd_rows, pd_exclusions = _pd_rows(data, reporting_cycle)
+    lgd_rows, lgd_exclusions = _lgd_rows(data, reporting_cycle)
+    ead_rows, ead_exclusions = _ead_rows(data, reporting_cycle)
+    loss_rows, loss_exclusions = _loss_rows(data, reporting_cycle)
+    rows = pd_rows + lgd_rows + ead_rows + loss_rows
+    exclusions = pd_exclusions + lgd_exclusions + ead_exclusions + loss_exclusions
+    return rows, exclusions
 
 
 def overview_model_options(data: dict, model_group: str = "All") -> list[dict[str, str]]:

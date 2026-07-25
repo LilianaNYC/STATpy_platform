@@ -424,15 +424,16 @@ def _build_ead_mev_range_section(
     monitoring_point: str | None,
     range_store: dict,
     theme_value: str | None = None,
-    reporting_cycle: str = "CCAR 2026",
-    scenario: str = "intsevere",
+    *,
+    reporting_cycle: str,
+    scenario: str,
 ) -> html.Section:
     catalog = data.get("mev_catalog") or {}
     mev_mnemonic_map = data.get("mev_mnemonic_map") or {}
     mev_description_map = data.get("mev_description_map") or {}
     selected_models = get_mev_selected_models_simple(catalog, selected_model, selected_segment, model_type="EAD")
 
-    available_mev_names = get_pd_mev_available_names_for_models(catalog, selected_models)
+    available_mev_names = get_pd_mev_available_names_for_models(catalog, selected_models, selected_segment)
     mev_periods = get_pd_mev_visible_periods(catalog, selected_models, available_mev_names)
 
     model_panels = []
@@ -1556,8 +1557,9 @@ def render_ead_performance_content(
     selected_segment: str | None,
     selected_monitoring_point: str | None,
     range_store: dict | None = None,
-    reporting_cycle: str = "CCAR 2026",
-    scenario: str = "intsevere",
+    *,
+    reporting_cycle: str,
+    scenario: str,
     scenario_ranking_store: dict | None = None,
     theme_value: str | None = None,
     conclusions_notes: str | None = None,
@@ -1999,8 +2001,8 @@ def page_layout() -> list:
     ]
     reporting_cycle_options = [{"label": c["label"], "value": c["value"]} for c in cfg["reporting_cycles"]]
     scenario_options = [{"label": s["label"], "value": s["value"]} for s in cfg["scenarios"]]
-    default_cycle = reporting_cycle_options[0]["value"] if reporting_cycle_options else "CCAR 2026"
-    default_scenario = scenario_options[0]["value"] if scenario_options else "intsevere"
+    default_cycle = reporting_cycle_options[0]["value"]
+    default_scenario = scenario_options[0]["value"]
     cycle_data = (data.get("ead_observations_by_cycle") or {}).get(default_cycle)
     if cycle_data:
         set_ead_metrics(cycle_data.get("metrics_store"), cycle_data.get("quarters"))

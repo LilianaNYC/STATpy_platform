@@ -210,6 +210,12 @@ def load_pd_mev_catalog() -> dict[str, Any]:
     mev_long_names: dict[str, str] = {}
     mev_descriptions: dict[str, str] = {}
     model_transformed_mevs: dict[str, set[str]] = {}
+    # A model can own different MEVs per segment (e.g. PD Model B's Defensive
+    # rows use HPI/UNEMP while its Cyclical rows use CRE_PRICE/OILPRICE/GDP) --
+    # tracked per (model, mnemonic) so the catalog can tag each MEV with the
+    # segment(s) it actually belongs to, instead of flattening every segment's
+    # MEVs into one undifferentiated set per model.
+    model_mev_segments: dict[str, dict[str, set[str]]] = {}
     model_mev_contributions: dict[str, dict[str, float]] = {}
     for _, row in desc_df.iterrows():
         model_key = str(row.get("Model Name", "")).strip()
@@ -228,6 +234,8 @@ def load_pd_mev_catalog() -> dict[str, Any]:
             mev_descriptions[mnemonic] = description
         if model_key and mnemonic:
             model_transformed_mevs.setdefault(model_key, set()).add(mnemonic)
+        if model_key and mnemonic and segment:
+            model_mev_segments.setdefault(model_key, {}).setdefault(mnemonic, set()).add(segment)
         if model_key and mnemonic and contribution is not None:
             try:
                 model_mev_contributions.setdefault(model_key, {})[mnemonic] = float(contribution)
@@ -322,6 +330,7 @@ def load_pd_mev_catalog() -> dict[str, Any]:
                 "scenario_series": scenario_series,
                 "scenario_series_by_cycle": scenario_series_by_cycle,
                 "scenario_quarter_zero_by_cycle": scenario_quarter_zero_by_cycle,
+                "segments": sorted(model_mev_segments.get(model_key, {}).get(mev_name, set())),
             }
 
         contributions = {}
@@ -937,6 +946,7 @@ def load_pd_performance_data_from_aggregated() -> dict[str, Any]:
     pd_segment_models = _invert_str_list_map(pd_model_segments)
     lgd_model_segments = _build_model_segment_map_from_sheet(LGD_AGGREGATED_SHEET_NAME)
     ead_model_segments = _build_model_segment_map_from_sheet(EAD_AGGREGATED_SHEET_NAME)
+    loss_model_segments = _build_model_segment_map_from_sheet(LOSS_AGGREGATED_SHEET_NAME)
 
     monitoring_thresholds = load_monitoring_thresholds()
 
@@ -988,6 +998,8 @@ def load_pd_performance_data_from_aggregated() -> dict[str, Any]:
         "lgd_segment_models": _invert_str_list_map(lgd_model_segments),
         "ead_model_segments": ead_model_segments,
         "ead_segment_models": _invert_str_list_map(ead_model_segments),
+        "loss_model_segments": loss_model_segments,
+        "loss_segment_models": _invert_str_list_map(loss_model_segments),
         "lgd_model_segment_cycles": _build_model_segment_cycle_map_from_sheet(LGD_AGGREGATED_SHEET_NAME),
         "ead_model_segment_cycles": _build_model_segment_cycle_map_from_sheet(EAD_AGGREGATED_SHEET_NAME),
         "mev_scenarios_by_cycle": mev_scenarios_by_cycle,
