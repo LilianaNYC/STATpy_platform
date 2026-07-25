@@ -2570,6 +2570,16 @@ def render_pd_performance_content(
     performance_horizons = data["performance_horizons"]
     thresholds = get_pd_thresholds(monitoring_thresholds)
     crr_scale = get_pd_crr_master_scale(monitoring_thresholds)
+    # Which reporting cycle each quarter in ctx.quarters actually came from --
+    # trend charts can now chain in history from a prior same-family cycle
+    # (see _merge_same_family_pd_cycle_data), so a trend point's own quarter
+    # alone no longer tells you which cycle it belongs to.
+    quarter_cycle_map: dict[str, str] = data.get("quarter_cycle_map") or {}
+
+    def _tag_reporting_cycle(rows: list[dict]) -> list[dict]:
+        for row in rows:
+            row["reporting_cycle"] = quarter_cycle_map.get(row.get("quarter"), reporting_cycle)
+        return rows
 
     cq = ctx.monitoring_point
     pq = get_previous_pd_quarter(cq)
@@ -2845,10 +2855,10 @@ def render_pd_performance_content(
     # -----------------------------------------------------------------
     # 1.1 ECL PIT PD - Calibration Conservatism
     # -----------------------------------------------------------------
-    calibration_performance_trend = build_pd_performance_trend_for_horizon(
+    calibration_performance_trend = _tag_reporting_cycle(build_pd_performance_trend_for_horizon(
         observations, rating_observations, calibration_trend_context["snapshot_quarter"], calibration_trend_horizon_key, ctx, crr_scale,
-    )
-    calibration_rag_trend = build_pd_calibration_rag_trend(observations, rating_observations, cq, ctx, crr_scale, monitoring_thresholds)
+    ))
+    calibration_rag_trend = _tag_reporting_cycle(build_pd_calibration_rag_trend(observations, rating_observations, cq, ctx, crr_scale, monitoring_thresholds))
     calibration_section_periods = calibration_trend_periods or get_pd_range_periods(ctx.quarters, cq)
 
     section_1_2 = html.Section(
@@ -2968,10 +2978,10 @@ def render_pd_performance_content(
     # -----------------------------------------------------------------
     # 1.2 ECL PIT PD - Discriminatory Power
     # -----------------------------------------------------------------
-    discrimination_rag_trend = build_pd_discrimination_rag_trend(observations, rating_observations, cq, ctx, crr_scale, monitoring_thresholds)
-    go_live_performance_trend = build_pd_performance_trend_for_horizon(
+    discrimination_rag_trend = _tag_reporting_cycle(build_pd_discrimination_rag_trend(observations, rating_observations, cq, ctx, crr_scale, monitoring_thresholds))
+    go_live_performance_trend = _tag_reporting_cycle(build_pd_performance_trend_for_horizon(
         observations, rating_observations, go_live_context["snapshot_quarter"], go_live_horizon_key, ctx, crr_scale,
-    )
+    ))
     discrimination_section_periods = discrimination_trend_periods or get_pd_range_periods(ctx.quarters, cq)
 
     section_1_3 = html.Section(
@@ -3077,12 +3087,12 @@ def render_pd_performance_content(
     # -----------------------------------------------------------------
     # 1.3 Balance Sheet PD - Calibration Conservatism
     # -----------------------------------------------------------------
-    balance_sheet_performance_trend = build_pd_performance_trend_for_horizon(
+    balance_sheet_performance_trend = _tag_reporting_cycle(build_pd_performance_trend_for_horizon(
         observations, rating_observations, balance_sheet_context["snapshot_quarter"], "nco_1y", ctx, crr_scale,
-    )
-    balance_sheet_rag_trend = build_pd_balance_sheet_calibration_rag_trend(
+    ))
+    balance_sheet_rag_trend = _tag_reporting_cycle(build_pd_balance_sheet_calibration_rag_trend(
         observations, rating_observations, balance_sheet_context["snapshot_quarter"], ctx, crr_scale, monitoring_thresholds,
-    )
+    ))
     balance_sheet_section_periods = balance_sheet_periods
 
     section_1_4 = html.Section(
@@ -3286,9 +3296,9 @@ def render_pd_performance_content(
 
     section_2_2 = _build_pd_transition_matrix_section(data, ctx, reporting_cycle, theme, range_store)
 
-    psi_performance_trend = build_pd_performance_trend_for_horizon(
+    psi_performance_trend = _tag_reporting_cycle(build_pd_performance_trend_for_horizon(
         observations, rating_observations, cq, "1y", ctx, crr_scale,
-    )
+    ))
     psi_periods = get_pd_range_periods(ctx.quarters, cq)
 
     section_2_3 = html.Section(

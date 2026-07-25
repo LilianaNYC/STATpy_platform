@@ -593,7 +593,11 @@ def build_psi_section(
         ]
 
     psi_trend = [
-        {"quarter": row.get("Monitoring Period"), "population_stability_index": row.get(PSI_METRIC)}
+        {
+            "quarter": row.get("Monitoring Period"),
+            "population_stability_index": row.get(PSI_METRIC),
+            "reporting_cycle": row.get("reporting_cycle"),
+        }
         for row in (summary.get("metric_rows") or [])
         if row.get("Monitoring Period") and row.get(PSI_METRIC) is not None
     ]

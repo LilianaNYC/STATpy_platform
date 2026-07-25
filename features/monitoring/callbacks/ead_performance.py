@@ -17,6 +17,7 @@ from ..domain.ead import (
     resolve_ead_segment,
 )
 from ....shared.registration import already_registered
+from ....shared.repositories.filters_config import cycle_family
 from ....shared.theme import APP_THEME_ID
 from ..data_access import PD_PERFORMANCE_DATA
 from ..services import data_service
@@ -26,6 +27,29 @@ _RANGE_PRESET_COUNTS = {"last-4": 4, "last-8": 8, "last-12": 12}
 
 def _dropdown_options(values: list[str]) -> list[dict[str, str]]:
     return [{"label": value, "value": value} for value in values]
+
+
+def _merge_same_family_ead_cycle_data(observations_by_cycle: dict, reporting_cycle: str) -> dict:
+    """Pool ``ead_observations_by_cycle`` across every cycle in the same
+    family as ``reporting_cycle`` -- see the equivalent
+    ``_merge_same_family_lgd_cycle_data`` in ``lgd_performance.py``.
+    """
+    family = cycle_family(reporting_cycle)
+    quarters: set[str] = set()
+    metrics_store: dict[tuple[str, str], list[dict]] = {}
+    quarter_cycle_map: dict[str, str] = {}
+    for cycle, cycle_data in (observations_by_cycle or {}).items():
+        if cycle_family(cycle) != family:
+            continue
+        cycle_quarters = cycle_data.get("quarters") or []
+        quarters.update(cycle_quarters)
+        for key, rows in (cycle_data.get("metrics_store") or {}).items():
+            metrics_store.setdefault(key, []).extend(dict(row, reporting_cycle=cycle) for row in rows)
+        for quarter in cycle_quarters:
+            quarter_cycle_map[quarter] = cycle
+    for rows in metrics_store.values():
+        rows.sort(key=lambda row: row.get("Monitoring Period") or "")
+    return {"quarters": sorted(quarters), "metrics_store": metrics_store, "quarter_cycle_map": quarter_cycle_map}
 
 
 def _resolve_ead_scope(data: dict, applied: dict | None) -> tuple[str | None, str | None, str, str]:
@@ -84,6 +108,18 @@ def register_callbacks(app) -> None:
     ead_model_segment_cycles = data.get("ead_model_segment_cycles") or {}
     ead_segment_models = data.get("ead_segment_models") or {}
     mev_scenarios_by_cycle = data.get("mev_scenarios_by_cycle") or {}
+    # A model's own quarters for a cycle, pooled across its segments -- see
+    # the equivalent pd_model_cycle_quarters note in pd_performance.py.
+    ead_model_cycle_quarters: dict[tuple[str, str], set[str]] = {}
+    # The same, further scoped to (model, segment, cycle) -- once a real
+    # segment is picked, its own quarters take precedence over the
+    # model-wide pool above (segments can have different footprints).
+    ead_model_segment_cycle_quarters: dict[tuple[str, str, str], set[str]] = {}
+    for cycle, cycle_data in (data.get("ead_observations_by_cycle") or {}).items():
+        for (model, segment), rows in (cycle_data.get("metrics_store") or {}).items():
+            quarters = {row["Monitoring Period"] for row in rows if row.get("Monitoring Period")}
+            ead_model_cycle_quarters.setdefault((model, cycle), set()).update(quarters)
+            ead_model_segment_cycle_quarters.setdefault((model, segment, cycle), set()).update(quarters)
 
     from ....shared.repositories.filters_config import load_filter_config as _load_filter_config
     _cfg = _load_filter_config()
@@ -129,9 +165,11 @@ def register_callbacks(app) -> None:
 
     def _install_ead_store(reporting_cycle):
         from ..domain.ead import set_ead_metrics
-        cycle_data = (data.get("ead_observations_by_cycle") or {}).get(reporting_cycle)
+        observations_by_cycle = data.get("ead_observations_by_cycle") or {}
+        cycle_data = observations_by_cycle.get(reporting_cycle)
         if cycle_data:
-            set_ead_metrics(cycle_data.get("metrics_store"), cycle_data.get("quarters"))
+            merged = _merge_same_family_ead_cycle_data(observations_by_cycle, reporting_cycle)
+            set_ead_metrics(merged["metrics_store"], merged["quarters"], merged["quarter_cycle_map"])
         else:
             set_ead_metrics(None, [])
         return cycle_data
@@ -274,10 +312,20 @@ def register_callbacks(app) -> None:
         Output(layout.MONITORING_POINT_DROPDOWN_ID, "options"),
         Output(layout.MONITORING_POINT_DROPDOWN_ID, "value"),
         Input(layout.REPORTING_CYCLE_ID, "value"),
+        Input(layout.MODEL_DROPDOWN_ID, "value"),
+        Input(layout.SEGMENT_DROPDOWN_ID, "value"),
         Input(layout.MONITORING_POINT_DROPDOWN_ID, "value"),
     )
-    def sync_ead_monitoring_point_dropdown(reporting_cycle, selected_monitoring_point):
-        options = controls.REPORTING_CYCLE_QUARTERS.get(reporting_cycle, [])
+    def sync_ead_monitoring_point_dropdown(reporting_cycle, selected_model, selected_segment, selected_monitoring_point):
+        if selected_model:
+            model_quarters = None
+            if selected_segment:
+                model_quarters = ead_model_segment_cycle_quarters.get((selected_model, selected_segment, reporting_cycle))
+            if not model_quarters:
+                model_quarters = ead_model_cycle_quarters.get((selected_model, reporting_cycle))
+            options = sorted(model_quarters)[-controls.MONITORING_POINT_WINDOW:] if model_quarters else []
+        else:
+            options = controls.EAD_REPORTING_CYCLE_QUARTERS.get(reporting_cycle, [])
         value = filter_shell.resolve_monitoring_point_value(options, selected_monitoring_point)
         return _dropdown_options(options), value
 

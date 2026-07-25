@@ -12,6 +12,7 @@ from ..domain.loss import (
     resolve_loss_segment,
 )
 from ....shared.registration import already_registered
+from ....shared.repositories.filters_config import cycle_family
 from ....shared.theme import APP_THEME_ID
 from ..data_access import PD_PERFORMANCE_DATA
 
@@ -20,6 +21,25 @@ _RANGE_PRESET_COUNTS = {"last-4": 4, "last-8": 8, "last-12": 12}
 
 def _dropdown_options(values: list[str]) -> list[dict[str, str]]:
     return [{"label": value, "value": value} for value in values]
+
+
+def _merge_same_family_loss_cycle_data(observations_by_cycle: dict, reporting_cycle: str) -> dict:
+    """Pool ``loss_observations_by_cycle`` across every cycle in the same
+    family as ``reporting_cycle`` -- see the equivalent
+    ``_merge_same_family_lgd_cycle_data`` in ``lgd_performance.py``.
+    """
+    family = cycle_family(reporting_cycle)
+    quarters: set[str] = set()
+    metrics_store: dict[tuple[str, str], list[dict]] = {}
+    for cycle, cycle_data in (observations_by_cycle or {}).items():
+        if cycle_family(cycle) != family:
+            continue
+        quarters.update(cycle_data.get("quarters") or [])
+        for key, rows in (cycle_data.get("metrics_store") or {}).items():
+            metrics_store.setdefault(key, []).extend(dict(row, reporting_cycle=cycle) for row in rows)
+    for rows in metrics_store.values():
+        rows.sort(key=lambda row: row.get("Monitoring Period") or "")
+    return {"quarters": sorted(quarters), "metrics_store": metrics_store}
 
 
 def register_callbacks(app) -> None:
@@ -84,9 +104,11 @@ def register_callbacks(app) -> None:
 
     def _install_loss_store(reporting_cycle):
         from ..domain.loss import set_loss_metrics
-        cycle_data = (data.get("loss_observations_by_cycle") or {}).get(reporting_cycle)
+        observations_by_cycle = data.get("loss_observations_by_cycle") or {}
+        cycle_data = observations_by_cycle.get(reporting_cycle)
         if cycle_data:
-            set_loss_metrics(cycle_data.get("metrics_store"), cycle_data.get("quarters"))
+            merged = _merge_same_family_loss_cycle_data(observations_by_cycle, reporting_cycle)
+            set_loss_metrics(merged["metrics_store"], merged["quarters"])
         else:
             set_loss_metrics(None, [])
         return cycle_data
@@ -186,7 +208,7 @@ def register_callbacks(app) -> None:
         Input(layout.MONITORING_POINT_DROPDOWN_ID, "value"),
     )
     def sync_loss_monitoring_point_dropdown(reporting_cycle, selected_monitoring_point):
-        options = controls.REPORTING_CYCLE_QUARTERS.get(reporting_cycle, [])
+        options = controls.LOSS_REPORTING_CYCLE_QUARTERS.get(reporting_cycle, [])
         value = filter_shell.resolve_monitoring_point_value(options, selected_monitoring_point)
         return _dropdown_options(options), value
 

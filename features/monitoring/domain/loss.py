@@ -255,6 +255,13 @@ def build_loss_period_summary(
 ) -> dict[str, Any]:
     metric_rows = loss_metrics_by_period(data, selected_model, selected_segment)
     monitoring_point = resolve_loss_monitoring_point(data, selected_model, selected_segment, selected_monitoring_point)
+    # Trend charts (built from metric_rows below) show history "up to the
+    # monitoring point" -- cap here since the installed store can now span
+    # multiple same-family cycles (see _merge_same_family_loss_cycle_data),
+    # including a later cycle's future quarters relative to whichever
+    # monitoring point is selected.
+    if monitoring_point:
+        metric_rows = [row for row in metric_rows if row.get("Monitoring Period") and str(row["Monitoring Period"]) <= monitoring_point]
     current_index = next((index for index, row in enumerate(metric_rows) if row["Monitoring Period"] == monitoring_point), -1)
     current = metric_rows[current_index] if current_index >= 0 else {}
     previous = metric_rows[current_index - 1] if current_index > 0 else {}

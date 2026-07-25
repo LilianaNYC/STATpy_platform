@@ -24,7 +24,7 @@ def _overview_filter_snapshot(
 ) -> dict[str, str]:
     """Build an applied snapshot that matches the values visible in the top bar."""
     cycle = str(reporting_cycle or "").strip()
-    valid_points = controls.REPORTING_CYCLE_QUARTERS.get(cycle, [])
+    valid_points = controls.ALL_REPORTING_CYCLE_QUARTERS.get(cycle, [])
     resolved_point = filter_shell.resolve_monitoring_point_value(valid_points, monitoring_point)
     return {
         "reporting_cycle": cycle,
@@ -88,7 +88,7 @@ def register_callbacks(app) -> None:
         Input(layout.MONITORING_POINT_ID, "value"),
     )
     def sync_overview_monitoring_point_dropdown(reporting_cycle, selected_monitoring_point):
-        options = controls.REPORTING_CYCLE_QUARTERS.get(reporting_cycle, [])
+        options = controls.ALL_REPORTING_CYCLE_QUARTERS.get(reporting_cycle, [])
         value = filter_shell.resolve_monitoring_point_value(options, selected_monitoring_point)
         return [{"label": option, "value": option} for option in options], value
 

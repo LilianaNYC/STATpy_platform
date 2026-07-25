@@ -2674,7 +2674,7 @@ def page_layout(data: dict) -> list:
     cfg = load_filter_config()
     reporting_cycle_options = [{"label": c["label"], "value": c["value"]} for c in cfg["reporting_cycles"]]
     default_cycle = reporting_cycle_options[0]["value"]
-    cycle_quarters = shared_filters.REPORTING_CYCLE_QUARTERS.get(default_cycle, [])
+    cycle_quarters = shared_filters.ALL_REPORTING_CYCLE_QUARTERS.get(default_cycle, [])
     monitoring_point_options = [{"label": q, "value": q} for q in cycle_quarters]
     default_monitoring_point = shared_filters.resolve_monitoring_point_value(cycle_quarters, None)
     model_options = overview_model_options(data)

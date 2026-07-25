@@ -24,7 +24,7 @@ from dash import dcc, html
 
 from ..domain.calculations import get_pd_range_preset, get_pd_range_selection
 from ..domain.quarter_labels import format_pd_compact_quarter_label
-from ..repositories.filters_config import monitoring_points_by_cycle
+from ..repositories.filters_config import MONITORING_POINT_WINDOW, monitoring_points_by_cycle
 
 # ---------------------------------------------------------------------------
 # Component ids
@@ -34,9 +34,15 @@ REPORTING_CYCLE_ID = "pd-reporting-cycle"
 REPORTING_CYCLE_TOGGLE_ID = "pd-reporting-cycle-toggle"
 REPORTING_CYCLE_MENU_ID = "pd-reporting-cycle-menu"
 
-# Monitoring points available per reporting cycle, sourced from the workbook's
-# ``Filters`` tab so cycles/quarters can be edited without code changes.
-REPORTING_CYCLE_QUARTERS = monitoring_points_by_cycle()
+# Monitoring points available per reporting cycle, scoped to each tab's own
+# ``_Performance_Metrics`` sheet -- a tab only ever offers a quarter that
+# actually exists in its own raw data. ``ALL_REPORTING_CYCLE_QUARTERS`` pools
+# every tab's sheet together, for the cross-portfolio Overview page.
+PD_REPORTING_CYCLE_QUARTERS = monitoring_points_by_cycle("pd")
+LGD_REPORTING_CYCLE_QUARTERS = monitoring_points_by_cycle("lgd")
+EAD_REPORTING_CYCLE_QUARTERS = monitoring_points_by_cycle("ead")
+LOSS_REPORTING_CYCLE_QUARTERS = monitoring_points_by_cycle("loss")
+ALL_REPORTING_CYCLE_QUARTERS = monitoring_points_by_cycle("all")
 SCENARIO_ID = "pd-scenario"
 SCENARIO_TOGGLE_ID = "pd-scenario-toggle"
 SCENARIO_MENU_ID = "pd-scenario-menu"
@@ -197,11 +203,11 @@ def build_global_filters(data: dict, extra_controls=None) -> html.Div:
     )
 
     cfg = load_filter_config()
-    quarters_desc = sorted(data["quarters"], reverse=True)
-    latest_quarter = quarters_desc[0] if quarters_desc else ""
+    quarters_asc = sorted(data["quarters"])
+    latest_quarter = quarters_asc[-1] if quarters_asc else ""
     model_names = cfg_model_names("pd")
     segment_values = cfg_segment_values()
-    monitoring_point_options = [{"label": q, "value": q} for q in quarters_desc]
+    monitoring_point_options = [{"label": q, "value": q} for q in quarters_asc]
     segment_options = [{"label": "All", "value": "all"}] + [{"label": value, "value": value} for value in segment_values]
 
     mev_catalog = data.get("mev_catalog") or {}

@@ -29,13 +29,24 @@ LGD_MODEL_LABEL = "LGD Model A"
 
 _LGD_STORE: dict | None = None
 _LGD_QUARTERS: list[str] = []
+_LGD_QUARTER_CYCLE_MAP: dict[str, str] = {}
 
 
-def set_lgd_metrics(store: dict | None, quarters: list[str] | None = None) -> None:
-    """Install (or clear) the precomputed LGD metrics store and its quarters."""
-    global _LGD_STORE, _LGD_QUARTERS
+def set_lgd_metrics(store: dict | None, quarters: list[str] | None = None, quarter_cycle_map: dict[str, str] | None = None) -> None:
+    """Install (or clear) the precomputed LGD metrics store and its quarters.
+
+    ``quarter_cycle_map`` -- which reporting cycle each quarter came from --
+    lets trend charts label points once the installed store spans multiple
+    same-family cycles (see ``_merge_same_family_lgd_cycle_data``).
+    """
+    global _LGD_STORE, _LGD_QUARTERS, _LGD_QUARTER_CYCLE_MAP
     _LGD_STORE = store
     _LGD_QUARTERS = list(quarters or [])
+    _LGD_QUARTER_CYCLE_MAP = dict(quarter_cycle_map or {})
+
+
+def get_lgd_quarter_cycle_map() -> dict[str, str]:
+    return dict(_LGD_QUARTER_CYCLE_MAP)
 
 
 def _lgd_store_key(selected_model, selected_segment) -> tuple[str, str]:
@@ -364,6 +375,14 @@ def build_lgd_period_summary(
 ) -> dict[str, Any]:
     metric_rows = lgd_metrics_by_period(data, selected_model, selected_segment)
     monitoring_point = resolve_lgd_monitoring_point(data, selected_model, selected_segment, selected_monitoring_point)
+    # Trend charts (built from metric_rows below) show history "up to the
+    # monitoring point" -- cap here rather than trusting the store to only
+    # ever hold quarters <= monitoring_point, since the installed store can
+    # now span multiple same-family cycles (see
+    # _merge_same_family_lgd_cycle_data), including a later cycle's future
+    # quarters relative to whichever monitoring point is selected.
+    if monitoring_point:
+        metric_rows = [row for row in metric_rows if row.get("Monitoring Period") and str(row["Monitoring Period"]) <= monitoring_point]
     current_index = next((index for index, row in enumerate(metric_rows) if row["Monitoring Period"] == monitoring_point), -1)
     current = metric_rows[current_index] if current_index >= 0 else {}
     previous = metric_rows[current_index - 1] if current_index > 0 else {}
@@ -393,6 +412,7 @@ def build_lgd_period_summary(
         "previous_performance_rag": previous_performance_rag,
     }
 def build_lgd_calibration_rag_trend(data: dict, metric_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    quarter_cycle_map = get_lgd_quarter_cycle_map()
     rows: list[dict[str, Any]] = []
     for row in metric_rows:
         me_rag = lgd_metric_rag(data, "ME", row.get("ME"))
@@ -405,6 +425,7 @@ def build_lgd_calibration_rag_trend(data: dict, metric_rows: list[dict[str, Any]
         rows.append(
             {
                 "quarter": row["Monitoring Period"],
+                "reporting_cycle": quarter_cycle_map.get(row["Monitoring Period"], ""),
                 "rag": rag,
                 "rag_score": pd_rag_score(rag),
                 "weighted_average": weighted_average,
@@ -419,6 +440,7 @@ def build_lgd_calibration_rag_trend(data: dict, metric_rows: list[dict[str, Any]
 
 
 def build_lgd_discrimination_rag_trend(data: dict, metric_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    quarter_cycle_map = get_lgd_quarter_cycle_map()
     rows: list[dict[str, Any]] = []
     for row in metric_rows:
         tau_rag = lgd_metric_rag(data, "Kendall's Tau", row.get("Kendall's Tau"))
@@ -426,6 +448,7 @@ def build_lgd_discrimination_rag_trend(data: dict, metric_rows: list[dict[str, A
         rows.append(
             {
                 "quarter": row["Monitoring Period"],
+                "reporting_cycle": quarter_cycle_map.get(row["Monitoring Period"], ""),
                 "rag": tau_rag,
                 "rag_score": score,
                 "weighted_average": score,

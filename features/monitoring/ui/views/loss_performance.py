@@ -566,7 +566,7 @@ def page_layout(data: dict) -> list:
         set_loss_metrics(cycle_data.get("metrics_store"), cycle_data.get("quarters"))
     else:
         set_loss_metrics(None, [])
-    cycle_quarters = shared_filters.REPORTING_CYCLE_QUARTERS.get(default_cycle, [])
+    cycle_quarters = shared_filters.LOSS_REPORTING_CYCLE_QUARTERS.get(default_cycle, [])
     monitoring_options = cycle_quarters if cycle_quarters else get_loss_monitoring_point_options(data, None, "All")
     default_monitoring_point = shared_filters.resolve_monitoring_point_value(monitoring_options, None)
 
