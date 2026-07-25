@@ -1570,59 +1570,6 @@ def build_pd_scenario_rank_figure(rows, *, theme: str = "light") -> go.Figure:
 
 
 # ---------------------------------------------------------------------------
-# 1.3 Discriminatory Power - Other Metrics Trend (drawPdDiscriminationTrend)
-# ---------------------------------------------------------------------------
-
-_DISCRIMINATION_TREND_METRICS = [
-    {"key": "gini_coefficient", "name": "Gini Coefficient", "color": "#7c3aed", "dash": "dash"},
-    {"key": "ks_statistic", "name": "KS Statistic", "color": "#d97706", "dash": "dot"},
-    {"key": "kendall_tau", "name": "Kendall's Tau", "color": "#0891b2", "dash": "dashdot"},
-]
-
-
-def build_pd_discrimination_trend_figures(performance_trend, monitoring_thresholds, snapshot_quarter, range_value=None, *, theme: str = "light") -> dict[str, go.Figure]:
-    periods = filter_pd_periods_by_range(range_value, [row["quarter"] for row in performance_trend])
-    trend = [row for row in performance_trend if row["quarter"] in periods]
-    if not trend:
-        message = _empty_figure("No portfolio periods are available for the selected snapshot date.", height=296)
-        return {metric["key"]: message for metric in _DISCRIMINATION_TREND_METRICS}
-
-    quarters = [row["quarter"] for row in trend]
-    thresholds = get_pd_thresholds(monitoring_thresholds)
-    figures: dict[str, go.Figure] = {}
-    trend_line_color = _monitoring_trend_line_color(theme)
-    for metric in _DISCRIMINATION_TREND_METRICS:
-        values = [row[metric["key"]] for row in trend]
-        rags = [calculate_pd_metric_rag(thresholds, metric["name"], value) for value in values]
-        threshold = next((row for row in thresholds if row.get("metric") == metric["name"]), {})
-        bands = build_pd_threshold_bands(threshold, values)
-        shapes = list(bands["shapes"])
-        if snapshot_quarter in quarters:
-            shapes.append(_vertical_marker(snapshot_quarter))
-
-        fig = go.Figure(go.Scatter(
-            x=quarters, y=values,
-            mode="lines+markers", name=metric["name"], connectgaps=False,
-            line=dict(color=trend_line_color, width=2.5, dash=metric["dash"]),
-            marker=dict(size=8, color=[pd_rag_color(rag) for rag in rags], line=dict(color="#fff", width=1)),
-            customdata=rags,
-            hovertemplate=f"%{{x}}<br>{metric['name']}: %{{y:.3f}}<br>RAG: %{{customdata}}<extra></extra>",
-        ))
-        fig.update_layout(
-            height=296,
-            margin=dict(t=18, r=20, b=42, l=52),
-            hovermode="x unified",
-            showlegend=False,
-            shapes=shapes,
-            xaxis=build_pd_time_series_xaxis(quarters, {"title": "Quarter", "gridcolor": GRID_COLOR}, density="compact"),
-            yaxis=dict(title=metric["name"], range=bands["axis_range"], gridcolor=GRID_COLOR, zeroline=False),
-        )
-        _apply_transparent_background(fig)
-        figures[metric["key"]] = fig
-    return figures
-
-
-# ---------------------------------------------------------------------------
 # 1.3 Discriminatory Power - Accuracy Ratio / Go-Live Delta Trend
 # (drawPdGoLiveAccuracyTrend)
 # ---------------------------------------------------------------------------

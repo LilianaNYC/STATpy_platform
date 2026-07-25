@@ -850,11 +850,8 @@ tr:last-child td{border-bottom:none}
 .pd-scenario-ranking-check-label:hover{border-color:#93c5fd;color:#1e3a8a;transform:translateY(-1px);box-shadow:0 8px 18px rgba(37,99,235,.10)}
 .pd-scenario-ranking-check-label:has(input:checked){border-color:#60a5fa;background:linear-gradient(180deg,#eff6ff 0%,#dbeafe 100%);color:#1e3a8a;box-shadow:0 8px 18px rgba(37,99,235,.13),inset 0 1px 0 rgba(255,255,255,.94)}
 .pd-scenario-ranking-check-input{width:14px;height:14px;accent-color:#2563eb;cursor:pointer}
-.pd-discrimination-trend-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;align-items:stretch}
-.pd-discrimination-trend-chart{min-height:290px}
 .pd-trend-detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
-.pd-trend-detail-grid>*,
-.pd-discrimination-trend-grid>*{min-width:0}
+.pd-trend-detail-grid>*{min-width:0}
 .pd-content-section .section-card{margin-bottom:18px}
 .pd-content-section:last-child{margin-bottom:0}
 
@@ -1334,8 +1331,7 @@ tr:last-child td{border-bottom:none}
    --------------------------------------------------------------------- */
 .pd-performance-app .pd-overview-row{gap:10px;margin-bottom:10px}
 .pd-performance-app .pd-test-grid,
-.pd-performance-app .pd-trend-detail-grid,
-.pd-performance-app .pd-discrimination-trend-grid{gap:12px}
+.pd-performance-app .pd-trend-detail-grid{gap:12px}
 .pd-performance-app .pd-domain-heading{gap:14px;margin-bottom:14px;padding-bottom:10px}
 .pd-performance-app .pd-domain-status{padding:7px 9px}
 .pd-performance-app #pd-analysis-scope{padding:12px 15px 7px}
@@ -1374,8 +1370,6 @@ tr:last-child td{border-bottom:none}
 .pd-performance-app .pd-calibration-trend-chart,
 .pd-performance-app .pd-notching-trend-chart,
 .pd-performance-app .pd-go-live-accuracy-trend-chart{min-height:304px}
-.pd-performance-app .pd-discrimination-trend-grid{gap:10px 12px}
-.pd-performance-app .pd-discrimination-trend-chart{min-height:272px}
 .pd-performance-app .pd-content-section{margin-top:16px}
 .pd-performance-app .pd-chapter-section{margin-top:18px}
 .pd-performance-app .pd-chapter-body{gap:10px;padding-left:14px}
@@ -2661,7 +2655,7 @@ tr:last-child td{border-bottom:none}
   .dashboard-loading-beacon{width:58px;height:58px;flex-basis:58px}
   .dashboard-loading-title{font-size:16px}
   .dashboard-loading-note{max-width:none}
-  .pd-trend-detail-grid,.pd-discrimination-trend-grid,.pd-test-grid,.pd-sensitivity-chart-grid{grid-template-columns:1fr}
+  .pd-trend-detail-grid,.pd-test-grid,.pd-sensitivity-chart-grid{grid-template-columns:1fr}
   .pd-psi-threshold-mini-grid{grid-template-columns:1fr}
   .pd-mev-summary-grid{grid-template-columns:1fr}
   .pd-mev-chart-grid{grid-template-columns:1fr}

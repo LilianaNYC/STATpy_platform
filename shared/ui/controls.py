@@ -56,7 +56,6 @@ PORTFOLIO_SEGMENT_MENU_ID = "pd-portfolio-segment-menu"
 MODELS_ID = "pd-models"
 MODELS_TOGGLE_ID = "pd-models-toggle"
 MODELS_MENU_ID = "pd-models-menu"
-FILTER_HELP_ID = "pd-filter-help"
 SINGLE_SELECT_OPTION_ID = "pd-single-select-option"
 
 REGION_ID = "pd-region"

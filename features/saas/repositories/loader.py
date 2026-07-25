@@ -116,7 +116,6 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
         "mev_group_label_map": {},
         "mev_description_map": {},
         "model_descriptive_name_map": {},
-        "descriptive_groups": {},
         "model_mev_contribution_map": {},
         "mev_time_series": empty_time_series,
     }
@@ -258,21 +257,6 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
             portfolios_for_model = model_portfolio_map.setdefault(model_name, [])
             if portfolio not in portfolios_for_model:
                 portfolios_for_model.append(portfolio)
-    # Parent (Model Descriptive Name) -> ordered child Model Names. Model Name is
-    # the only unique id, so a model with no descriptive name is its own singleton
-    # parent -- this is the single place the "fall back to Model Name" rule is
-    # applied (mirrors selectors.model_descriptive_label). Two Model Names sharing
-    # a descriptive name are the intended children of one parent.
-    descriptive_groups: dict[str, list[str]] = {}
-    for row in model_characteristic_df.to_dict(orient="records"):
-        model_name = _normalize_model_name(row.get("Model Name"))
-        if not model_name:
-            continue
-        parent = model_descriptive_name_map.get(model_name) or model_name
-        members = descriptive_groups.setdefault(parent, [])
-        if model_name not in members:
-            members.append(model_name)
-
     segment_values = _ordered_unique_strings(
         model_characteristic_df.get("Segment Name", pd.Series(dtype=object)).tolist()
     )
@@ -350,7 +334,6 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
         "mev_group_label_map": mev_group_label_map,
         "mev_description_map": mev_description_map,
         "model_descriptive_name_map": model_descriptive_name_map,
-        "descriptive_groups": descriptive_groups,
         "model_mev_contribution_map": model_mev_contribution_map,
         "mev_time_series": time_series_df,
     }

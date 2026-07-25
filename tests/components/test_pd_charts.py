@@ -7,7 +7,6 @@ from datetime import date
 from STATpy_platform.shared.ui.charts import (
     build_pd_confidence_interval_trend_figure,
     build_pd_default_rate_trend_figure,
-    build_pd_discrimination_trend_figures,
     build_pd_notching_trend_figure,
     build_pd_go_live_accuracy_trend_figure,
     build_pd_mev_range_figure,
@@ -416,46 +415,3 @@ def test_notching_trend_uses_theme_monochrome_line():
     )
 
     assert figure.data[2].line.color == "rgba(71,85,105,0.75)"
-
-
-def test_discriminatory_power_other_metrics_hide_zero_line():
-    figures = build_pd_discrimination_trend_figures(
-        [
-            {"quarter": "2023-Q1", "gini_coefficient": 0.1, "ks_statistic": 0.2, "kendall_tau": -0.05},
-            {"quarter": "2023-Q2", "gini_coefficient": 0.15, "ks_statistic": 0.25, "kendall_tau": 0.04},
-        ],
-        {
-            "pd_thresholds": [
-                {"metric": "Gini Coefficient", "green_min": 0.1, "green_max": 0.3, "amber_min": 0.05, "amber_max": 0.35, "red_condition": "outside amber range"},
-                {"metric": "KS Statistic", "green_min": 0.1, "green_max": 0.3, "amber_min": 0.05, "amber_max": 0.35, "red_condition": "outside amber range"},
-                {"metric": "Kendall's Tau", "green_min": -0.1, "green_max": 0.1, "amber_min": -0.2, "amber_max": 0.2, "red_condition": "outside amber range"},
-            ]
-        },
-        "2023-Q2",
-    )
-
-    assert figures["gini_coefficient"].layout.yaxis.zeroline is False
-    assert figures["ks_statistic"].layout.yaxis.zeroline is False
-    assert figures["kendall_tau"].layout.yaxis.zeroline is False
-
-
-def test_discriminatory_power_other_metrics_use_neutral_theme_line_color():
-    figures = build_pd_discrimination_trend_figures(
-        [
-            {"quarter": "2023-Q1", "gini_coefficient": 0.1, "ks_statistic": 0.2, "kendall_tau": -0.05},
-            {"quarter": "2023-Q2", "gini_coefficient": 0.15, "ks_statistic": 0.25, "kendall_tau": 0.04},
-        ],
-        {
-            "pd_thresholds": [
-                {"metric": "Gini Coefficient", "green_min": 0.1, "green_max": 0.3, "amber_min": 0.05, "amber_max": 0.35, "red_condition": "outside amber range"},
-                {"metric": "KS Statistic", "green_min": 0.1, "green_max": 0.3, "amber_min": 0.05, "amber_max": 0.35, "red_condition": "outside amber range"},
-                {"metric": "Kendall's Tau", "green_min": -0.1, "green_max": 0.1, "amber_min": -0.2, "amber_max": 0.2, "red_condition": "outside amber range"},
-            ]
-        },
-        "2023-Q2",
-        theme="dark",
-    )
-
-    assert figures["gini_coefficient"].data[0].line.color == "rgba(203,213,225,0.78)"
-    assert figures["ks_statistic"].data[0].line.color == "rgba(203,213,225,0.78)"
-    assert figures["kendall_tau"].data[0].line.color == "rgba(203,213,225,0.78)"
