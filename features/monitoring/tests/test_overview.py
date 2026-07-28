@@ -138,6 +138,84 @@ def test_escalation_next_steps_tiers_entities_by_review_flow_and_findings():
     assert esc["tiers"]["clear"][0]["Entity Label"] == "Loss All Models"
 
 
+def test_escalation_tier_ignores_performance_rag_and_findings_when_review_flow_is_clean():
+    """Playbook-only tiering: an entity whose Post Subjective Review and Post
+    Mitigation RAGs are both Green stays In tolerance even if its Performance
+    (Model-initial) RAG is Red and it has Red underlying test findings -- those
+    are shown as "Driven by" context but no longer move the tier. (Under the
+    old broader rule this entity would have escalated.)"""
+    current_rows = [
+        {
+            "Model Group": "PD", "Model": "PD Model A", "Monitoring Period": "2025Q4",
+            "Overall RAG": "Red", "Post Subjective Review RAG": "Green",
+            "Pre Mitigation RAG": "Red", "Post Mitigation RAG": "Green",
+            "Reviewer Commentary": "",
+        },
+    ]
+    findings = [
+        {"Model Group": "PD", "Model": "PD Model A", "Monitoring Period": "2025Q4",
+         "Metric": "Calibration RAG", "RAG": "Red"},
+        {"Model Group": "PD", "Model": "PD Model A", "Monitoring Period": "2025Q4",
+         "Metric": "Overall RAG", "RAG": "Red"},
+    ]
+
+    esc = escalation_next_steps(current_rows, current_rows, findings, _sample_playbook())
+
+    assert esc["counts"] == {"escalate": 0, "watch": 0, "clear": 1}
+    clear = esc["tiers"]["clear"][0]
+    assert clear["Entity Label"] == "PD Model A"
+    # The Red test finding is still surfaced as a "Driven by" chip -- it just
+    # no longer changes the tier.
+    assert "Calibration RAG" in [metric for metric, _rag in clear["Drivers"]]
+
+
+def test_escalation_tier_watches_on_amber_review_flow_only():
+    """An Amber Post Mitigation RAG lands the entity on the Watch list, while
+    a Red Post Subjective Review RAG escalates -- the two playbook triggers."""
+    current_rows = [
+        {
+            "Model Group": "PD", "Model": "PD Amber", "Monitoring Period": "2025Q4",
+            "Overall RAG": "Green", "Post Subjective Review RAG": "Green",
+            "Pre Mitigation RAG": "Green", "Post Mitigation RAG": "Amber",
+        },
+        {
+            "Model Group": "PD", "Model": "PD Red", "Monitoring Period": "2025Q4",
+            "Overall RAG": "Green", "Post Subjective Review RAG": "Red",
+            "Pre Mitigation RAG": "Green", "Post Mitigation RAG": "Green",
+        },
+    ]
+
+    esc = escalation_next_steps(current_rows, current_rows, [], _sample_playbook())
+
+    assert esc["counts"] == {"escalate": 1, "watch": 1, "clear": 0}
+    assert esc["tiers"]["escalate"][0]["Entity Label"] == "PD Red"
+    assert esc["tiers"]["watch"][0]["Entity Label"] == "PD Amber"
+
+
+def test_escalation_no_review_flow_falls_back_to_performance_rag():
+    """Entities that record no review-flow RAGs (e.g. Loss) can't be tiered by
+    the playbook, so they fall back to their Performance RAG: Red -> escalate,
+    Amber -> watch, Green -> in tolerance."""
+    current_rows = [
+        {"Model Group": "Loss", "Model": "Loss Red", "Monitoring Period": "2025Q4",
+         "Overall RAG": "Red", "Post Subjective Review RAG": "N/A",
+         "Pre Mitigation RAG": "N/A", "Post Mitigation RAG": "N/A"},
+        {"Model Group": "Loss", "Model": "Loss Amber", "Monitoring Period": "2025Q4",
+         "Overall RAG": "Amber", "Post Subjective Review RAG": "N/A",
+         "Pre Mitigation RAG": "N/A", "Post Mitigation RAG": "N/A"},
+        {"Model Group": "Loss", "Model": "Loss Green", "Monitoring Period": "2025Q4",
+         "Overall RAG": "Green", "Post Subjective Review RAG": "N/A",
+         "Pre Mitigation RAG": "N/A", "Post Mitigation RAG": "N/A"},
+    ]
+
+    esc = escalation_next_steps(current_rows, current_rows, [], _sample_playbook())
+
+    assert esc["counts"] == {"escalate": 1, "watch": 1, "clear": 1}
+    assert esc["tiers"]["escalate"][0]["Entity Label"] == "Loss Red"
+    assert esc["tiers"]["watch"][0]["Entity Label"] == "Loss Amber"
+    assert esc["tiers"]["clear"][0]["Entity Label"] == "Loss Green"
+
+
 def test_escalation_next_steps_detects_persistent_breach():
     current_rows = [
         {

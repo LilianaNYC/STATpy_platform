@@ -1048,21 +1048,59 @@ def escalation_next_steps(
     monitoring_actions: list[dict[str, Any]],
     entity_key: str = "Model",
 ) -> dict[str, Any]:
-    """Escalation tiers with the governance playbook's next steps per entity.
+    """Governance-tier each entity (escalate / watch / clear) and attach the
+    playbook's next steps, mirroring each Performance tab's 3.1 Conclusion.
 
-    Mirrors each Performance tab's 3.1 Conclusion: an entity's review-flow RAGs
-    (Post Subjective Review -> Pre Mitigation -> Post Mitigation, read from the
-    same portfolio columns the tabs edit) are matched against the monitoring
-    playbook via ``select_pd_monitoring_actions``, so the next step shown on the
-    Overview is always the same action the tab's own Required Actions panel
-    prescribes -- including the two-consecutive-Red persistent-breach protocol,
-    detected from the entity's prior monitoring period in ``scoped_rows``.
+    ---------------------------------------------------------------------------
+    Governance tiering rules -- the authoritative encoding of the business
+    monitoring policy. Revise HERE (and the ``monitoring_actions`` playbook
+    sheet in ``monitoring_rules.xlsm``) if the policy changes.
+    ---------------------------------------------------------------------------
 
-    Tiers: ``escalate`` (any Red across Overall RAG, a review-flow stage, or an
-    underlying test finding -- or a persistent breach), ``watch`` (Amber
-    somewhere, nothing Red), ``clear`` (everything Green). Entities without
-    review-flow data (e.g. the Loss workstream) still tier off their findings;
-    they just carry no playbook selections.
+    RAG glossary (business term -> code / portfolio column):
+      * "Model RAG (initial)" = Performance RAG  = ``Overall RAG`` column.
+            Roll-up of the RAG-Assignment tests. It is the *input* to the
+            subjective review, NOT a tiering trigger on its own.
+      * "Model RAG (post subjective review)"     = ``Post Subjective Review RAG``
+            (review_flow field ``post_subjective``). Drives the Pre-Mitigation
+            stage.
+      * "Pre-Mitigation RAG" (= Pre-Overlay)     = ``Pre Mitigation RAG``
+            (``pre_mitigation``). A DISPLAYED pipeline stage (trend of the
+            post-subjective-review RAG; for ST models == the current one), NOT
+            a separate playbook trigger -- deliberately not read for tiering.
+      * "Post-Mitigation RAG" (= Post-Overlay)   = ``Post Mitigation RAG``
+            (``post_mitigation``). Drives the Post-Mitigation stage.
+
+    The playbook (``monitoring_rules.xlsm`` -> ``monitoring_actions`` sheet,
+    matched per entity by :func:`select_pd_monitoring_actions`) triggers off
+    exactly two RAGs, so the TIER is decided by exactly those two, plus the
+    persistent-breach protocol:
+
+        Trigger RAG state                          -> Tier      (playbook name)
+        ------------------------------------------    --------   -------------------
+        Post Subjective Review RAG == Red          -> escalate  (Pre-Mit Model Breach)
+        Post Mitigation RAG        == Red          -> escalate  (Post-Mit Model Breach)
+        Post Mitigation Red for 2 quarters running -> escalate  (Persistent Breach)
+        either of the two == Amber (nothing Red)   -> watch     (Early Warning)
+        both Green / N-A                           -> clear     (normal monitoring)
+
+    Deliberately EXCLUDED from the tier decision (policy choice -- the
+    subjective review already accounts for them; they remain visible on the
+    card as "Driven by" context and drive the Performance RAG, but never move
+    the tier by themselves):
+      * the Performance / Model-initial RAG (``Overall RAG``), and
+      * the underlying RAG-Assignment / Post-Subjective test findings
+        (Calibration, Discrimination, PSI, Transition Matrix, Scenario Ranking,
+        Sensitivity, MEV Range, ...).
+
+    Fallback: entities that record NO review-flow RAGs at all (e.g. the Loss
+    workstream, which has no post-subjective/pre-/post-mitigation pipeline)
+    can't be tiered by the playbook, so they fall back to their Performance
+    RAG: Red -> escalate, Amber -> watch, else clear.
+
+    The playbook next steps shown on each card come from the same
+    ``select_pd_monitoring_actions`` selection the tab's own Required Actions
+    panel uses, so Overview and the tab always agree.
     """
     from .actions import select_pd_monitoring_actions
 
@@ -1129,14 +1167,23 @@ def escalation_next_steps(
             selections = select_pd_monitoring_actions(monitoring_actions, review_flow, previous_post_mitigation)
             persistent_breach = any(selection.get("persistent_breach") for selection in selections)
 
-        red_signal = (
-            persistent_breach
-            or overall == "Red"
-            or any(value == "Red" for value in review_flow.values())
-            or any(rag == "Red" for _metric, rag in drivers)
-        )
-        amber_signal = overall == "Amber" or any(value == "Amber" for value in review_flow.values()) or bool(drivers)
-        tier = "escalate" if red_signal else ("watch" if amber_signal else "clear")
+        # Playbook-only tiering -- see this function's docstring for the full
+        # rules and rationale. Only the two playbook trigger RAGs (Post
+        # Subjective Review + Post Mitigation) and the persistent breach decide
+        # the tier; the Pre Mitigation RAG, the Performance RAG, and the test
+        # findings are deliberately excluded here.
+        if has_review_flow:
+            playbook_rags = (review_flow["post_subjective"], review_flow["post_mitigation"])
+            if persistent_breach or "Red" in playbook_rags:
+                tier = "escalate"
+            elif "Amber" in playbook_rags:
+                tier = "watch"
+            else:
+                tier = "clear"
+        else:
+            # No review-flow RAGs (e.g. Loss) -- the playbook can't apply, so
+            # fall back to the entity's Performance (Model-initial) RAG.
+            tier = "escalate" if overall == "Red" else ("watch" if overall == "Amber" else "clear")
 
         tiers[tier].append({
             "Model Group": group,
@@ -1178,18 +1225,18 @@ def escalation_next_steps(
         names = ", ".join(record["Entity Label"] for record in tiers["escalate"])
         requires = "requires" if counts["escalate"] == 1 else "require"
         narrative = (
-            f"As of {period}, {_n(counts['escalate'])} {requires} escalation -- Red on a review-flow stage or an "
-            f"underlying test: {names}. The next steps below come from the monitoring playbook, matching each "
-            f"Performance tab's own Conclusion section."
+            f"As of {period}, {_n(counts['escalate'])} {requires} escalation -- Red on the Post Subjective Review "
+            f"or Post Mitigation RAG, or a persistent breach: {names}. The next steps below come from the "
+            f"monitoring playbook, matching each Performance tab's own Conclusion section."
         )
         if counts["watch"]:
             is_are = "is" if counts["watch"] == 1 else "are"
-            narrative += f" {_n(counts['watch'])} more {is_are} on watch with Amber findings."
+            narrative += f" {_n(counts['watch'])} more {is_are} on watch with an Amber review-flow RAG."
     elif counts["watch"]:
         names = ", ".join(record["Entity Label"] for record in tiers["watch"])
         narrative = (
-            f"As of {period}, no {noun} requires escalation, but {_n(counts['watch'])} carry Amber findings to "
-            f"keep on watch: {names}."
+            f"As of {period}, no {noun} requires escalation, but {_n(counts['watch'])} carry an Amber review-flow "
+            f"RAG to keep on watch: {names}."
         )
     else:
         narrative = f"As of {period}, all {_n(total)} are fully in tolerance. Continue normal monitoring."
