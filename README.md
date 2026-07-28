@@ -149,7 +149,7 @@ bands) live in `shared/domain/constants.py`.
 - `portfolio.xlsx` – the monitoring metric tabs
   (`PD/LGD/EAD/Loss_Performance_Metrics`), the `Filters` config sheet, and
   `PD_Sensitivity_Projections` (with `MM_P0` / `MM_Pm` transition margins).
-- `statpy_monitoring_thresholds.xlsm` – PD / CRR-master-scale / RAG-assignment /
+- `monitoring_rules.xlsm` – PD / CRR-master-scale / RAG-assignment /
   LGD / Loss / scenario-test threshold tables, plus the governance action
   playbook (`monitoring_actions` sheet): one required-action row per stage/RAG,
   surfaced in the Conclusion's Required Actions panel and keyed off the

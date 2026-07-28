@@ -1,6 +1,6 @@
 """Selects governance playbook actions for the PD review-flow RAGs.
 
-The monitoring playbook (``statpy_monitoring_thresholds.xlsx`` · ``monitoring_actions`` sheet)
+The monitoring playbook (``monitoring_rules.xlsm`` · ``monitoring_actions`` sheet)
 defines one required-action row per ``(stage, RAG)`` for the "Pre Mitigation"
 and "Post Mitigation" stages, plus a persistent-breach escalation row that
 replaces the standard Post-Mitigation Red row when two consecutive quarters

@@ -2470,7 +2470,7 @@ def _build_pd_required_actions_panel(
                 children=[_build_pd_action_card(selection, pending_fields) for selection in selections],
             ),
             html.Div(
-                "Source: statpy_monitoring_thresholds.xlsx · monitoring_actions. Each action keys off the review-flow RAG named in "
+                "Source: monitoring_rules.xlsm · monitoring_actions. Each action keys off the review-flow RAG named in "
                 "its Trigger column; two consecutive Red Post Mitigation quarters escalate to the persistent-breach "
                 "protocol.",
                 className="pd-test-footnote",
