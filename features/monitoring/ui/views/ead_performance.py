@@ -1983,15 +1983,27 @@ def build_ead_apply_prompt() -> html.Section:
 # ---------------------------------------------------------------------------
 
 
-def page_layout() -> list:
-    """Build the EAD page with top controls and live content."""
+def page_layout(search: str = "") -> list:
+    """Build the EAD page with top controls and live content.
+
+    ``search`` is the page's ``dcc.Location`` query string (e.g. a deep link
+    from an Overview escalation card); see ``shared.deep_link``. This page's
+    stores are rebuilt fresh on every navigation, so baking the deep-linked
+    scope directly into their construction here (including
+    ``APPLIED_FILTERS_STORE_ID`` itself) is enough to render it immediately,
+    with no extra callback needed (contrast PD, whose stores live in the
+    shared app shell and so need a dedicated bootstrap callback instead).
+    """
     from .....shared.domain.mev_range import model_field_values
+    from .....shared.deep_link import parse_deep_link_params
     from .....shared.repositories.filters_config import load_filter_config, model_names, segment_values
-    from ...domain.ead import set_ead_metrics
+    from ...domain.ead import resolve_ead_segment, set_ead_metrics
+    initial = parse_deep_link_params(search)
     data = PD_PERFORMANCE_DATA
     cfg = load_filter_config()
     model_options = model_names("ead")
-    segment_options = ["All", *segment_values()]
+    segment_values_list = segment_values()
+    segment_options = ["All", *segment_values_list]
     mev_catalog = data.get("mev_catalog") or {}
     region_options = [{"label": "All", "value": "All"}] + [
         {"label": value, "value": value} for value in model_field_values(mev_catalog, "region", model_options)
@@ -2003,21 +2015,47 @@ def page_layout() -> list:
     scenario_options = [{"label": s["label"], "value": s["value"]} for s in cfg["scenarios"]]
     default_cycle = reporting_cycle_options[0]["value"]
     default_scenario = scenario_options[0]["value"]
-    cycle_data = (data.get("ead_observations_by_cycle") or {}).get(default_cycle)
+    selected_scenario = initial.get("scenario") if initial.get("scenario") in {s["value"] for s in scenario_options} else default_scenario
+    selected_cycle = initial.get("cycle") if initial.get("cycle") in {c["value"] for c in reporting_cycle_options} else default_cycle
+    cycle_data = (data.get("ead_observations_by_cycle") or {}).get(selected_cycle)
     if cycle_data:
         set_ead_metrics(cycle_data.get("metrics_store"), cycle_data.get("quarters"))
     else:
         set_ead_metrics(None, [])
-    cycle_quarters = shared_filters.EAD_REPORTING_CYCLE_QUARTERS.get(default_cycle, [])
+    cycle_quarters = shared_filters.EAD_REPORTING_CYCLE_QUARTERS.get(selected_cycle, [])
     monitoring_options = cycle_quarters if cycle_quarters else get_ead_monitoring_point_options(data, None, "All")
-    default_monitoring_point = shared_filters.resolve_monitoring_point_value(monitoring_options, None)
+    selected_monitoring_point = (
+        initial.get("monitoring_point")
+        if initial.get("monitoring_point") in set(monitoring_options)
+        else shared_filters.resolve_monitoring_point_value(monitoring_options, None)
+    )
+    selected_model = initial.get("model", "") if initial.get("model") in model_options else ""
+    if selected_model:
+        # A model-scoped deep link with no explicit segment resolves the same
+        # way sync_ead_segment_dropdown does: "All" if this model actually has
+        # an aggregate row for this cycle, else its lone real segment -- so a
+        # single-segment model with no "All" row (e.g. PD Corp Model's EAD
+        # equivalent) renders with that segment pre-selected instead of blank.
+        selected_segment = resolve_ead_segment(data, selected_model, initial.get("segment", ""))
+    else:
+        selected_segment = initial.get("segment", "") if initial.get("segment") in segment_values_list else ""
 
     model_select_options = [{"label": "Select model", "value": ""}] + [{"label": name, "value": name} for name in model_options]
+
+    applied_filters_data = None
+    if selected_model or selected_segment:
+        applied_filters_data = {
+            "reporting_cycle": selected_cycle,
+            "scenario": selected_scenario,
+            "model": selected_model,
+            "segment": selected_segment,
+            "monitoring_point": selected_monitoring_point,
+        }
 
     return [
         dcc.Store(id=RANGE_STORE_ID, data={}),
         dcc.Store(id=SCENARIO_RANKING_STORE_ID, data={}),
-        dcc.Store(id=APPLIED_FILTERS_STORE_ID),
+        dcc.Store(id=APPLIED_FILTERS_STORE_ID, data=applied_filters_data),
         dcc.Store(id=CONCLUSIONS_NOTES_STORE_ID, storage_type="session", data=""),
         dcc.Store(id=EAD_REVIEW_FLOW_PENDING_STORE_ID, data={}),
         dcc.Store(id=EAD_REVIEW_FLOW_STATUS_STORE_ID, data=""),
@@ -2072,7 +2110,7 @@ def page_layout() -> list:
                                         menu_id=MODEL_MENU_ID,
                                         filter_key=MODEL_FILTER_KEY,
                                         options=model_select_options,
-                                        value="",
+                                        value=selected_model,
                                     ),
                                 ),
                                 _build_filter(
@@ -2083,7 +2121,7 @@ def page_layout() -> list:
                                         menu_id=SEGMENT_MENU_ID,
                                         filter_key=SEGMENT_FILTER_KEY,
                                         options=_dropdown_options(segment_options),
-                                        value="",
+                                        value=selected_segment,
                                     ),
                                 ),
                             ],
@@ -2099,7 +2137,7 @@ def page_layout() -> list:
                                         menu_id=REPORTING_CYCLE_MENU_ID,
                                         filter_key=REPORTING_CYCLE_FILTER_KEY,
                                         options=reporting_cycle_options,
-                                        value=default_cycle,
+                                        value=selected_cycle,
                                     ),
                                 ),
                                 _build_filter(
@@ -2110,7 +2148,7 @@ def page_layout() -> list:
                                         menu_id=MONITORING_POINT_MENU_ID,
                                         filter_key=MONITORING_POINT_FILTER_KEY,
                                         options=[{"label": q, "value": q} for q in monitoring_options],
-                                        value=default_monitoring_point,
+                                        value=selected_monitoring_point,
                                     ),
                                 ),
                                 _build_filter(
@@ -2121,7 +2159,7 @@ def page_layout() -> list:
                                         menu_id=SCENARIO_MENU_ID,
                                         filter_key=SCENARIO_FILTER_KEY,
                                         options=scenario_options,
-                                        value=default_scenario,
+                                        value=selected_scenario,
                                     ),
                                 ),
                                 _build_ead_apply_button(),

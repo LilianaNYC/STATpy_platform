@@ -121,6 +121,16 @@ TREND_HORIZON_STORE_ID = "pd-trend-horizon-store"
 MEV_FILTER_STORE_ID = "pd-mev-filter-store"
 APPLY_FILTERS_ID = "pd-apply-filters"
 APPLIED_FILTERS_STORE_ID = "pd-applied-filters-store"
+# Unlike APPLIED_FILTERS_STORE_ID (shell-level, see build_stores -- it survives
+# navigation so leaving and returning to PD keeps applied filters without
+# re-clicking Apply), this store lives inside page_layout()'s own return value,
+# so it is rebuilt fresh on every PD page visit. That lets a deep link from an
+# Overview escalation card (see shared.deep_link) bake its scope directly into
+# this store's initial ``data`` at construction time -- no callback race with
+# APPLIED_FILTERS_STORE_ID's existing writers (the Apply button, and PD's
+# own navigation-entry reset) is needed. render_pd_performance_content reads
+# this store only when APPLIED_FILTERS_STORE_ID itself is still empty.
+PD_DEEP_LINK_STORE_ID = "pd-deep-link-store"
 SCENARIO_RANKING_STORE_ID = "pd-scenario-ranking-store"
 SCENARIO_RANKING_FILTER_ID = "pd-scenario-ranking-filter"
 CONCLUSIONS_NOTES_ID = "pd-conclusions-notes-input"
@@ -3448,7 +3458,7 @@ def _build_apply_button() -> html.Div:
     )
 
 
-def _build_top_bar(data: dict) -> html.Div:
+def _build_top_bar(data: dict, initial: dict | None = None) -> html.Div:
     return html.Div(
         className="top-bar",
         children=[
@@ -3459,7 +3469,7 @@ def _build_top_bar(data: dict) -> html.Div:
                         "PD Performance Monitoring Dashboard",
                         className="monitoring-dashboard-title",
                     ),
-                    build_global_filters(data, extra_controls=_build_apply_button()),
+                    build_global_filters(data, extra_controls=_build_apply_button(), initial=initial),
                 ],
             ),
         ],
@@ -3613,22 +3623,62 @@ def build_stores() -> list:
     ]
 
 
-def build_layout() -> list:
-    """Registry entry point: build the page from the loaded dashboard data."""
+def build_layout(search: str = "") -> list:
+    """Registry entry point: build the page from the loaded dashboard data.
+
+    ``search`` is the page's ``dcc.Location`` query string (e.g. a deep link
+    from an Overview escalation card); see ``shared.deep_link``.
+    """
     from ...data_access import PD_PERFORMANCE_DATA
+    from .....shared.deep_link import parse_deep_link_params
 
-    return page_layout(PD_PERFORMANCE_DATA)
+    return page_layout(PD_PERFORMANCE_DATA, initial=parse_deep_link_params(search))
 
 
-def page_layout(data: dict) -> list:
+def page_layout(data: dict, initial: dict | None = None) -> list:
     """Top bar + getting-started prompt.
 
     The dashboard content is rendered into ``CONTENT_ID`` only once the user
     clicks "Apply filters"; until then this getting-started guide is shown
-    (mirroring the SAAS workspace).
+    (mirroring the SAAS workspace). ``initial`` pre-selects the top filters
+    from a deep link and seeds ``PD_DEEP_LINK_STORE_ID`` (see its own comment)
+    so the dashboard renders that scope immediately instead.
     """
+    from .....shared.repositories.filters_config import load_filter_config
+    cfg = load_filter_config()
+
+    initial = initial or {}
+    model = initial.get("model", "")
+    segment = initial.get("segment", "")
+    scenario = initial.get("scenario") if initial.get("scenario") in {s["value"] for s in cfg["scenarios"]} else ""
+    if model and not segment:
+        # A model-scoped deep link with no explicit segment resolves the same
+        # way sync_pd_model_to_segment_options does: "all" if this model
+        # actually has an aggregate row for this cycle, else its lone real
+        # segment -- so a single-segment model with no "All" row (e.g. "PD
+        # Corp Model" in CCAR 2025) renders with that segment pre-selected
+        # instead of every metric going blank.
+        reporting_cycle = initial.get("cycle") or cfg["reporting_cycles"][0]["value"]
+        segments = (data.get("pd_model_segments") or {}).get(model, [])
+        cycle_data = (data.get("observations_by_cycle") or {}).get(reporting_cycle) or {}
+        has_all = any(
+            m == model and seg == "All"
+            for (m, seg, _quarter, _horizon) in (cycle_data.get("metrics_store") or {})
+        )
+        segment = "all" if has_all else (segments[0] if segments else "all")
+        initial = dict(initial, segment=segment)
+    deep_link_applied = None
+    if model or segment:
+        deep_link_applied = {
+            "monitoring_point": initial.get("monitoring_point", ""),
+            "segment": segment or "all",
+            "models": model,
+            "reporting_cycle": initial.get("cycle", ""),
+            "scenario": scenario,
+        }
     return [
-        _build_top_bar(data),
+        dcc.Store(id=PD_DEEP_LINK_STORE_ID, data=deep_link_applied),
+        _build_top_bar(data, initial),
         html.Div(
             className="content",
             children=[

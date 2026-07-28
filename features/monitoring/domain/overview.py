@@ -235,6 +235,11 @@ def _pd_review_flow_rags(ctx: PdFilterContext, quarter: str) -> dict[str, str]:
         "Pre Mitigation RAG": _text("rag_pre_mitig"),
         "Post Mitigation RAG": _text("rag_post_mitig"),
         "Reviewer Commentary": str(row.get("reviewer_commentary", "") or "").strip(),
+        # The Scenario filter value in effect the last time this row's review
+        # flow was saved (see loader.py's "scenario" column) -- empty when
+        # this row has never been saved, in which case callers fall back to
+        # a portfolio-wide default (see _default_scenario in ui/views/overview.py).
+        "Scenario": str(row.get("scenario", "") or "").strip(),
     }
 
 
@@ -250,6 +255,7 @@ def _review_flow_rags_from_metric_row(metric_row: dict[str, Any] | None) -> dict
         "Pre Mitigation RAG": _text("rag_pre_mitig"),
         "Post Mitigation RAG": _text("rag_post_mitig"),
         "Reviewer Commentary": str(row.get("reviewer_commentary", "") or "").strip(),
+        "Scenario": str(row.get("scenario", "") or "").strip(),
     }
 
 
@@ -692,6 +698,45 @@ def overview_model_options(data: dict, model_group: str = "All") -> list[dict[st
     return [{"label": model, "value": model} for group, model in groups]
 
 
+def overview_model_cycles(data: dict) -> dict[str, set[str]]:
+    """Every reporting cycle each model (PD/LGD/EAD/Loss, pooled across all of
+    that model's segments) actually has data for -- source for narrowing the
+    top filter bar's Model Use Case / Cycle options to the selected Model
+    Group/Model scope, mirroring each individual Performance tab's own
+    model-to-cycle narrowing (e.g. ``sync_pd_population_to_cycle_options``).
+    """
+    model_cycles: dict[str, set[str]] = {}
+    for key in ("pd_model_segment_cycles", "lgd_model_segment_cycles", "ead_model_segment_cycles"):
+        for (model, _segment), cycles in (data.get(key) or {}).items():
+            model_cycles.setdefault(model, set()).update(cycles)
+    loss_cycles = set((data.get("loss_observations_by_cycle") or {}).keys())
+    if loss_cycles:
+        for model in model_names("loss"):
+            model_cycles.setdefault(model, set()).update(loss_cycles)
+    return model_cycles
+
+
+def overview_model_cycle_quarters(data: dict) -> dict[tuple[str, str], set[str]]:
+    """Every quarter each model (pooled across all of that model's segments)
+    actually has data for, within a given reporting cycle -- source for
+    scoping the top filter bar's Monitoring Point options to the selected
+    Model Group/Model scope, mirroring each individual Performance tab's own
+    model-scoped Monitoring Point narrowing.
+    """
+    result: dict[tuple[str, str], set[str]] = {}
+    for cycle, cycle_data in (data.get("observations_by_cycle") or {}).items():
+        for (model, _segment, quarter, _horizon) in (cycle_data.get("metrics_store") or {}):
+            result.setdefault((model, cycle), set()).add(quarter)
+    for key in ("lgd_observations_by_cycle", "ead_observations_by_cycle", "loss_observations_by_cycle"):
+        for cycle, cycle_data in (data.get(key) or {}).items():
+            for (model, _segment), rows in (cycle_data.get("metrics_store") or {}).items():
+                for row in rows:
+                    quarter = row.get("Monitoring Period")
+                    if quarter:
+                        result.setdefault((model, cycle), set()).add(quarter)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Segment rows (Chapter 2) -- every model group's book of business sliced by
 # portfolio segment instead of by model, mirroring build_overview_rows'
@@ -838,6 +883,8 @@ def heatmap_rows(current_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             metric_key = column.replace(" RAG", " Metric")
             worst_row = _worst_row_for_column(model_rows, column)
             entry[metric_key] = (worst_row or {}).get(metric_key, "—")
+            if column == "MEV Range RAG":
+                entry["MEV Range Scenario"] = (worst_row or {}).get("MEV Range Scenario", "")
         output.append(entry)
     return output
 
@@ -869,6 +916,8 @@ def segment_heatmap_rows(current_rows: list[dict[str, Any]]) -> list[dict[str, A
             metric_key = column.replace(" RAG", " Metric")
             worst_row = _worst_row_for_column(segment_rows, column)
             entry[metric_key] = (worst_row or {}).get(metric_key, "—")
+            if column == "MEV Range RAG":
+                entry["MEV Range Scenario"] = (worst_row or {}).get("MEV Range Scenario", "")
         output.append(entry)
     return output
 
@@ -1042,6 +1091,14 @@ def escalation_next_steps(
             (text for row in entity_rows if (text := str(row.get("Reviewer Commentary", "") or "").strip())),
             "",
         )
+        # The scenario MEV Range was actually computed under (see
+        # augment_rows_with_post_subjective) -- surfaced next to the "MEV
+        # Range RAG" driver chip on the escalation card so it's not silently
+        # invisible there either.
+        mev_range_scenario = next(
+            (text for row in entity_rows if (text := str(row.get("MEV Range Scenario", "") or "").strip())),
+            "",
+        )
 
         # Worst finding per metric for this entity, Red first then playbook
         # driver priority -- the "what's driving it" chips on the card. The
@@ -1094,6 +1151,7 @@ def escalation_next_steps(
             "Selections": selections,
             "Persistent Breach": persistent_breach,
             "Commentary": commentary,
+            "MEV Range Scenario": mev_range_scenario,
             "Tab Path": MODEL_GROUP_TAB_PATHS.get(group, "/"),
         })
 

@@ -509,6 +509,7 @@ def register_callbacks(app) -> None:
     @app.callback(
         Output(layout.CONTENT_ID, "children"),
         Input(layout.APPLIED_FILTERS_STORE_ID, "data"),
+        Input(layout.PD_DEEP_LINK_STORE_ID, "data"),
         Input(layout.RANGE_STORE_ID, "data"),
         Input(layout.TREND_HORIZON_STORE_ID, "data"),
         Input(layout.MEV_FILTER_STORE_ID, "data"),
@@ -517,14 +518,24 @@ def register_callbacks(app) -> None:
         Input(APP_THEME_ID, "value"),
         State(layout.CONCLUSIONS_NOTES_STORE_ID, "data"),
         State(layout.PD_REVIEW_FLOW_STATUS_STORE_ID, "data"),
-        prevent_initial_call=True,
+        # Not prevent_initial_call: PD_DEEP_LINK_STORE_ID (see its own comment
+        # in ui/views/pd_performance.py) bakes a deep link's scope directly
+        # into this page's initial layout, and a full page load's very first
+        # callback batch is exactly the "initial call" this flag would
+        # otherwise suppress. With no deep link and nothing yet Applied this
+        # session, both stores are empty and this just re-renders the same
+        # getting-started prompt page_layout already server-rendered.
     )
     def render_pd_performance_content(
-        applied, range_store, trend_horizon_store, mev_filter_store, scenario_ranking_store,
+        applied, deep_link_applied, range_store, trend_horizon_store, mev_filter_store, scenario_ranking_store,
         review_flow_pending_edits, theme_value, conclusions_notes, review_flow_save_status,
     ):
-        # Until the user clicks "Apply filters", keep the getting-started guide
-        # that ``page_layout`` rendered into the content container.
+        # Prefer an explicit Apply click this session over the deep-link
+        # snapshot from page load -- once the user applies for real, that
+        # should win even if they arrived via a deep link.
+        applied = applied or deep_link_applied
+        # Until either applies, keep the getting-started guide that
+        # ``page_layout`` rendered into the content container.
         if not applied:
             return layout.build_pd_apply_prompt()
 
@@ -676,6 +687,18 @@ def register_callbacks(app) -> None:
             return no_update, (
                 "Could not save -- no matching rows were found in the portfolio file for the current scope."
             )
+
+        # Also persist the Scenario filter value in effect for this save, so
+        # Overview's MEV Range can look up the scenario this row was actually
+        # reviewed under instead of assuming a single portfolio-wide default
+        # (see shared.repositories.filters_config.load_filter_config and
+        # augment_rows_with_post_subjective in ui/views/overview.py). Not
+        # counted in saved_fields/the status message -- it's metadata, not a
+        # reviewer-facing field edit.
+        from ....shared.repositories.filters_config import load_filter_config
+        default_scenario = load_filter_config()["scenarios"][0]["value"]
+        scenario = (applied or {}).get("scenario") or default_scenario
+        data_service.save_pd_review_flow_rag(data, reporting_cycle, model, segment, monitoring_point, "scenario", scenario)
 
         from datetime import datetime
         timestamp = datetime.now().strftime("%H:%M:%S")

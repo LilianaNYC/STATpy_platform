@@ -163,6 +163,31 @@ def test_navigating_to_pd_discards_unsaved_staged_state(monkeypatch):
     assert discard_fn("/lgd-performance") == (no_update, no_update, no_update)
 
 
+def test_pd_page_layout_seeds_deep_link_store_from_query_params():
+    """A deep link from an Overview escalation card (e.g. ?model=...&cycle=...
+    &monitoring_point=...) seeds PD_DEEP_LINK_STORE_ID so the master render
+    callback shows that exact scope immediately, without an Apply click."""
+    from STATpy_platform.shared.deep_link import parse_deep_link_params
+
+    initial = parse_deep_link_params("?model=PD+Model+A&cycle=CCAR+2026&monitoring_point=2026Q3")
+    from STATpy_platform.features.monitoring.data_access import PD_PERFORMANCE_DATA
+
+    children = page.page_layout(PD_PERFORMANCE_DATA, initial=initial)
+    deep_link_store = next(node for node in children if getattr(node, "id", None) == page.PD_DEEP_LINK_STORE_ID)
+    assert deep_link_store.data == {
+        "monitoring_point": "2026Q3",
+        "segment": "all",
+        "models": "PD Model A",
+        "reporting_cycle": "CCAR 2026",
+        "scenario": "",
+    }
+
+    # With no query params, the store is seeded with None (no deep link).
+    empty_children = page.page_layout(PD_PERFORMANCE_DATA, initial={})
+    empty_store = next(node for node in empty_children if getattr(node, "id", None) == page.PD_DEEP_LINK_STORE_ID)
+    assert empty_store.data is None
+
+
 def test_pd_performance_build_stores():
     stores = page.build_stores()
     assert {store.id for store in stores} == {

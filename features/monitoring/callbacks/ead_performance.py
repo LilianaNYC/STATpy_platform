@@ -396,7 +396,10 @@ def register_callbacks(app) -> None:
         Input(APP_THEME_ID, "value"),
         State(layout.CONCLUSIONS_NOTES_STORE_ID, "data"),
         State(layout.EAD_REVIEW_FLOW_STATUS_STORE_ID, "data"),
-        prevent_initial_call=True,
+        # Not prevent_initial_call: see the matching comment in
+        # callbacks/lgd_performance.py's render_lgd_content -- a deep-linked
+        # APPLIED_FILTERS_STORE_ID is baked into this page's initial layout,
+        # and needs this callback's first ("initial call") batch to fire.
     )
     def render_ead_content(
         applied, range_store, scenario_ranking_store, review_flow_pending_edits, theme_value,
@@ -518,6 +521,14 @@ def register_callbacks(app) -> None:
             return no_update, (
                 "Could not save -- no matching rows were found in the portfolio file for the current scope."
             )
+
+        # Also persist the Scenario filter value in effect for this save --
+        # see the matching comment in save_pd_review_flow_rag_changes. Not
+        # counted in saved_fields/the status message.
+        from ....shared.repositories.filters_config import load_filter_config
+        default_scenario = load_filter_config()["scenarios"][0]["value"]
+        scenario = (applied or {}).get("scenario") or default_scenario
+        data_service.save_ead_review_flow_rag(data, reporting_cycle, model, segment, monitoring_point, "scenario", scenario)
 
         from datetime import datetime
         timestamp = datetime.now().strftime("%H:%M:%S")

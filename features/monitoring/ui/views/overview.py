@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections import Counter
 from textwrap import wrap
+from urllib.parse import urlencode
 
 import plotly.graph_objects as go
 from dash import dcc, html
@@ -108,6 +109,15 @@ _RAG_FLOW_STAGES = [
     ("Pre Mitigation RAG", "Pre Mitigation RAG"),
     ("Post Mitigation RAG", "Post Mitigation RAG"),
 ]
+# One definition per _RAG_FLOW_STAGES entry (same order) -- shared by the
+# card-level "i" help chip and the Sankey chart's own HTML column headers
+# (_rag_flow_column_headers).
+_RAG_FLOW_STAGE_DEFINITIONS = [
+    "Based on the results of tests applied at the modelled outcomes.",
+    "Reflects the impact of any subjective overlays and considers the post-subjective review.",
+    "Pre-Overlay RAG obtained from the trend of the post-subjective-review model RAG.",
+    "Post-Overlay RAG based on the residual risk of the model, including compensating controls.",
+]
 _RAG_FLOW_TONE_ORDER = ("Green", "Amber", "Red", "N/A")
 _RAG_FLOW_VALID_TONES = ("Green", "Amber", "Red")
 _RAG_FLOW_BAND_RANGES = {
@@ -199,6 +209,36 @@ def _default_scenario(data: dict) -> str:
     return load_filter_config()["scenarios"][0]["value"]
 
 
+def _latest_scenario_by_key(rows: list[dict], group: str, key_fn) -> dict:
+    """The saved Scenario (see loader.py's ``scenario`` column, surfaced onto
+    rows as ``"Scenario"`` by ``_pd_review_flow_rags``/
+    ``_review_flow_rags_from_metric_row``) for each ``key_fn(row)`` group's
+    most recent quarter within ``rows``. MEV Range is reporting-cycle-scoped,
+    not quarter-conditioned (see the module comment above), so this uses the
+    scenario the *latest* reviewed quarter was actually saved under -- keys
+    with no saved scenario at all (never reviewed) are omitted, and callers
+    fall back to ``_default_scenario`` for those. ``key_fn`` lets callers
+    group by (Model, Segment) (the Models chapter, and PD's Segments chapter,
+    which resolve per model) or by Segment alone (LGD/EAD's Segments chapter,
+    which already pools its Scenario Ranking/Sensitivity/MEV lookup across
+    every model sharing a segment -- see augment_segment_rows_with_post_subjective)."""
+    by_key: dict = {}
+    for row in rows:
+        if row["Model Group"] != group:
+            continue
+        by_key.setdefault(key_fn(row), []).append(row)
+    result: dict = {}
+    for key, key_rows in by_key.items():
+        periods = available_periods(key_rows)
+        if not periods:
+            continue
+        latest_row = next((row for row in key_rows if row["Monitoring Period"] == periods[-1]), None)
+        scenario = str((latest_row or {}).get("Scenario", "") or "").strip()
+        if scenario:
+            result[key] = scenario
+    return result
+
+
 def _pd_post_subjective_rag(data: dict, models: set[str], segment: str, reporting_cycle: str, scenario: str) -> dict[str, str]:
     """``models`` is a set so the Segments chapter can pool every PD model
     when it needs a segment-level verdict, while the
@@ -243,6 +283,12 @@ def _pd_post_subjective_rag(data: dict, models: set[str], segment: str, reportin
         "Sensitivity Analysis Metric": _metric("Sensitivity Analysis"),
         "MEV Range RAG": _rag("MEV Range"),
         "MEV Range Metric": _metric("MEV Range"),
+        # The scenario actually used to compute MEV Range above (the row's own
+        # saved scenario, or the portfolio-wide default when never reviewed --
+        # see _latest_scenario_by_key) -- surfaced separately from "Scenario"
+        # (the raw saved value, which can be empty) so callers always have a
+        # value to show, e.g. in a hover tooltip or escalation card.
+        "MEV Range Scenario": scenario,
     }
 
 
@@ -299,6 +345,7 @@ def _lgd_ead_post_subjective_rag(data: dict, model_type: str, sensitivity_key: s
         "Sensitivity Analysis Metric": sensitivity_metric,
         "MEV Range RAG": mev_summary["rag"],
         "MEV Range Metric": mev_summary["metric"],
+        "MEV Range Scenario": scenario,  # see the matching comment on _pd_post_subjective_rag
     }
 
 
@@ -306,7 +353,13 @@ def augment_rows_with_post_subjective(rows: list[dict], data: dict, reporting_cy
     """Merge Transition Matrix / Scenario Ranking / Sensitivity / MEV Range RAG onto
     each row, keyed by (Model Group, Model, Segment) so every quarter row for a
     given model within this reporting cycle carries the same cycle-level verdict."""
-    scenario = _default_scenario(data)
+    def _model_segment_key(row: dict) -> tuple[str, str]:
+        return row["Model"], row.get("Segment", "All")
+
+    default_scenario = _default_scenario(data)
+    pd_scenarios = _latest_scenario_by_key(rows, "PD", _model_segment_key)
+    lgd_scenarios = _latest_scenario_by_key(rows, "LGD", _model_segment_key)
+    ead_scenarios = _latest_scenario_by_key(rows, "EAD", _model_segment_key)
     sidecar: dict[tuple[str, str, str], dict[str, str]] = {}
 
     pd_keys = {(row["Model"], row.get("Segment", "All")) for row in rows if row["Model Group"] == "PD"}
@@ -315,6 +368,7 @@ def augment_rows_with_post_subjective(rows: list[dict], data: dict, reporting_cy
         # the PD Performance tab's own convention (see _ctx_store_keys).
         ctx_segment = "all" if segment == "All" else segment
         models = {model}
+        scenario = pd_scenarios.get((model, segment), default_scenario)
         sidecar[("PD", model, segment)] = _pd_post_subjective_rag(data, models, ctx_segment, reporting_cycle, scenario)
     # Sourced from ``rows`` itself so the sidecar stays aligned with whatever
     # model rows the Overview page is currently surfacing for LGD and EAD --
@@ -323,8 +377,10 @@ def augment_rows_with_post_subjective(rows: list[dict], data: dict, reporting_cy
     lgd_keys = {(row["Model"], row.get("Segment", "All")) for row in rows if row["Model Group"] == "LGD"}
     ead_keys = {(row["Model"], row.get("Segment", "All")) for row in rows if row["Model Group"] == "EAD"}
     for model, segment in lgd_keys:
+        scenario = lgd_scenarios.get((model, segment), default_scenario)
         sidecar[("LGD", model, segment)] = _lgd_ead_post_subjective_rag(data, "LGD", "lgd_sensitivity_projections", model, reporting_cycle, scenario, model_segment=segment)
     for model, segment in ead_keys:
+        scenario = ead_scenarios.get((model, segment), default_scenario)
         sidecar[("EAD", model, segment)] = _lgd_ead_post_subjective_rag(data, "EAD", "ead_sensitivity_projections", model, reporting_cycle, scenario, model_segment=segment)
 
     for row in rows:
@@ -346,15 +402,28 @@ def augment_segment_rows_with_post_subjective(rows: list[dict], data: dict, repo
     LGD/EAD look up their own per-segment sensitivity/MEV data directly (see
     _lgd_ead_post_subjective_rag's ``level="segment"``). Loss has no Post
     Subjective Review columns, so it's left out entirely."""
-    scenario = _default_scenario(data)
+    def _model_segment_key(row: dict) -> tuple[str, str]:
+        return row["Model"], row["Segment"]
+
+    default_scenario = _default_scenario(data)
+    pd_scenarios = _latest_scenario_by_key(rows, "PD", _model_segment_key)
+    # LGD/EAD pool their Scenario Ranking/Sensitivity/MEV lookup across every
+    # model sharing a segment (one result reused for all of them, see below),
+    # so the saved scenario is likewise resolved per Segment alone here, not
+    # per (Model, Segment).
+    lgd_scenarios = _latest_scenario_by_key(rows, "LGD", lambda row: row["Segment"])
+    ead_scenarios = _latest_scenario_by_key(rows, "EAD", lambda row: row["Segment"])
     sidecar: dict[tuple[str, str, str], dict[str, str]] = {}
     for model, segment in {(row["Model"], row["Segment"]) for row in rows if row["Model Group"] == "PD"}:
+        scenario = pd_scenarios.get((model, segment), default_scenario)
         sidecar[("PD", model, segment)] = _pd_post_subjective_rag(data, {model}, segment, reporting_cycle, scenario)
     for segment in {row["Segment"] for row in rows if row["Model Group"] == "LGD"}:
+        scenario = lgd_scenarios.get(segment, default_scenario)
         result = _lgd_ead_post_subjective_rag(data, "LGD", "lgd_sensitivity_projections", segment, reporting_cycle, scenario, level="segment")
         for model in {row["Model"] for row in rows if row["Model Group"] == "LGD" and row["Segment"] == segment}:
             sidecar[("LGD", model, segment)] = result
     for segment in {row["Segment"] for row in rows if row["Model Group"] == "EAD"}:
+        scenario = ead_scenarios.get(segment, default_scenario)
         result = _lgd_ead_post_subjective_rag(data, "EAD", "ead_sensitivity_projections", segment, reporting_cycle, scenario, level="segment")
         for model in {row["Model"] for row in rows if row["Model Group"] == "EAD" and row["Segment"] == segment}:
             sidecar[("EAD", model, segment)] = result
@@ -568,46 +637,6 @@ def _rag_flow_entity_label(row: dict, entity_kind: str = "model") -> str:
     if group and entity and not entity.lower().startswith(group.lower()):
         return f"{group} {entity}"
     return entity or group
-
-
-def _rag_flow_help_chip() -> html.Div:
-    definitions = [
-        ("Performance RAG", "Based on the results of tests applied at the modelled outcomes."),
-        ("Post Subjective Review", "Reflects the impact of any subjective overlays and considers the post-subjective review."),
-        ("Pre Mitigation", "Pre-Overlay RAG obtained from the trend of the post-subjective-review model RAG."),
-        ("Post Mitigation", "Post-Overlay RAG based on the residual risk of the model, including compensating controls."),
-    ]
-    return html.Div(
-        className="overview-help",
-        children=[
-            html.Button(
-                "i",
-                type="button",
-                className="overview-help-chip",
-                title="RAG definitions",
-                **{"aria-label": "Show RAG migration journey definitions"},
-            ),
-            html.Div(
-                className="overview-help-tooltip overview-help-tooltip-rag-flow",
-                children=[
-                    html.Div("RAG definitions", className="overview-help-tooltip-title"),
-                    html.Div(
-                        className="overview-help-tooltip-list",
-                        children=[
-                            html.Div(
-                                className="overview-help-tooltip-item",
-                                children=[
-                                    html.Strong(label),
-                                    html.Span(copy),
-                                ],
-                            )
-                            for label, copy in definitions
-                        ],
-                    ),
-                ],
-            ),
-        ],
-    )
 
 
 def _wrap_rag_flow_label(label: str, max_chars: int) -> str:
@@ -982,27 +1011,35 @@ def _rag_flow_summary_card(current_rows: list[dict], theme: str, entity_kind: st
     return html.Div(
         className="section-card overview-summary-rag-flow",
         children=[
-            build_chart_header(
-                title,
-                header_copy,
-                extra_controls=_rag_flow_help_chip(),
-            ),
+            build_chart_header(title, header_copy),
             html.Div(
                 className="overview-rag-flow-graphs",
                 children=[
-                    dcc.Graph(
-                        id=desktop_graph_id,
-                        className="overview-rag-flow-graph overview-rag-flow-graph-desktop",
-                        figure=_rag_flow_sankey_figure(current_rows, theme, entity_kind=entity_kind),
-                        config=_GRAPH_CONFIG,
-                        style={"height": f"{_rag_flow_chart_height(_rag_flow_models(current_rows, entity_kind))}px"},
+                    html.Div(
+                        className="overview-rag-flow-graph-desktop",
+                        children=[
+                            _rag_flow_column_headers(),
+                            dcc.Graph(
+                                id=desktop_graph_id,
+                                className="overview-rag-flow-graph",
+                                figure=_rag_flow_sankey_figure(current_rows, theme, entity_kind=entity_kind),
+                                config=_GRAPH_CONFIG,
+                                style={"height": f"{_rag_flow_chart_height(_rag_flow_models(current_rows, entity_kind))}px"},
+                            ),
+                        ],
                     ),
-                    dcc.Graph(
-                        id=compact_graph_id,
-                        className="overview-rag-flow-graph overview-rag-flow-graph-compact",
-                        figure=_rag_flow_sankey_figure(current_rows, theme, compact=True, entity_kind=entity_kind),
-                        config=_GRAPH_CONFIG,
-                        style={"height": f"{_rag_flow_chart_height(_rag_flow_models(current_rows, entity_kind), compact=True)}px"},
+                    html.Div(
+                        className="overview-rag-flow-graph-compact",
+                        children=[
+                            _rag_flow_column_headers(compact=True),
+                            dcc.Graph(
+                                id=compact_graph_id,
+                                className="overview-rag-flow-graph",
+                                figure=_rag_flow_sankey_figure(current_rows, theme, compact=True, entity_kind=entity_kind),
+                                config=_GRAPH_CONFIG,
+                                style={"height": f"{_rag_flow_chart_height(_rag_flow_models(current_rows, entity_kind), compact=True)}px"},
+                            ),
+                        ],
                     ),
                 ],
             ),
@@ -1067,14 +1104,15 @@ def _rag_flow_sankey_figure(
     link_colors = palette["link"]
     band_colors = palette["band"]
     text_color = "#e2e8f0" if is_dark else "#0f172a"
-    muted_color = "#94a3b8" if is_dark else "#64748b"
     stage_positions = [0.24, 1.12, 2.0, 2.88] if compact else [0.18, 1.08, 1.98, 2.88]
-    stage_font_size = 12 if compact else 14
     tone_font_size = 13 if compact else 15
-    stage_label_y = 0.955 if compact else 0.962
     left_label_room = 0.66 if compact else 0.72
     right_label_room = 0.42 if compact else 0.48
-    margin = dict(t=22, r=26, b=6, l=50) if compact else dict(t=26, r=30, b=8, l=60)
+    # Stage column labels/tooltips now render as an HTML header row above the
+    # chart (see _rag_flow_column_headers), matching the Model RAG Heatmap's
+    # _heatmap_column_headers pattern -- the plot itself no longer needs top
+    # margin reserved for its own label annotations.
+    margin = dict(t=0, r=26, b=6, l=50) if compact else dict(t=0, r=30, b=8, l=60)
     x_axis_range = [stage_positions[0] - left_label_room, stage_positions[-1] + right_label_room]
     tone_label_x = x_axis_range[0] + (0.05 if compact else 0.06)
     band_x0 = tone_label_x + (0.18 if compact else 0.22)
@@ -1285,17 +1323,6 @@ def _rag_flow_sankey_figure(
         font=dict(size=12, color=text_color),
         annotations=[
             dict(
-                x=stage_positions[index],
-                y=stage_label_y,
-                xref="x",
-                yref="paper",
-                text=label,
-                showarrow=False,
-                font=dict(size=stage_font_size, color=muted_color),
-            )
-            for index, (_, label) in enumerate(_RAG_FLOW_STAGES)
-        ] + [
-            dict(
                 x=tone_label_x,
                 y=(_RAG_FLOW_BAND_RANGES[tone][0] + _RAG_FLOW_BAND_RANGES[tone][1]) / 2,
                 xref="x",
@@ -1343,7 +1370,7 @@ def _rag_flow_sankey_figure(
                 x0=stage_positions[index],
                 x1=stage_positions[index],
                 y0=0.03,
-                y1=0.93,
+                y1=0.90,
                 line=dict(color=palette["divider"], width=1),
                 layer="below",
             )
@@ -1359,10 +1386,70 @@ def _rag_flow_sankey_figure(
             visible=False,
             fixedrange=True,
         ),
-        yaxis=dict(range=[0.0, 1.0], visible=False, fixedrange=True),
+        yaxis=dict(range=[0.0, 0.905], visible=False, fixedrange=True),
     )
     _apply_transparent_background(fig)
     return fig
+
+
+def _rag_flow_column_flex_weights(compact: bool) -> tuple[float, list[float], float]:
+    """Flex weights (left spacer, one per stage, right spacer) so an HTML
+    header row lines up with this chart's own stage_positions/label-room
+    layout above, without hard-coding the current coordinates twice."""
+    stage_positions = [0.24, 1.12, 2.0, 2.88] if compact else [0.18, 1.08, 1.98, 2.88]
+    left_label_room = 0.66 if compact else 0.72
+    right_label_room = 0.42 if compact else 0.48
+    gaps = [stage_positions[index + 1] - stage_positions[index] for index in range(len(stage_positions) - 1)]
+    column_widths = [
+        (gaps[index - 1] if index > 0 else gaps[0]) / 2 + (gaps[index] if index < len(gaps) else gaps[-1]) / 2
+        for index in range(len(stage_positions))
+    ]
+    spacer_left = max(0.0, left_label_room - column_widths[0] / 2)
+    spacer_right = max(0.0, right_label_room - column_widths[-1] / 2)
+    return spacer_left, column_widths, spacer_right
+
+
+def _rag_flow_column_headers(compact: bool = False) -> html.Div:
+    """HTML column headers for the RAG Migration Journey Sankey chart, styled
+    and behaved identically to the Model RAG Heatmap's own column headers
+    (``_heatmap_column_headers``): real, keyboard-focusable cells whose full
+    definitions appear on hover/focus via CSS, positioned above the chart so
+    its own xaxis no longer needs to render stage labels itself. Flex weights
+    are derived from the chart's stage_positions so the cells line up with
+    the Sankey columns underneath."""
+    spacer_left, column_widths, spacer_right = _rag_flow_column_flex_weights(compact)
+    cells = [
+        html.Div(
+            className="overview-heatmap-column-header-cell",
+            tabIndex=0,
+            style={"flex": column_widths[index]},
+            children=[
+                html.Span(stage_label, className="overview-heatmap-column-header-title"),
+                html.Div(
+                    className="overview-heatmap-column-tooltip",
+                    children=[
+                        html.Strong(stage_label),
+                        html.Span(_RAG_FLOW_STAGE_DEFINITIONS[index]),
+                    ],
+                ),
+            ],
+        )
+        for index, (_, stage_label) in enumerate(_RAG_FLOW_STAGES)
+    ]
+    # Horizontal padding mirrors the Sankey figure's own left/right margin
+    # (see the `margin` dict in _rag_flow_sankey_figure) so the flex-based
+    # spacer/column widths -- computed in data-coordinate space -- line up
+    # with the chart's actual plot area in pixel space underneath.
+    padding = "0 26px 0 50px" if compact else "0 30px 0 60px"
+    return html.Div(
+        className="overview-rag-flow-column-headers",
+        style={"padding": padding},
+        children=(
+            [html.Div(className="overview-rag-flow-column-spacer", style={"flex": spacer_left})]
+            + cells
+            + [html.Div(className="overview-rag-flow-column-spacer", style={"flex": spacer_right})]
+        ),
+    )
 
 
 def _rag_heatmap_figure(rows: list[dict], theme: str, columns: list[str] = RAG_COLUMNS) -> go.Figure:
@@ -1393,7 +1480,12 @@ def _rag_heatmap_figure(rows: list[dict], theme: str, columns: list[str] = RAG_C
             z_row.append(heatmap_z.get(rag, 0))
             text_row.append(_wrap_metric_text(metric) if has_metric else "")
             metric_hover = f"<br>Metric: {metric}" if has_metric else ""
-            custom_row.append([row["Model Group"], row["Model"], _heatmap_display_label(column), display_rag(rag), row.get("Monitoring Period", ""), metric_hover])
+            # MEV Range is the one column whose result depends on which
+            # Scenario was in effect (see augment_rows_with_post_subjective) --
+            # surfaced here so hovering it shows which scenario produced the
+            # RAG/metric shown, instead of leaving that silently invisible.
+            scenario_hover = f"<br>Scenario: {row.get('MEV Range Scenario')}" if column == "MEV Range RAG" and row.get("MEV Range Scenario") else ""
+            custom_row.append([row["Model Group"], row["Model"], _heatmap_display_label(column), display_rag(rag), row.get("Monitoring Period", ""), metric_hover, scenario_hover])
         z_values.append(z_row)
         text_values.append(text_row)
         customdata.append(custom_row)
@@ -1425,7 +1517,7 @@ def _rag_heatmap_figure(rows: list[dict], theme: str, columns: list[str] = RAG_C
         showscale=False,
         hovertemplate=(
             "%{customdata[0]} — %{customdata[1]}<br>%{customdata[2]}: %{customdata[3]}"
-            "%{customdata[5]}"
+            "%{customdata[5]}%{customdata[6]}"
             "<br>As of %{customdata[4]}<extra></extra>"
         ),
     ))
@@ -1484,13 +1576,20 @@ def _rag_trend_heatmap_figure(rows: list[dict], rag_column: str, visible_periods
     """Every model's RAG for ``rag_column``, one row per model and one column
     per quarter -- same read as the 1.2 heatmap, just with time on the x-axis
     instead of test dimensions."""
+    all_periods = available_periods(rows)
+    periods = [p for p in all_periods if visible_periods is None or p in set(visible_periods)]
+    period_set = set(periods)
+    # A model whose own history starts after (or ends before) the visible
+    # period window -- e.g. capping to an early Monitoring Point when this
+    # model's earliest quarter is later -- would otherwise still show up as a
+    # row with every cell "N/A". That's pure clutter, not information, so
+    # only keep models with at least one row inside the visible window.
+    models_in_window = {(row["Model Group"], row["Model"]) for row in rows if row["Monitoring Period"] in period_set}
     model_keys = sorted(
-        {(row["Model Group"], row["Model"]) for row in rows},
+        models_in_window,
         key=lambda key: (MODEL_GROUPS.index(key[0]) if key[0] in MODEL_GROUPS else 99, key[1]),
     )
     height = _rag_trend_heatmap_height(model_keys)
-    all_periods = available_periods(rows)
-    periods = [p for p in all_periods if visible_periods is None or p in set(visible_periods)]
     if not model_keys or not periods:
         return _empty_figure("No RAG trend data is available for the selected filters.", height=height, theme=theme)
 
@@ -1565,7 +1664,9 @@ def _segment_heatmap_figure(rows: list[dict], theme: str, columns: list[str] = R
             z_row.append(heatmap_z.get(rag, 0))
             text_row.append(_wrap_metric_text(metric) if has_metric else "")
             metric_hover = f"<br>Metric: {metric}" if has_metric else ""
-            custom_row.append([row["Model Group"], row["Segment"], _heatmap_display_label(column), display_rag(rag), row.get("Monitoring Period", ""), metric_hover, row.get("Model", "")])
+            # See the matching comment in _rag_heatmap_figure.
+            scenario_hover = f"<br>Scenario: {row.get('MEV Range Scenario')}" if column == "MEV Range RAG" and row.get("MEV Range Scenario") else ""
+            custom_row.append([row["Model Group"], row["Segment"], _heatmap_display_label(column), display_rag(rag), row.get("Monitoring Period", ""), metric_hover, row.get("Model", ""), scenario_hover])
         z_values.append(z_row)
         text_values.append(text_row)
         customdata.append(custom_row)
@@ -1591,7 +1692,7 @@ def _segment_heatmap_figure(rows: list[dict], theme: str, columns: list[str] = R
         showscale=False,
         hovertemplate=(
             "%{customdata[0]} — %{customdata[6]} — %{customdata[1]}<br>%{customdata[2]}: %{customdata[3]}"
-            "%{customdata[5]}"
+            "%{customdata[5]}%{customdata[7]}"
             "<br>As of %{customdata[4]}<extra></extra>"
         ),
     ))
@@ -1619,13 +1720,22 @@ def _segment_trend_heatmap_figure(rows: list[dict], rag_column: str, visible_per
     Segment) -- more than one model within a group can cover the same
     segment, so the model name disambiguates which model's data a row shows.
     """
+    all_periods = available_periods(rows)
+    periods = [p for p in all_periods if visible_periods is None or p in set(visible_periods)]
+    period_set = set(periods)
+    # See the matching comment in _rag_trend_heatmap_figure: drop rows with no
+    # data at all inside the visible period window rather than showing an
+    # all-"N/A" row.
+    segments_in_window = {
+        (row["Model Group"], row.get("Model", ""), row["Segment"])
+        for row in rows
+        if row["Monitoring Period"] in period_set
+    }
     segment_keys = sorted(
-        {(row["Model Group"], row.get("Model", ""), row["Segment"]) for row in rows},
+        segments_in_window,
         key=lambda key: (MODEL_GROUPS.index(key[0]) if key[0] in MODEL_GROUPS else 99, key[1], key[2]),
     )
     height = _segment_trend_heatmap_height(segment_keys)
-    all_periods = available_periods(rows)
-    periods = [p for p in all_periods if visible_periods is None or p in set(visible_periods)]
     if not segment_keys or not periods:
         return _empty_figure("No RAG trend data is available for the selected filters.", height=height, theme=theme)
 
@@ -2072,11 +2182,20 @@ def _esc_tier_chip(tier: str, count: int) -> html.Span:
     )
 
 
-def _governance_driver_chip(driver: str, driver_rags: dict[str, str]) -> html.Span:
+def _governance_driver_chip(driver: str, driver_rags: dict[str, str], label: str | None = None) -> html.Span:
     return html.Span(
-        driver,
+        label or driver,
         className=f"overview-governance-driver-chip overview-governance-driver-chip-{pd_tone_class(driver_rags.get(driver, 'Red'))}",
     )
+
+
+def _driver_display_label(metric: str, record: dict) -> str:
+    """MEV Range's RAG depends on which Scenario it was computed under (see
+    augment_rows_with_post_subjective) -- appended here so the driver chip/
+    watch-row line names it instead of leaving that silently invisible."""
+    if metric == "MEV Range RAG" and record.get("MEV Range Scenario"):
+        return f"{metric} ({record['MEV Range Scenario']})"
+    return metric
 
 
 def _esc_review_flow_strip(record: dict) -> html.Div:
@@ -2212,7 +2331,32 @@ def _esc_flow_summary_dots(record: dict) -> html.Span:
     return html.Span(items, className="overview-esc-row-flow", role="img", **{"aria-label": aria})
 
 
-def _esc_row(record: dict) -> html.Details:
+def _esc_tab_href(record: dict, reporting_cycle: str, entity_key: str) -> str:
+    """Deep-link to the entity's own Performance tab: the target tab reads
+    these query params (see ``parse_deep_link_params``) to pre-populate its
+    top filters and render this exact scope immediately, instead of landing
+    on the getting-started prompt and requiring an extra "Apply filters" click."""
+    params = {"cycle": reporting_cycle, "monitoring_point": record["Monitoring Period"]}
+    if entity_key == "Segment":
+        # A segment name can be shared across more than one model (see
+        # escalation_next_steps' own (Model Group, Model, entity) grouping),
+        # so the record's Model must come along too -- segment-only would
+        # fall back to a pooled "home model" for the segment, which may not
+        # be the specific model this card is actually about.
+        params["segment"] = record["Entity"]
+        params["model"] = record["Model"]
+    else:
+        params["model"] = record["Model"]
+    # The scenario MEV Range was actually computed under for this entity (see
+    # augment_rows_with_post_subjective) -- carried along so the target tab's
+    # own Scenario filter (and thus its own MEV Range section) matches what
+    # this card showed, instead of silently reverting to the tab's default.
+    if record.get("MEV Range Scenario"):
+        params["scenario"] = record["MEV Range Scenario"]
+    return f"{record['Tab Path']}?{urlencode(params)}"
+
+
+def _esc_row(record: dict, reporting_cycle: str, entity_key: str) -> html.Details:
     """One escalating entity as a native collapsible row: the summary shows the
     identity, severity, and a glanceable review-flow readout; expanding reveals
     the full review-flow pipeline, drivers, playbook next steps, the reviewer's
@@ -2243,7 +2387,10 @@ def _esc_row(record: dict) -> html.Details:
                 className="overview-esc-card-drivers",
                 children=[
                     html.Span("Driven by", className="overview-esc-card-drivers-label"),
-                    *[_governance_driver_chip(metric, driver_rags) for metric, _rag in record["Drivers"]],
+                    *[
+                        _governance_driver_chip(metric, driver_rags, _driver_display_label(metric, record))
+                        for metric, _rag in record["Drivers"]
+                    ],
                 ],
             )
         )
@@ -2273,7 +2420,11 @@ def _esc_row(record: dict) -> html.Details:
             )
         )
     body_children.append(
-        html.A(f"Open {record['Model Group']} Performance →", href=record["Tab Path"], className="overview-esc-card-link")
+        html.A(
+            f"Open {record['Model Group']} Performance →",
+            href=_esc_tab_href(record, reporting_cycle, entity_key),
+            className="overview-esc-card-link",
+        )
     )
 
     return html.Details(
@@ -2282,7 +2433,7 @@ def _esc_row(record: dict) -> html.Details:
     )
 
 
-def _esc_watch_row(record: dict) -> html.Div:
+def _esc_watch_row(record: dict, reporting_cycle: str, entity_key: str) -> html.Div:
     """Compact watch-list row: the worst stage (or finding) and its one-line
     playbook action -- enough to document without a full escalation card."""
     selections = record["Selections"]
@@ -2293,8 +2444,9 @@ def _esc_watch_row(record: dict) -> html.Div:
         line = (worst.get("action") or {}).get("required_action") or "No playbook action matches this stage yet."
     elif record["Drivers"]:
         metric, rag = record["Drivers"][0]
-        context = f"{metric} · {rag}"
-        line = f"{rag} finding on {metric} — review on the tab."
+        display_label = _driver_display_label(metric, record)
+        context = f"{display_label} · {rag}"
+        line = f"{rag} finding on {display_label} — review on the tab."
     else:
         rag = record["Overall RAG"]
         context = f"Overall RAG · {rag}"
@@ -2306,12 +2458,12 @@ def _esc_watch_row(record: dict) -> html.Div:
             html.Strong(record["Entity Label"], className="overview-esc-watch-name"),
             html.Span(context, className="overview-esc-watch-context"),
             html.Span(line, className="overview-esc-watch-action"),
-            html.A("Open tab →", href=record["Tab Path"], className="overview-esc-watch-link"),
+            html.A("Open tab →", href=_esc_tab_href(record, reporting_cycle, entity_key), className="overview-esc-watch-link"),
         ],
     )
 
 
-def _governance_next_steps_board(esc: dict, entity_noun: str) -> html.Div:
+def _governance_next_steps_board(esc: dict, entity_noun: str, reporting_cycle: str, entity_key: str) -> html.Div:
     posture_title, tone = _esc_posture(esc, entity_noun)
     tiers, counts = esc["tiers"], esc["counts"]
     children = [
@@ -2355,7 +2507,7 @@ def _governance_next_steps_board(esc: dict, entity_noun: str) -> html.Div:
                             ),
                         ],
                     ),
-                    *[_esc_row(record) for record in tiers["escalate"]],
+                    *[_esc_row(record, reporting_cycle, entity_key) for record in tiers["escalate"]],
                 ],
             )
         )
@@ -2365,7 +2517,7 @@ def _governance_next_steps_board(esc: dict, entity_noun: str) -> html.Div:
                 className="overview-esc-watch",
                 children=[
                     html.Div("Watch list — action to document, no escalation", className="overview-esc-strip-title"),
-                    *[_esc_watch_row(record) for record in tiers["watch"]],
+                    *[_esc_watch_row(record, reporting_cycle, entity_key) for record in tiers["watch"]],
                 ],
             )
         )
@@ -2384,6 +2536,7 @@ def _governance_next_steps_board(esc: dict, entity_noun: str) -> html.Div:
 
 def _build_governance_section(
     current_rows: list[dict], scoped_rows: list[dict], findings: list[dict], monitoring_actions: list[dict],
+    reporting_cycle: str,
 ) -> html.Section:
     esc = escalation_next_steps(current_rows, scoped_rows, findings, monitoring_actions, entity_key="Model")
     return html.Section(
@@ -2398,13 +2551,14 @@ def _build_governance_section(
                 "N/A",
                 {"show_rag": False},
             ),
-            _governance_next_steps_board(esc, "model"),
+            _governance_next_steps_board(esc, "model", reporting_cycle, "Model"),
         ],
     )
 
 
 def _build_segment_governance_section(
     current_rows: list[dict], scoped_rows: list[dict], findings: list[dict], monitoring_actions: list[dict],
+    reporting_cycle: str,
 ) -> html.Section:
     esc = escalation_next_steps(current_rows, scoped_rows, findings, monitoring_actions, entity_key="Segment")
     return html.Section(
@@ -2419,7 +2573,7 @@ def _build_segment_governance_section(
                 "N/A",
                 {"show_rag": False},
             ),
-            _governance_next_steps_board(esc, "segment"),
+            _governance_next_steps_board(esc, "segment", reporting_cycle, "Segment"),
         ],
     )
 
@@ -2497,7 +2651,7 @@ def render_overview_content(
         _build_summary_section(current_rows, findings, monitoring_point or "All", theme, chapter1_exclusions),
         _build_heatmap_section(current_rows, theme, monitoring_point or "All"),
         _build_trend_section(scoped_rows, rag_trend_metric, range_store, theme, monitoring_point or "All"),
-        _build_governance_section(current_rows, scoped_rows, findings, data.get("monitoring_actions") or []),
+        _build_governance_section(current_rows, scoped_rows, findings, data.get("monitoring_actions") or [], reporting_cycle),
     ]
 
     chapter_2 = build_pd_chapter_heading(
@@ -2516,6 +2670,7 @@ def render_overview_content(
         _build_segment_trend_section(segment_scoped_rows, segment_rag_trend_metric, range_store, theme, monitoring_point or "All"),
         _build_segment_governance_section(
             current_segment_rows, segment_scoped_rows, segment_findings, data.get("monitoring_actions") or [],
+            reporting_cycle,
         ),
     ]
 
@@ -2662,8 +2817,14 @@ def build_overview_apply_prompt() -> html.Section:
 # ---------------------------------------------------------------------------
 
 
-def build_layout() -> list:
-    """No-arg entry point for the page registry."""
+def build_layout(search: str = "") -> list:
+    """Entry point for the page registry.
+
+    ``search`` (the page's ``dcc.Location`` query string) is accepted for a
+    uniform call signature across every page's ``build_layout`` -- see
+    ``shell.py``'s router -- but unused here: Overview is the *source* of
+    deep links (its escalation cards), never their target.
+    """
     from ...data_access import PD_PERFORMANCE_DATA
     return page_layout(PD_PERFORMANCE_DATA)
 
@@ -2697,6 +2858,21 @@ def page_layout(data: dict) -> list:
                             className="monitoring-controls saas-top-filter-row overview-primary-filter-row",
                             children=[
                                 _build_filter(
+                                    "Model Group",
+                                    shared_filters.build_single_select_dropdown(
+                                        value_id=SEGMENT_MODEL_GROUP_ID,
+                                        toggle_id=SEGMENT_MODEL_GROUP_TOGGLE_ID,
+                                        menu_id=SEGMENT_MODEL_GROUP_MENU_ID,
+                                        filter_key=SEGMENT_MODEL_GROUP_FILTER_KEY,
+                                        options=_dropdown_options(SEGMENT_MODEL_GROUP_OPTIONS),
+                                        value="All",
+                                    ),
+                                ),
+                                _build_filter(
+                                    "Model",
+                                    _build_model_filter(model_options, default_models),
+                                ),
+                                _build_filter(
                                     "Model Use Case / Cycle",
                                     shared_filters.build_single_select_dropdown(
                                         value_id=REPORTING_CYCLE_ID,
@@ -2717,21 +2893,6 @@ def page_layout(data: dict) -> list:
                                         options=monitoring_point_options,
                                         value=default_monitoring_point,
                                     ),
-                                ),
-                                _build_filter(
-                                    "Model Group",
-                                    shared_filters.build_single_select_dropdown(
-                                        value_id=SEGMENT_MODEL_GROUP_ID,
-                                        toggle_id=SEGMENT_MODEL_GROUP_TOGGLE_ID,
-                                        menu_id=SEGMENT_MODEL_GROUP_MENU_ID,
-                                        filter_key=SEGMENT_MODEL_GROUP_FILTER_KEY,
-                                        options=_dropdown_options(SEGMENT_MODEL_GROUP_OPTIONS),
-                                        value="All",
-                                    ),
-                                ),
-                                _build_filter(
-                                    "Model",
-                                    _build_model_filter(model_options, default_models),
                                 ),
                                 _build_overview_apply_button(),
                             ],

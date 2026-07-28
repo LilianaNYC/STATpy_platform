@@ -1135,6 +1135,8 @@ tr:last-child td{border-bottom:none}
 .overview-summary-final-post-mitigation .pd-chart-heading,
 .overview-summary-rag-flow .pd-chart-heading{margin-bottom:15px;padding-bottom:11px}
 .overview-summary-rag-flow .overview-rag-flow-graphs{margin:-2px -4px 0}
+.overview-rag-flow-column-headers{position:relative;display:flex;align-items:flex-end}
+.overview-rag-flow-column-spacer{min-width:0}
 .overview-executive-summary{margin-bottom:16px}
 .overview-chapter-heading-segments{margin-top:16px}
 .overview-governance-board{--governance-tone:#64748b;position:relative;overflow:hidden;padding:0!important;border-color:#d7e1ee!important;border-radius:16px!important;background:#fff!important;box-shadow:0 16px 38px rgba(15,23,42,.065)!important}
@@ -1293,15 +1295,6 @@ tr:last-child td{border-bottom:none}
 .overview-heatmap-cell-green{border-color:#bbf7d0;background:linear-gradient(180deg,#fff 0%,#f5fdf8 100%)}
 .overview-heatmap-cell-na,.overview-heatmap-cell-neutral{border-color:#cbd5e1;background:linear-gradient(180deg,#fff 0%,#f8fafc 100%)}
 .overview-rag-header{display:inline-flex;align-items:center;gap:6px}
-.overview-help{position:relative;display:inline-flex;align-items:center}
-.overview-help-chip{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border:1px solid rgba(59,130,246,.22);border-radius:999px;background:rgba(37,99,235,.08);color:var(--blue);font-size:10px;font-weight:800;cursor:help}
-.overview-help-tooltip{position:absolute;left:50%;top:calc(100% + 8px);display:none;width:220px;padding:9px 10px;border:1px solid #dbe4f0;border-radius:10px;background:#fff;color:var(--text-muted);font-size:11px;font-weight:500;line-height:1.5;text-transform:none;letter-spacing:0;box-shadow:0 14px 34px rgba(15,23,42,.12);transform:translateX(-50%)}
-.overview-help:hover .overview-help-tooltip,.overview-help:focus-within .overview-help-tooltip{display:block}
-.overview-help-tooltip-rag-flow{width:360px;max-width:min(360px,calc(100vw - 40px));padding:12px 14px}
-.overview-help-tooltip-title{color:#0f172a;font-size:11px;font-weight:800;letter-spacing:.32px;text-transform:uppercase}
-.overview-help-tooltip-list{display:flex;flex-direction:column;gap:10px;margin-top:10px}
-.overview-help-tooltip-item strong{display:block;color:#0f172a;font-size:11.5px;line-height:1.35}
-.overview-help-tooltip-item span{display:block;margin-top:3px;color:#64748b;font-size:11px;line-height:1.55}
 .overview-rag-badge{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:999px;border:2px solid transparent;box-shadow:0 0 0 2px rgba(255,255,255,.92) inset}
 .overview-rag-green{background:#16a34a;border-color:#bbf7d0}
 .overview-rag-amber,.overview-rag-fallback{background:#d97706;border-color:#fde68a}
@@ -2220,7 +2213,6 @@ tr:last-child td{border-bottom:none}
 .monitoring-shell.theme-dark .overview-rag-flow-browser-heading p,
 .monitoring-shell.theme-dark .overview-rag-mix-heading span,
 .monitoring-shell.theme-dark .overview-rag-legend-item span,
-.monitoring-shell.theme-dark .overview-help-tooltip,
 .monitoring-shell.theme-dark .overview-scope-chip-label,
 .monitoring-shell.theme-dark .overview-scope-list-label,
 .monitoring-shell.theme-dark .overview-section-item-copy,
@@ -2458,15 +2450,6 @@ tr:last-child td{border-bottom:none}
 .monitoring-shell.theme-dark .overview-heatmap-table th:nth-child(2){
   background:rgba(21,34,56,.98)
 }
-.monitoring-shell.theme-dark .overview-help-chip{
-  background:rgba(59,130,246,.18);
-  border-color:rgba(96,165,250,.35);
-  color:#bfdbfe
-}
-.monitoring-shell.theme-dark .overview-help-tooltip{
-  background:rgba(15,23,42,.98);
-  border-color:rgba(148,163,184,.24)
-}
 .monitoring-shell.theme-dark .overview-rag-flow-browser-panel{
   border-color:rgba(148,163,184,.24);
   background:rgba(17,28,47,.98);
@@ -2497,13 +2480,6 @@ tr:last-child td{border-bottom:none}
 }
 .monitoring-shell.theme-dark .overview-rag-mix-bar{
   background:rgba(15,23,42,.55)
-}
-.monitoring-shell.theme-dark .overview-help-tooltip-title,
-.monitoring-shell.theme-dark .overview-help-tooltip-item strong{
-  color:var(--dark-text)
-}
-.monitoring-shell.theme-dark .overview-help-tooltip-item span{
-  color:var(--dark-muted)
 }
 .monitoring-shell.theme-dark .overview-governance-board{
   border-color:rgba(148,163,184,.24)!important;

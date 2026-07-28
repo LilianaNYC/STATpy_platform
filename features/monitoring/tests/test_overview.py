@@ -172,7 +172,7 @@ def test_governance_section_renders_escalation_and_next_steps():
     current_rows = _sample_current_rows()
     findings = _sample_findings()
 
-    section = _build_governance_section(current_rows, current_rows, findings, _sample_playbook())
+    section = _build_governance_section(current_rows, current_rows, findings, _sample_playbook(), "CCAR 2026")
     text = _collect_text(section)
     class_tokens = _collect_class_tokens(section)
 
@@ -582,4 +582,4 @@ def test_rag_flow_chart_colors_change_with_theme():
     assert light_transition.line.color != dark_transition.line.color
     assert list(light_bucket.marker.color) != list(dark_bucket.marker.color)
     assert light.layout.shapes[0].fillcolor != dark.layout.shapes[0].fillcolor
-    assert light.layout.annotations[4].font.color != dark.layout.annotations[4].font.color
+    assert light.layout.annotations[0].font.color != dark.layout.annotations[0].font.color

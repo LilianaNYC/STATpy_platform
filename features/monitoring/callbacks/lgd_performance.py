@@ -401,7 +401,14 @@ def register_callbacks(app) -> None:
         Input(APP_THEME_ID, "value"),
         State(layout.CONCLUSIONS_NOTES_STORE_ID, "data"),
         State(layout.LGD_REVIEW_FLOW_STATUS_STORE_ID, "data"),
-        prevent_initial_call=True,
+        # Not prevent_initial_call: a deep link from an Overview escalation
+        # card (see shared.deep_link) bakes a populated APPLIED_FILTERS_STORE_ID
+        # directly into this page's initial layout (page_layout, since this
+        # page's stores -- unlike PD's -- are rebuilt fresh on every
+        # navigation), and a full page load's very first callback batch is
+        # exactly the "initial call" this flag would otherwise suppress. With
+        # no deep link, ``applied`` is falsy and this just re-renders the same
+        # getting-started prompt page_layout already server-rendered.
     )
     def render_lgd_content(
         applied, range_store, scenario_ranking_store, review_flow_pending_edits, theme_value,
@@ -523,6 +530,14 @@ def register_callbacks(app) -> None:
             return no_update, (
                 "Could not save -- no matching rows were found in the portfolio file for the current scope."
             )
+
+        # Also persist the Scenario filter value in effect for this save --
+        # see the matching comment in save_pd_review_flow_rag_changes. Not
+        # counted in saved_fields/the status message.
+        from ....shared.repositories.filters_config import load_filter_config
+        default_scenario = load_filter_config()["scenarios"][0]["value"]
+        scenario = (applied or {}).get("scenario") or default_scenario
+        data_service.save_lgd_review_flow_rag(data, reporting_cycle, model, segment, monitoring_point, "scenario", scenario)
 
         from datetime import datetime
         timestamp = datetime.now().strftime("%H:%M:%S")

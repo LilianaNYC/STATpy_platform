@@ -9,6 +9,8 @@ last refresh, source file) comes from the registry's primary dashboard.
 
 from __future__ import annotations
 
+import inspect
+
 from dash import ALL, Input, Output, State, dcc, html
 
 from datetime import datetime
@@ -184,10 +186,17 @@ def register_callbacks(app) -> None:
     def sync_app_theme(theme_value):
         return f"monitoring-shell {THEME_CLASS_NAMES[normalize_theme_value(theme_value)]}"
 
-    @app.callback(Output(PAGE_CONTENT_ID, "children"), Input(URL_ID, "pathname"))
-    def render_page(pathname):
+    @app.callback(Output(PAGE_CONTENT_ID, "children"), Input(URL_ID, "pathname"), Input(URL_ID, "search"))
+    def render_page(pathname, search):
         builder = page_builders.get(pathname, root_builder)
-        return builder() if builder else None
+        if builder is None:
+            return None
+        # Only pages that opt into deep-linking (currently the monitoring
+        # dashboard's tabs) accept a "search" argument; every other page's
+        # build_layout stays a plain no-arg callable.
+        if inspect.signature(builder).parameters:
+            return builder(search)
+        return builder()
 
     # Note: this only sets *highlight* classes. It deliberately never touches the
     # ``dashboard-page-panel`` (<details>) element, so each folder's open/closed

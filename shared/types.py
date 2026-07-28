@@ -18,7 +18,7 @@ class PageDefinition:
     key: str
     label: str
     path: str
-    build_layout: Callable[[], Any]
+    build_layout: Callable[..., Any]
     register_callbacks: Callable[[Any], None]
     icon: str = ""
     # Label shown in the sidebar nav (defaults to ``label``).

@@ -421,6 +421,7 @@ _OPTIONAL_REVIEW_TEXT_COLUMNS = (
     "rag_pre_mitig",
     "rag_post_mitig",
     "reviewer_commentary",
+    "scenario",  # see the matching comment on _PD_TEXT_COLUMNS in this module
 )
 
 
@@ -640,6 +641,12 @@ _PD_TEXT_COLUMNS = (
     "rag_pre_mitig",
     "rag_post_mitig",
     "reviewer_commentary",
+    # Not a reviewer-facing RAG/commentary field -- the Scenario filter value
+    # in effect the last time this row's review flow was saved, so Overview's
+    # MEV Range can look up the scenario each row was actually reviewed under
+    # instead of assuming a single portfolio-wide default (see
+    # save_pd_review_flow_rag_changes).
+    "scenario",
 )
 
 # The horizons each per-horizon row is replicated to when its ``horizon`` cell
@@ -709,6 +716,7 @@ _LGD_TEXT_COLUMNS = (
     "rag_pre_mitig",
     "rag_post_mitig",
     "reviewer_commentary",
+    "scenario",  # see the matching comment on _PD_TEXT_COLUMNS
 )
 
 _EAD_TEXT_COLUMNS = (
@@ -716,6 +724,7 @@ _EAD_TEXT_COLUMNS = (
     "rag_pre_mitig",
     "rag_post_mitig",
     "reviewer_commentary",
+    "scenario",  # see the matching comment on _PD_TEXT_COLUMNS
 )
 
 
@@ -782,7 +791,7 @@ def update_pd_review_flow_rag(
 ) -> int:
     """Write ``new_value`` for ``field`` into the ``PD_Performance_Metrics`` sheet, in place.
 
-    ``field`` is one of ``rag_post_sr`` / ``rag_pre_mitig`` / ``rag_post_mitig`` / ``reviewer_commentary``.
+    ``field`` is one of ``rag_post_sr`` / ``rag_pre_mitig`` / ``rag_post_mitig`` / ``reviewer_commentary`` / ``scenario``.
     """
     return _update_review_flow_field(
         PD_AGGREGATED_SHEET_NAME, _PD_TEXT_COLUMNS,
@@ -795,7 +804,7 @@ def update_lgd_review_flow_rag(
 ) -> int:
     """Write ``new_value`` for ``field`` into the ``LGD_Performance_Metrics`` sheet, in place.
 
-    ``field`` is one of ``rag_post_sr`` / ``rag_pre_mitig`` / ``rag_post_mitig`` / ``reviewer_commentary``.
+    ``field`` is one of ``rag_post_sr`` / ``rag_pre_mitig`` / ``rag_post_mitig`` / ``reviewer_commentary`` / ``scenario``.
     """
     return _update_review_flow_field(
         LGD_AGGREGATED_SHEET_NAME, _LGD_TEXT_COLUMNS,
@@ -808,7 +817,7 @@ def update_ead_review_flow_rag(
 ) -> int:
     """Write ``new_value`` for ``field`` into the ``EAD_Performance_Metrics`` sheet, in place.
 
-    ``field`` is one of ``rag_post_sr`` / ``rag_pre_mitig`` / ``rag_post_mitig`` / ``reviewer_commentary``.
+    ``field`` is one of ``rag_post_sr`` / ``rag_pre_mitig`` / ``rag_post_mitig`` / ``reviewer_commentary`` / ``scenario``.
     """
     return _update_review_flow_field(
         EAD_AGGREGATED_SHEET_NAME, _EAD_TEXT_COLUMNS,

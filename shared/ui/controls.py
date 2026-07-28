@@ -192,10 +192,16 @@ def build_single_select_dropdown(
 # ---------------------------------------------------------------------------
 
 
-def build_global_filters(data: dict, extra_controls=None) -> html.Div:
+def build_global_filters(data: dict, extra_controls=None, initial: dict | None = None) -> html.Div:
     """The top filter bar: region, portfolio, model group, model, segment,
     model use case / cycle, monitoring point, scenario -- primary (cascading)
-    row followed by a secondary row, mirroring SAAS's own two-row layout."""
+    row followed by a secondary row, mirroring SAAS's own two-row layout.
+
+    ``initial`` (from ``shared.deep_link.parse_deep_link_params``) lets a
+    deep link from the Overview page's escalation cards pre-select Model/
+    Segment/Model Use Case/Monitoring Point instead of the usual empty/latest
+    defaults -- unrecognized values fall back to the normal default, so a
+    stale or malformed link degrades gracefully rather than erroring."""
     from ..domain.mev_range import model_field_values
     from ..repositories.filters_config import (
         load_filter_config, model_names as cfg_model_names, segment_values as cfg_segment_values,
@@ -221,6 +227,21 @@ def build_global_filters(data: dict, extra_controls=None) -> html.Div:
     scenario_options = [{"label": s["label"], "value": s["value"]} for s in cfg["scenarios"]]
     default_cycle = reporting_cycle_options[0]["value"]
     default_scenario = scenario_options[0]["value"]
+
+    initial = initial or {}
+    initial_model = initial.get("model", "") if initial.get("model") in model_names else ""
+    initial_segment = (
+        initial.get("segment", "")
+        if initial.get("segment") in segment_values or initial.get("segment") == "all"
+        else ""
+    )
+    initial_cycle = initial.get("cycle") if initial.get("cycle") in {c["value"] for c in reporting_cycle_options} else default_cycle
+    initial_monitoring_point = (
+        initial.get("monitoring_point") if initial.get("monitoring_point") in set(quarters_asc) else latest_quarter
+    )
+    initial_scenario = (
+        initial.get("scenario") if initial.get("scenario") in {s["value"] for s in scenario_options} else default_scenario
+    )
 
     primary_row = html.Div(
         className="monitoring-controls saas-top-filter-row monitoring-primary-filter-row",
@@ -277,7 +298,7 @@ def build_global_filters(data: dict, extra_controls=None) -> html.Div:
                         menu_id=MODELS_MENU_ID,
                         filter_key="specific-models",
                         options=[{"label": "Select model", "value": ""}] + [{"label": name, "value": name} for name in model_names],
-                        value="",
+                        value=initial_model,
                     ),
                 ],
             ),
@@ -291,7 +312,7 @@ def build_global_filters(data: dict, extra_controls=None) -> html.Div:
                         menu_id=PORTFOLIO_SEGMENT_MENU_ID,
                         filter_key="portfolio-segment",
                         options=segment_options,
-                        value="",
+                        value=initial_segment,
                     ),
                 ],
             ),
@@ -309,7 +330,7 @@ def build_global_filters(data: dict, extra_controls=None) -> html.Div:
                     menu_id=REPORTING_CYCLE_MENU_ID,
                     filter_key="reporting-cycle",
                     options=reporting_cycle_options,
-                    value=default_cycle,
+                    value=initial_cycle,
                 ),
             ],
         ),
@@ -323,7 +344,7 @@ def build_global_filters(data: dict, extra_controls=None) -> html.Div:
                     menu_id=MONITORING_POINT_MENU_ID,
                     filter_key="monitoring-point",
                     options=monitoring_point_options,
-                    value=latest_quarter,
+                    value=initial_monitoring_point,
                 ),
             ],
         ),
@@ -337,7 +358,7 @@ def build_global_filters(data: dict, extra_controls=None) -> html.Div:
                     menu_id=SCENARIO_MENU_ID,
                     filter_key="scenario",
                     options=scenario_options,
-                    value=default_scenario,
+                    value=initial_scenario,
                 ),
             ],
         ),

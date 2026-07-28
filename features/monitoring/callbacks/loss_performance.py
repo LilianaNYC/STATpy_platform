@@ -242,7 +242,10 @@ def register_callbacks(app) -> None:
         Input(layout.APPLIED_FILTERS_STORE_ID, "data"),
         Input(layout.RANGE_STORE_ID, "data"),
         Input(APP_THEME_ID, "value"),
-        prevent_initial_call=True,
+        # Not prevent_initial_call: see the matching comment in
+        # callbacks/lgd_performance.py's render_lgd_content -- a deep-linked
+        # APPLIED_FILTERS_STORE_ID is baked into this page's initial layout,
+        # and needs this callback's first ("initial call") batch to fire.
     )
     def render_loss_content(applied, range_store, theme_value):
         if not applied:
