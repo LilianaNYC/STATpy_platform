@@ -1704,7 +1704,12 @@ def _build_mev_rag_summary_panel(
     monitoring_point: str | None,
     reporting_cycle: str | None = None,
     scenario: str = "intsevere",
+    segment: str | None = None,
 ) -> html.Div:
+    # With a specific segment selected, scope each model to that segment's own
+    # MEVs and per-segment contribution weights; with "All" (or none) keep the
+    # model-level union and collapsed contributions (see loader.py).
+    is_specific_segment = bool(segment) and segment not in ("All", "all")
     summaries = []
     for model_name in selected_models:
         model_data = catalog.get(model_name, {})
@@ -1716,9 +1721,14 @@ def _build_mev_rag_summary_panel(
         if not severe_quarter:
             severe_quarter = iso_date_to_pd_quarter(model_data.get("severe_scenario_date"))
         dev_dates = get_pd_mev_model_development_dates(model_data)
-        contributions = model_data.get("contributions") or {}
+        if is_specific_segment:
+            contributions = (model_data.get("contributions_by_segment") or {}).get(segment, {})
+        else:
+            contributions = model_data.get("contributions") or {}
         mev_rags = []
         for mev_name, mev_data in (model_data.get("mevs") or {}).items():
+            if is_specific_segment and segment not in (mev_data.get("segments") or []):
+                continue
             rag = calculate_pd_mev_worst_rag_after_quarter(
                 mev_data,
                 severe_quarter,
@@ -1735,7 +1745,7 @@ def _build_mev_rag_summary_panel(
             "development_dates": dev_dates,
             "mev_rags": mev_rags,
             "worst_rag": worst,
-            "segments": model_data.get("segments") or [],
+            "segments": [segment] if is_specific_segment else (model_data.get("segments") or []),
         })
 
     if not summaries:
@@ -1843,12 +1853,21 @@ def _build_mev_range_section(
     mev_periods = get_pd_mev_visible_periods(catalog, chart_model_names, chart_mev_names)
 
 
+    # Order each model's MEV charts by model contribution (highest first); with a
+    # specific segment selected use that segment's own weights, matching the
+    # Post-Scenario MEV Summary. MEVs without a contribution sort last, then by name.
+    is_specific_segment = bool(ctx.segment) and ctx.segment not in ("All", "all")
+
     model_panels = []
     for model_name in chart_model_names:
         model_data = catalog.get(model_name, {})
+        if is_specific_segment:
+            model_contributions = (model_data.get("contributions_by_segment") or {}).get(ctx.segment, {})
+        else:
+            model_contributions = model_data.get("contributions") or {}
         mev_entries = sorted(
             ((name, mdata) for name, mdata in (model_data.get("mevs") or {}).items() if name in chart_mev_names),
-            key=lambda kv: kv[0],
+            key=lambda kv: (-(model_contributions.get(kv[0]) or 0), kv[0]),
         )
         if not mev_entries:
             continue
@@ -2021,6 +2040,7 @@ def _build_mev_range_section(
                 ctx.monitoring_point,
                 reporting_cycle=reporting_cycle,
                 scenario=scenario,
+                segment=ctx.segment,
             ),
             *display_filters,
             *body,

@@ -223,6 +223,10 @@ def load_pd_mev_catalog() -> dict[str, Any]:
     # MEVs into one undifferentiated set per model.
     model_mev_segments: dict[str, dict[str, set[str]]] = {}
     model_mev_contributions: dict[str, dict[str, float]] = {}
+    # Per-segment contributions, keyed by (model, segment, mnemonic) so the
+    # Post-Scenario MEV Summary can show a specific segment's own weights instead
+    # of the segment-collapsed, last-write-wins ``model_mev_contributions``.
+    model_mev_segment_contributions: dict[str, dict[str, dict[str, float]]] = {}
     for _, row in desc_df.iterrows():
         model_key = str(row.get("Model Name", "")).strip()
         segment = str(row.get("Segment", "")).strip()
@@ -244,9 +248,13 @@ def load_pd_mev_catalog() -> dict[str, Any]:
             model_mev_segments.setdefault(model_key, {}).setdefault(mnemonic, set()).add(segment)
         if model_key and mnemonic and contribution is not None:
             try:
-                model_mev_contributions.setdefault(model_key, {})[mnemonic] = float(contribution)
+                contribution_value = float(contribution)
             except (TypeError, ValueError):
-                pass
+                contribution_value = None
+            if contribution_value is not None:
+                model_mev_contributions.setdefault(model_key, {})[mnemonic] = contribution_value
+                if segment:
+                    model_mev_segment_contributions.setdefault(model_key, {}).setdefault(segment, {})[mnemonic] = contribution_value
 
     # -- scenario (all scenarios): time series per model+MEV+scenario
     ts_df = pd.read_excel(
@@ -345,6 +353,13 @@ def load_pd_mev_catalog() -> dict[str, Any]:
             display_name = mev_long_names.get(mnemonic, mnemonic)
             contributions[display_name] = value
 
+        contributions_by_segment: dict[str, dict[str, float]] = {}
+        for segment_key, seg_contribs in model_mev_segment_contributions.get(model_key, {}).items():
+            seg_map = {}
+            for mnemonic, value in seg_contribs.items():
+                seg_map[mev_long_names.get(mnemonic, mnemonic)] = value
+            contributions_by_segment[segment_key] = seg_map
+
         catalog[model_name] = {
             "model_type": model_types.get(model_key, ""),
             "region": regions.get(model_key, ""),
@@ -353,6 +368,7 @@ def load_pd_mev_catalog() -> dict[str, Any]:
             "severe_scenario_date": "",
             "mevs": mevs,
             "contributions": contributions,
+            "contributions_by_segment": contributions_by_segment,
         }
 
     # -- Model Use Case / Cycle -> Scenario: the Scenario filter's options are
