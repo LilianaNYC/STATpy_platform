@@ -99,6 +99,8 @@ SCENARIO_RANKING_STORE_ID = "lgd-scenario-ranking-store"
 SCENARIO_RANKING_FILTER_ID = "lgd-scenario-ranking-filter"
 CONCLUSIONS_NOTES_ID = "lgd-conclusions-notes-input"
 CONCLUSIONS_NOTES_STORE_ID = "lgd-conclusions-notes-store"
+COMPENSATING_CONTROLS_ID = "lgd-compensating-controls-input"
+COMPENSATING_CONTROLS_STORE_ID = "lgd-compensating-controls-store"
 LGD_REVIEW_FLOW_OPTION_ID = "lgd-review-flow-option"
 LGD_REVIEW_FLOW_PENDING_STORE_ID = "lgd-review-flow-pending-store"
 LGD_REVIEW_FLOW_STATUS_STORE_ID = "lgd-review-flow-status-store"
@@ -119,6 +121,9 @@ LGD_REVIEW_FLOW_FIELD_LABELS = {
 # The reviewer sign-off commentary lives in the same portfolio-file mechanism (self-healing column,
 # written via the same generic write path) but isn't a RAG, so it's kept out of LGD_REVIEW_FLOW_COLUMNS.
 REVIEWER_COMMENTARY_COLUMN = "reviewer_commentary"
+# The reviewer's compensating-controls justification for the Post Mitigation RAG -- same free-text,
+# same self-healing portfolio-file mechanism as the sign-off commentary above.
+COMPENSATING_CONTROLS_COLUMN = "compensating_controls"
 
 _RAG_RANK = {"N/A": -1, "Green": 0, "Amber": 1, "Red": 2}
 _RAG_HEX = {"green": "#16a34a", "amber": "#d97706", "red": "#dc2626", "neutral": "#94a3b8"}
@@ -1106,6 +1111,12 @@ def lgd_reviewer_commentary(selected_model, selected_segment, quarter: str) -> s
     return str(row.get(REVIEWER_COMMENTARY_COLUMN, "") or "").strip()
 
 
+def lgd_compensating_controls(selected_model, selected_segment, quarter: str) -> str:
+    """The compensating-controls note saved for this scope, or "" if none has been saved yet."""
+    row = lgd_metrics_row_for_quarter(selected_model, selected_segment, quarter)
+    return str(row.get(COMPENSATING_CONTROLS_COLUMN, "") or "").strip()
+
+
 def _build_lgd_rag_lifecycle_metric_list(chapter_2_summaries: list[dict]) -> html.Div:
     """Every Chapter 2 finding with its own RAG -- no single aggregated dot.
 
@@ -1214,6 +1225,7 @@ def build_lgd_review_flow_save_bar(
     current_values: dict,
     save_status: str | None,
     commentary_changed: bool = False,
+    compensating_changed: bool = False,
 ) -> html.Div | None:
     """Diff summary + Save button for staged RAG edits and/or reviewer commentary, plus the last save status."""
     changed = {
@@ -1221,7 +1233,7 @@ def build_lgd_review_flow_save_bar(
         if value in ("Green", "Amber", "Red") and value != current_values.get(field)
     }
     children = []
-    if changed or commentary_changed:
+    if changed or commentary_changed or compensating_changed:
         items = [
             html.Li([
                 html.Strong(LGD_REVIEW_FLOW_FIELD_LABELS.get(field, field)),
@@ -1229,6 +1241,8 @@ def build_lgd_review_flow_save_bar(
             ])
             for field, value in changed.items()
         ]
+        if compensating_changed:
+            items.append(html.Li([html.Strong("Compensating controls"), ": will be updated"]))
         if commentary_changed:
             items.append(html.Li([html.Strong("Reviewer sign-off commentary"), ": will be updated"]))
         children.extend([
@@ -1440,7 +1454,7 @@ def _build_lgd_required_actions_panel(
                 children=[_build_lgd_action_card(selection, pending_fields) for selection in selections],
             ),
             html.Div(
-                "Source: monitoring_rules.xlsm · monitoring_actions. Each action keys off the review-flow RAG named in "
+                "Source: monitoring_rules.xlsx · monitoring_actions. Each action keys off the review-flow RAG named in "
                 "its Trigger column; two consecutive Red Post Mitigation quarters escalate to the persistent-breach "
                 "protocol.",
                 className="pd-test-footnote",
@@ -1460,6 +1474,8 @@ def _build_lgd_conclusions_verdict_section(
     saved_commentary: str = "",
     monitoring_actions: list[dict] | None = None,
     previous_post_mitigation_rag: str = "",
+    compensating_controls: str | None = None,
+    saved_compensating: str = "",
 ) -> html.Section:
     lifecycle_diagram = _build_lgd_rag_lifecycle_diagram(
         chapter_1_rag, chapter_2_summaries,
@@ -1478,21 +1494,40 @@ def _build_lgd_conclusions_verdict_section(
         monitoring_actions or [], effective_rags, previous_post_mitigation_rag, pending_fields,
     )
     commentary_changed = (conclusions_notes or "") != (saved_commentary or "")
+    compensating_changed = (compensating_controls or "") != (saved_compensating or "")
     save_bar = build_lgd_review_flow_save_bar(
-        pending_edits or {}, review_flow_rags, review_flow_save_status, commentary_changed,
+        pending_edits or {}, review_flow_rags, review_flow_save_status, commentary_changed, compensating_changed,
     )
 
     reviewer_signoff = _build_lgd_collapsible_card(
         "lgd-conclusions-reviewer",
         "Reviewer sign-off",
-        "Record the reviewer's conclusions, caveats, or rationale for the Post Mitigation RAG shown above.",
+        "Record the compensating controls relied on and the reviewer's conclusions for the Post Mitigation RAG shown above.",
         [
             _build_lgd_conclusions_signoff_chip(review_flow_rags["post_mitigation"]),
-            dcc.Textarea(
-                id=CONCLUSIONS_NOTES_ID,
-                value=conclusions_notes or "",
-                placeholder="Record conclusions, caveats, or a sign-off note for this monitoring cycle...",
-                className="pd-conclusions-textarea",
+            html.Div(
+                className="pd-conclusions-field",
+                children=[
+                    html.Label("Compensating controls", htmlFor=COMPENSATING_CONTROLS_ID, className="pd-conclusions-field-label"),
+                    dcc.Textarea(
+                        id=COMPENSATING_CONTROLS_ID,
+                        value=compensating_controls or "",
+                        placeholder="Describe the compensating / mitigating controls relied on for the Post Mitigation RAG...",
+                        className="pd-conclusions-textarea",
+                    ),
+                ],
+            ),
+            html.Div(
+                className="pd-conclusions-field",
+                children=[
+                    html.Label("Reviewer sign-off note", htmlFor=CONCLUSIONS_NOTES_ID, className="pd-conclusions-field-label"),
+                    dcc.Textarea(
+                        id=CONCLUSIONS_NOTES_ID,
+                        value=conclusions_notes or "",
+                        placeholder="Record conclusions, caveats, or a sign-off note for this monitoring cycle...",
+                        className="pd-conclusions-textarea",
+                    ),
+                ],
             ),
             html.Div(
                 "Saved to portfolio.xlsx via the Save button above once edited.",
@@ -1535,6 +1570,7 @@ def render_lgd_performance_content(
     scenario_ranking_store: dict | None = None,
     theme_value: str | None = None,
     conclusions_notes: str | None = None,
+    compensating_controls: str | None = None,
     review_flow_pending_edits: dict | None = None,
     review_flow_save_status: str | None = None,
 ) -> list:
@@ -1899,6 +1935,7 @@ def render_lgd_performance_content(
     )
     review_flow_rags = lgd_review_flow_rags(selected_model, selected_segment, monitoring_point)
     saved_commentary = lgd_reviewer_commentary(selected_model, selected_segment, monitoring_point)
+    saved_compensating = lgd_compensating_controls(selected_model, selected_segment, monitoring_point)
     previous_monitoring_point = get_previous_lgd_quarter(data, selected_model, selected_segment, monitoring_point)
     previous_review_flow_rags = lgd_review_flow_rags(selected_model, selected_segment, previous_monitoring_point)
     section_3_1 = _build_lgd_conclusions_verdict_section(
@@ -1909,6 +1946,8 @@ def render_lgd_performance_content(
         saved_commentary=saved_commentary,
         monitoring_actions=data.get("monitoring_actions") or [],
         previous_post_mitigation_rag=previous_review_flow_rags["post_mitigation"],
+        compensating_controls=compensating_controls if compensating_controls else saved_compensating,
+        saved_compensating=saved_compensating,
     )
     chapter_3_body = html.Div(
         className="pd-chapter-body pd-chapter-body-conclusions",
@@ -2039,6 +2078,7 @@ def page_layout(data: dict, initial: dict | None = None) -> list:
         dcc.Store(id=SCENARIO_RANKING_STORE_ID, data={}),
         dcc.Store(id=APPLIED_FILTERS_STORE_ID, data=applied_filters_data),
         dcc.Store(id=CONCLUSIONS_NOTES_STORE_ID, storage_type="session", data=""),
+        dcc.Store(id=COMPENSATING_CONTROLS_STORE_ID, storage_type="session", data=""),
         dcc.Store(id=LGD_REVIEW_FLOW_PENDING_STORE_ID, data={}),
         dcc.Store(id=LGD_REVIEW_FLOW_STATUS_STORE_ID, data=""),
         html.Div(

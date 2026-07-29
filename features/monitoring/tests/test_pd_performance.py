@@ -117,20 +117,21 @@ def test_apply_filters_clears_the_reviewer_signoff_draft(monkeypatch):
     cb.register_callbacks(StubApp())
 
     apply_fn = captured["apply_pd_filters"]
-    applied, notes, pending, save_status = apply_fn(1, "2026Q3", "all", "PD Model A", "CCAR 2026", "intsevere")
+    applied, notes, compensating, pending, save_status = apply_fn(1, "2026Q3", "all", "PD Model A", "CCAR 2026", "intsevere")
     assert applied["monitoring_point"] == "2026Q3"
     assert notes == "", "an Apply click must discard the unsaved sign-off draft"
+    assert compensating == "", "an Apply click must discard the unsaved compensating-controls draft"
     assert pending == {}, "an Apply click must discard staged review-flow RAG picks"
     assert save_status == "", "an Apply click must discard the stale save-status message"
 
     # Apply requires a Model even on a real click -- Segment alone isn't enough.
     assert apply_fn(1, "2026Q3", "Cyclical", "", "CCAR 2026", "intsevere") == (
-        no_update, no_update, no_update, no_update,
+        no_update, no_update, no_update, no_update, no_update,
     )
 
     # Spurious fire (router re-insert, n_clicks=0) must touch no store.
     assert apply_fn(0, "2026Q3", "all", "", "CCAR 2026", "intsevere") == (
-        no_update, no_update, no_update, no_update,
+        no_update, no_update, no_update, no_update, no_update,
     )
 
 
@@ -156,11 +157,12 @@ def test_navigating_to_pd_discards_unsaved_staged_state(monkeypatch):
     cb.register_callbacks(StubApp())
 
     discard_fn = captured["discard_pd_staged_state_on_entry"]
-    # Entering the PD page resets the three staged stores.
-    assert discard_fn("/") == ({}, "", "")
+    # Entering the PD page resets the staged stores (pending picks, sign-off
+    # draft, compensating-controls draft, save-status).
+    assert discard_fn("/") == ({}, "", "", "")
     # Any other page leaves them alone.
-    assert discard_fn("/overview") == (no_update, no_update, no_update)
-    assert discard_fn("/lgd-performance") == (no_update, no_update, no_update)
+    assert discard_fn("/overview") == (no_update, no_update, no_update, no_update)
+    assert discard_fn("/lgd-performance") == (no_update, no_update, no_update, no_update)
 
 
 def test_pd_page_layout_seeds_deep_link_store_from_query_params():
@@ -197,6 +199,7 @@ def test_pd_performance_build_stores():
         "pd-scenario-ranking-store",
         "pd-applied-filters-store",
         "pd-conclusions-notes-store",
+        "pd-compensating-controls-store",
         "pd-review-flow-pending-store",
         "pd-review-flow-status-store",
     }
@@ -240,7 +243,7 @@ def test_pd_main_overview_summarizes_both_chapters_before_the_deep_dive():
     assert "2. Post Subjective Review Analysis" in text
     assert "Calibration Conservatism" in text
     assert "Discriminatory Power" in text
-    assert "Performance PD RAG" in text
+    assert "Performance RAG" in text
     assert "Transition Matrix" in text
     assert "Ranking maintained" in text
     assert "Peak shock impact" in text

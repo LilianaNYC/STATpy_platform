@@ -108,6 +108,12 @@ def load_monitoring_thresholds() -> dict[str, list[dict[str, Any]]]:
         ("ead_thresholds", config.EAD_THRESHOLDS_SHEET_NAME),
         ("loss_thresholds", config.LOSS_THRESHOLDS_SHEET_NAME),
         ("scenario_test_thresholds", "Scenario_Test_Thresholds"),
+        # Chapter-1 RAG-Assignment fallback rules, keyed by
+        # (Model Type, Component, Test), giving each test's behaviour by
+        # default count (< 15 vs >= 15): "Applicable" / "Non-Applicable" /
+        # "Fallback Amber". Loaded dynamically so the rules can change in the
+        # workbook without a code change (see resolve_pd_fallback_rule).
+        ("fallback_amber_rules", "fallback_amber_rules"),
     ):
         try:
             df = pd.read_excel(settings.monitoring_thresholds_file, sheet_name=sheet_name)
@@ -421,6 +427,7 @@ _OPTIONAL_REVIEW_TEXT_COLUMNS = (
     "rag_pre_mitig",
     "rag_post_mitig",
     "reviewer_commentary",
+    "compensating_controls",  # see the matching comment on _PD_TEXT_COLUMNS in this module
     "scenario",  # see the matching comment on _PD_TEXT_COLUMNS in this module
 )
 
@@ -641,6 +648,12 @@ _PD_TEXT_COLUMNS = (
     "rag_pre_mitig",
     "rag_post_mitig",
     "reviewer_commentary",
+    # The reviewer's compensating-controls justification for the Post
+    # Mitigation RAG (the judgement/controls that move Pre-Mitigation ->
+    # Post-Mitigation). Free text, saved/read exactly like reviewer_commentary
+    # (self-healing column, see _update_review_flow_field). PD only for now;
+    # LGD/EAD would add it to their own *_TEXT_COLUMNS when rolled out there.
+    "compensating_controls",
     # Not a reviewer-facing RAG/commentary field -- the Scenario filter value
     # in effect the last time this row's review flow was saved, so Overview's
     # MEV Range can look up the scenario each row was actually reviewed under
@@ -716,6 +729,7 @@ _LGD_TEXT_COLUMNS = (
     "rag_pre_mitig",
     "rag_post_mitig",
     "reviewer_commentary",
+    "compensating_controls",  # see the matching comment on _PD_TEXT_COLUMNS
     "scenario",  # see the matching comment on _PD_TEXT_COLUMNS
 )
 
@@ -724,6 +738,7 @@ _EAD_TEXT_COLUMNS = (
     "rag_pre_mitig",
     "rag_post_mitig",
     "reviewer_commentary",
+    "compensating_controls",  # see the matching comment on _PD_TEXT_COLUMNS
     "scenario",  # see the matching comment on _PD_TEXT_COLUMNS
 )
 

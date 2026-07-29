@@ -213,6 +213,7 @@ def register_callbacks(app) -> None:
     @app.callback(
         Output(layout.PD_REVIEW_FLOW_PENDING_STORE_ID, "data", allow_duplicate=True),
         Output(layout.CONCLUSIONS_NOTES_STORE_ID, "data", allow_duplicate=True),
+        Output(layout.COMPENSATING_CONTROLS_STORE_ID, "data", allow_duplicate=True),
         Output(layout.PD_REVIEW_FLOW_STATUS_STORE_ID, "data", allow_duplicate=True),
         Input(URL_ID, "pathname"),
         prevent_initial_call=True,
@@ -222,8 +223,8 @@ def register_callbacks(app) -> None:
         # the master re-render that this triggers has a live content container to
         # write into rather than firing against a page that has been swapped out.
         if pathname != "/":
-            return no_update, no_update, no_update
-        return {}, "", ""
+            return no_update, no_update, no_update, no_update
+        return {}, "", "", ""
 
     # -----------------------------------------------------------------
     # Reporting Cycle -> Monitoring Point options
@@ -467,6 +468,7 @@ def register_callbacks(app) -> None:
     @app.callback(
         Output(layout.APPLIED_FILTERS_STORE_ID, "data"),
         Output(layout.CONCLUSIONS_NOTES_STORE_ID, "data", allow_duplicate=True),
+        Output(layout.COMPENSATING_CONTROLS_STORE_ID, "data", allow_duplicate=True),
         Output(layout.PD_REVIEW_FLOW_PENDING_STORE_ID, "data", allow_duplicate=True),
         Output(layout.PD_REVIEW_FLOW_STATUS_STORE_ID, "data", allow_duplicate=True),
         Input(layout.APPLY_FILTERS_ID, "n_clicks"),
@@ -481,8 +483,9 @@ def register_callbacks(app) -> None:
         """Snapshot the current top filters so the content renders only on Apply.
 
         Also discards the scope-specific review-flow state: the unsaved
-        reviewer sign-off draft, any staged (not-yet-saved) RAG picks, and the
-        last save-status message. All three describe the scope that was on
+        reviewer sign-off draft, the unsaved compensating-controls draft, any
+        staged (not-yet-saved) RAG picks, and the last save-status message.
+        All of these describe the scope that was on
         screen before the click, so carrying them across an Apply would show
         them against a different model/segment/quarter. Clearing them here
         (same callback as the applied-filters snapshot) guarantees the
@@ -494,14 +497,14 @@ def register_callbacks(app) -> None:
         disabled in that case, but a stale click event is still guarded here).
         """
         if not _n_clicks or not models:
-            return no_update, no_update, no_update, no_update
+            return no_update, no_update, no_update, no_update, no_update
         return {
             "monitoring_point": monitoring_point,
             "segment": segment,
             "models": models,
             "reporting_cycle": reporting_cycle,
             "scenario": scenario,
-        }, "", {}, ""
+        }, "", "", {}, ""
 
     # -----------------------------------------------------------------
     # Master re-render: applied store + per-chart stores -> pd-performance-content
@@ -517,6 +520,7 @@ def register_callbacks(app) -> None:
         Input(layout.PD_REVIEW_FLOW_PENDING_STORE_ID, "data"),
         Input(APP_THEME_ID, "value"),
         State(layout.CONCLUSIONS_NOTES_STORE_ID, "data"),
+        State(layout.COMPENSATING_CONTROLS_STORE_ID, "data"),
         State(layout.PD_REVIEW_FLOW_STATUS_STORE_ID, "data"),
         # Not prevent_initial_call: PD_DEEP_LINK_STORE_ID (see its own comment
         # in ui/views/pd_performance.py) bakes a deep link's scope directly
@@ -528,7 +532,7 @@ def register_callbacks(app) -> None:
     )
     def render_pd_performance_content(
         applied, deep_link_applied, range_store, trend_horizon_store, mev_filter_store, scenario_ranking_store,
-        review_flow_pending_edits, theme_value, conclusions_notes, review_flow_save_status,
+        review_flow_pending_edits, theme_value, conclusions_notes, compensating_controls, review_flow_save_status,
     ):
         # Prefer an explicit Apply click this session over the deep-link
         # snapshot from page load -- once the user applies for real, that
@@ -595,6 +599,7 @@ def register_callbacks(app) -> None:
             scenario_ranking_store or {},
             theme_value=theme_value, reporting_cycle=reporting_cycle, scenario=scenario,
             conclusions_notes=conclusions_notes or "",
+            compensating_controls=compensating_controls or "",
             review_flow_pending_edits=review_flow_pending_edits or {},
             review_flow_save_status=review_flow_save_status or "",
         )
@@ -608,6 +613,17 @@ def register_callbacks(app) -> None:
         prevent_initial_call=True,
     )
     def save_pd_conclusions_notes(value):
+        return value or ""
+
+    # -----------------------------------------------------------------
+    # Compensating-controls textarea -> pd-compensating-controls-store
+    # -----------------------------------------------------------------
+    @app.callback(
+        Output(layout.COMPENSATING_CONTROLS_STORE_ID, "data"),
+        Input(layout.COMPENSATING_CONTROLS_ID, "value"),
+        prevent_initial_call=True,
+    )
+    def save_pd_compensating_controls(value):
         return value or ""
 
     # -----------------------------------------------------------------
@@ -649,9 +665,10 @@ def register_callbacks(app) -> None:
         State(layout.PD_REVIEW_FLOW_PENDING_STORE_ID, "data"),
         State(layout.APPLIED_FILTERS_STORE_ID, "data"),
         State(layout.CONCLUSIONS_NOTES_STORE_ID, "data"),
+        State(layout.COMPENSATING_CONTROLS_STORE_ID, "data"),
         prevent_initial_call=True,
     )
-    def save_pd_review_flow_rag_changes(n_clicks, pending, applied, conclusions_notes):
+    def save_pd_review_flow_rag_changes(n_clicks, pending, applied, conclusions_notes, compensating_controls):
         # Same dynamic-mount quirk as the picker above: the Save button only exists once there's a
         # pending edit or commentary change, so it "just appeared" at least once and could fire
         # without a real click.
@@ -673,6 +690,15 @@ def register_callbacks(app) -> None:
             )
             if ok:
                 saved_fields.append(field)
+
+        saved_compensating = layout.pd_compensating_controls(filter_ctx, monitoring_point)
+        if (compensating_controls or "") != (saved_compensating or ""):
+            ok = data_service.save_pd_review_flow_rag(
+                data, reporting_cycle, model, segment, monitoring_point,
+                layout.COMPENSATING_CONTROLS_COLUMN, compensating_controls or "",
+            )
+            if ok:
+                saved_fields.append("compensating_controls")
 
         saved_commentary = layout.pd_reviewer_commentary(filter_ctx, monitoring_point)
         if (conclusions_notes or "") != (saved_commentary or ""):
@@ -714,17 +740,20 @@ def register_callbacks(app) -> None:
     @app.callback(
         Output(layout.PD_REVIEW_FLOW_SAVE_BAR_ID, "children"),
         Input(layout.CONCLUSIONS_NOTES_ID, "value"),
+        Input(layout.COMPENSATING_CONTROLS_ID, "value"),
         Input(layout.PD_REVIEW_FLOW_PENDING_STORE_ID, "data"),
         State(layout.APPLIED_FILTERS_STORE_ID, "data"),
         State(layout.PD_REVIEW_FLOW_STATUS_STORE_ID, "data"),
         prevent_initial_call=True,
     )
-    def sync_pd_review_flow_save_bar(conclusions_notes, pending, applied, save_status):
+    def sync_pd_review_flow_save_bar(conclusions_notes, compensating_controls, pending, applied, save_status):
         filter_ctx, _reporting_cycle, monitoring_point = _resolve_pd_scope(data, applied)
         review_flow_rags = layout.pd_review_flow_rags(filter_ctx, monitoring_point)
         saved_commentary = layout.pd_reviewer_commentary(filter_ctx, monitoring_point)
+        saved_compensating = layout.pd_compensating_controls(filter_ctx, monitoring_point)
         commentary_changed = (conclusions_notes or "") != (saved_commentary or "")
+        compensating_changed = (compensating_controls or "") != (saved_compensating or "")
         save_bar = layout.build_pd_review_flow_save_bar(
-            pending or {}, review_flow_rags, save_status, commentary_changed,
+            pending or {}, review_flow_rags, save_status, commentary_changed, compensating_changed,
         )
         return [save_bar] if save_bar is not None else []

@@ -94,7 +94,7 @@ layer reuse parts of it:
 - `source_data/portfolio.xlsx` — precomputed metric tabs
   (`PD/LGD/EAD/Loss_Performance_Metrics`), the `Filters` config sheet, and
   `PD_Sensitivity_Projections` (with `MM_P0` / `MM_Pm` margins).
-- `source_data/monitoring_rules.xlsm` — PD / CRR-master-scale /
+- `source_data/monitoring_rules.xlsx` — PD / CRR-master-scale /
   RAG-assignment / LGD / Loss / scenario-test threshold tables.
 - `source_data/dummy_mev_data.xlsx` — the MEV time-series catalog (MEV Range).
 

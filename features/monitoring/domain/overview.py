@@ -235,6 +235,10 @@ def _pd_review_flow_rags(ctx: PdFilterContext, quarter: str) -> dict[str, str]:
         "Pre Mitigation RAG": _text("rag_pre_mitig"),
         "Post Mitigation RAG": _text("rag_post_mitig"),
         "Reviewer Commentary": str(row.get("reviewer_commentary", "") or "").strip(),
+        # The reviewer's compensating-controls justification for the Post
+        # Mitigation RAG (see loader.py's "compensating_controls" column),
+        # surfaced on the Overview escalation card. PD only for now.
+        "Compensating Controls": str(row.get("compensating_controls", "") or "").strip(),
         # The Scenario filter value in effect the last time this row's review
         # flow was saved (see loader.py's "scenario" column) -- empty when
         # this row has never been saved, in which case callers fall back to
@@ -255,6 +259,7 @@ def _review_flow_rags_from_metric_row(metric_row: dict[str, Any] | None) -> dict
         "Pre Mitigation RAG": _text("rag_pre_mitig"),
         "Post Mitigation RAG": _text("rag_post_mitig"),
         "Reviewer Commentary": str(row.get("reviewer_commentary", "") or "").strip(),
+        "Compensating Controls": str(row.get("compensating_controls", "") or "").strip(),
         "Scenario": str(row.get("scenario", "") or "").strip(),
     }
 
@@ -1054,7 +1059,7 @@ def escalation_next_steps(
     ---------------------------------------------------------------------------
     Governance tiering rules -- the authoritative encoding of the business
     monitoring policy. Revise HERE (and the ``monitoring_actions`` playbook
-    sheet in ``monitoring_rules.xlsm``) if the policy changes.
+    sheet in ``monitoring_rules.xlsx``) if the policy changes.
     ---------------------------------------------------------------------------
 
     RAG glossary (business term -> code / portfolio column):
@@ -1071,7 +1076,7 @@ def escalation_next_steps(
       * "Post-Mitigation RAG" (= Post-Overlay)   = ``Post Mitigation RAG``
             (``post_mitigation``). Drives the Post-Mitigation stage.
 
-    The playbook (``monitoring_rules.xlsm`` -> ``monitoring_actions`` sheet,
+    The playbook (``monitoring_rules.xlsx`` -> ``monitoring_actions`` sheet,
     matched per entity by :func:`select_pd_monitoring_actions`) triggers off
     exactly two RAGs, so the TIER is decided by exactly those two, plus the
     persistent-breach protocol:
@@ -1127,6 +1132,12 @@ def escalation_next_steps(
         has_review_flow = any(value in ("Green", "Amber", "Red") for value in review_flow.values())
         commentary = next(
             (text for row in entity_rows if (text := str(row.get("Reviewer Commentary", "") or "").strip())),
+            "",
+        )
+        # The reviewer's compensating-controls note for this entity (PD only
+        # for now) -- surfaced on the escalation card next to the sign-off.
+        compensating_controls = next(
+            (text for row in entity_rows if (text := str(row.get("Compensating Controls", "") or "").strip())),
             "",
         )
         # The scenario MEV Range was actually computed under (see
@@ -1198,6 +1209,7 @@ def escalation_next_steps(
             "Selections": selections,
             "Persistent Breach": persistent_breach,
             "Commentary": commentary,
+            "Compensating Controls": compensating_controls,
             "MEV Range Scenario": mev_range_scenario,
             "Tab Path": MODEL_GROUP_TAB_PATHS.get(group, "/"),
         })

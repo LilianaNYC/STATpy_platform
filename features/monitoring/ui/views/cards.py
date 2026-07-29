@@ -62,6 +62,20 @@ def build_pd_test_card(metric, current_values, previous_values, thresholds, cont
     threshold = next((row for row in thresholds if row.get("metric") == metric), {})
     movement = format_pd_test_change(value, previous_value, fmt, threshold)
 
+    # Chapter-1 RAG-Assignment fallback (low default count, see
+    # resolve_pd_fallback_rule): a "Fallback Amber" test's RAG is forced to Amber
+    # and a "Non-Applicable" test's RAG is N/A. In both cases the underlying
+    # metric is not a valid measurement, so its value (and period-over-period
+    # comparison) are suppressed -- only the RAG is shown -- and a short note
+    # explains why.
+    fallback_status = options.get("fallback_status")
+    fallback_note = options.get("fallback_note")
+    hide_metric = fallback_status in ("fallback_amber", "non_applicable")
+    if fallback_status == "fallback_amber":
+        rag = "Amber"
+    elif fallback_status == "non_applicable":
+        rag = "N/A"
+
     title_row = [html.H4(options.get("card_title") or metric)]
     chip = _info_chip(options.get("tooltip"))
     if chip is not None:
@@ -72,6 +86,7 @@ def build_pd_test_card(metric, current_values, previous_values, thresholds, cont
         heading_left.append(html.Span(options["test_label"]))
     heading_left.append(html.Div(title_row, className="pd-card-title-row"))
 
+    value_display = "—" if hide_metric else format_pd_metric(value, fmt)
     children = [
         html.Div(
             className="pd-test-card-heading",
@@ -80,26 +95,30 @@ def build_pd_test_card(metric, current_values, previous_values, thresholds, cont
                 html.Div(rag, className=f"pd-test-status pd-test-status-{pd_tone_class(rag)}"),
             ],
         ),
-        html.Div(format_pd_metric(value, fmt), className="pd-test-value"),
+        html.Div(value_display, className="pd-test-value"),
     ]
+    if fallback_note:
+        children.append(html.Div(fallback_note, className="pd-test-fallback-note"))
     if not options.get("hide_snapshot"):
         children.append(html.Div(f"Snapshot date: {context['snapshot_quarter']}", className="pd-test-meta"))
     children.extend(_meta_rows(options.get("extra_meta_rows")))
-    children.append(
-        html.Div(
-            className="pd-performance-comparison",
-            children=[
-                html.Div([
-                    html.Span(f"Previous ({context.get('previous_quarter') or 'No prior quarter'})"),
-                    html.Strong(format_pd_metric(previous_value, fmt)),
-                ]),
-                html.Div([
-                    html.Span("Change"),
-                    html.Strong(movement["text"], className=f"pd-change {movement['css']}"),
-                ]),
-            ],
+    # A suppressed metric has no value to compare period-over-period.
+    if not hide_metric:
+        children.append(
+            html.Div(
+                className="pd-performance-comparison",
+                children=[
+                    html.Div([
+                        html.Span(f"Previous ({context.get('previous_quarter') or 'No prior quarter'})"),
+                        html.Strong(format_pd_metric(previous_value, fmt)),
+                    ]),
+                    html.Div([
+                        html.Span("Change"),
+                        html.Strong(movement["text"], className=f"pd-change {movement['css']}"),
+                    ]),
+                ],
+            )
         )
-    )
 
     return html.Article(
         className=f"pd-test-card pd-test-{pd_tone_class(rag)} {options.get('extra_class', '')}".strip(),
@@ -357,12 +376,30 @@ def build_pd_overview_flow_performance(overview):
         className=f"pd-overview-flow-performance pd-overview-flow-performance-{tone}",
         children=[
             html.Span(
-                ["Performance", html.Br(), "PD RAG", _info_chip(performance_pd.get("tooltip"))],
+                ["Performance RAG", _info_chip(performance_pd.get("tooltip"))],
                 className="pd-overview-flow-performance-title",
             ),
             html.Strong([pd_rag_dot(rag), f" {rag}"]),
         ],
     )
+
+
+def _flow_note_options(note, href):
+    """Flow-node options carrying an optional fallback note. The metric value is
+    suppressed to ``None`` upstream when a note is present, so the node shows only
+    the RAG-toned ``—`` plus this note explaining the fallback."""
+    options = {"href": href}
+    if note:
+        options["note"] = note
+    return options
+
+
+def _notching_flow_options(source, href):
+    """Flow-node options for a Notching Test node, flagging a not-calculated
+    (Non-Applicable) metric. The value/RAG are already suppressed to
+    ``None``/``"N/A"`` upstream so the node renders no number."""
+    note = source.get("notching_flow_note") or "Not calculated" if source.get("notching_non_applicable") else None
+    return _flow_note_options(note, href)
 
 
 def build_pd_overview_heatmap(overview):
@@ -384,7 +421,7 @@ def build_pd_overview_heatmap(overview):
         },
     )
     discrimination_summary = build_pd_overview_flow_metric(
-        "Discriminatory Power RAG", discrimination.get("overall_rag"), "rag", discrimination.get("overall_rag"),
+        "Discriminatory Power RAG (ECL PIT)", discrimination.get("overall_rag"), "rag", discrimination.get("overall_rag"),
         options={
             "is_rag": True,
             "href": "#pd-discrimination-rag",
@@ -411,14 +448,14 @@ def build_pd_overview_heatmap(overview):
         html.Div(build_pd_overview_flow_stage("2.", "Tests"), className="pd-flow-stage-tests"),
         html.Div(build_pd_overview_flow_stage("3.", "RAG Assignment"), className="pd-flow-stage-assignment"),
         html.Div(build_pd_overview_flow_stage("4.", "Monitoring Dimension RAG"), className="pd-flow-stage-dimension"),
-        html.Div(build_pd_overview_flow_stage("5.", "Performance", "PD RAG"), className="pd-flow-stage-performance"),
+        html.Div(build_pd_overview_flow_stage("5.", "Performance RAG"), className="pd-flow-stage-performance"),
 
         html.Div(build_pd_overview_flow_input("ECL PIT PD", {"extra_class": "pd-overview-flow-input-ecl"}), className="pd-flow-input-ecl"),
         html.Div(build_pd_overview_flow_input("Balance Sheet PD", {"extra_class": "pd-overview-flow-input-balance"}), className="pd-flow-input-balance"),
 
         build_pd_overview_flow_test_stack(
             [
-                build_pd_overview_flow_metric("Notching Test 1 year", one_year.get("notching_value"), "count", one_year.get("notching_rag"), {"href": "#pd-calibration-rag"}),
+                build_pd_overview_flow_metric("Notching Test 1 year", one_year.get("notching_value"), "count", one_year.get("notching_rag"), _notching_flow_options(one_year, "#pd-calibration-rag")),
                 build_pd_overview_flow_metric("Confidence Interval 1 year", one_year.get("confidence_value"), "percent", one_year.get("confidence_rag"), {"href": "#pd-calibration-rag"}),
             ],
             {"incoming": True, "extra_class": "pd-flow-tests-calibration-1"},
@@ -438,7 +475,7 @@ def build_pd_overview_heatmap(overview):
 
         build_pd_overview_flow_test_stack(
             [
-                build_pd_overview_flow_metric("Notching Test 2 year", two_year.get("notching_value"), "count", two_year.get("notching_rag"), {"href": "#pd-calibration-rag"}),
+                build_pd_overview_flow_metric("Notching Test 2 year", two_year.get("notching_value"), "count", two_year.get("notching_rag"), _notching_flow_options(two_year, "#pd-calibration-rag")),
                 build_pd_overview_flow_metric("Confidence Interval 2 year", two_year.get("confidence_value"), "percent", two_year.get("confidence_rag"), {"href": "#pd-calibration-rag"}),
             ],
             {"incoming": True, "extra_class": "pd-flow-tests-calibration-2"},
@@ -458,8 +495,8 @@ def build_pd_overview_heatmap(overview):
 
         build_pd_overview_flow_test_stack(
             [
-                build_pd_overview_flow_metric("Accuracy Ratio 1 year", discrimination.get("accuracy_value"), "ratio", discrimination.get("accuracy_rag"), {"href": "#pd-discrimination-rag"}),
-                build_pd_overview_flow_metric("Delta Accuracy Ratio 1 year", discrimination.get("delta_value"), "ratio", discrimination.get("delta_rag"), {"href": "#pd-discrimination-rag"}),
+                build_pd_overview_flow_metric("Accuracy Ratio 1 year", discrimination.get("accuracy_value"), "ratio", discrimination.get("accuracy_rag"), _flow_note_options(discrimination.get("accuracy_flow_note"), "#pd-discrimination-rag")),
+                build_pd_overview_flow_metric("Delta Accuracy Ratio 1 year", discrimination.get("delta_value"), "ratio", discrimination.get("delta_rag"), _flow_note_options(discrimination.get("delta_flow_note"), "#pd-discrimination-rag")),
             ],
             {"incoming": True, "extra_class": "pd-flow-tests-discrimination"},
         ),
@@ -468,7 +505,7 @@ def build_pd_overview_heatmap(overview):
 
         build_pd_overview_flow_test_stack(
             [
-                build_pd_overview_flow_metric("Notching Test 1 year", balance_sheet.get("notching_value"), "count", balance_sheet.get("notching_rag"), {"href": "#pd-balance-sheet-calibration"}),
+                build_pd_overview_flow_metric("Notching Test 1 year", balance_sheet.get("notching_value"), "count", balance_sheet.get("notching_rag"), _notching_flow_options(balance_sheet, "#pd-balance-sheet-calibration")),
                 build_pd_overview_flow_metric("Confidence Interval 1 year", balance_sheet.get("confidence_value"), "percent", balance_sheet.get("confidence_rag"), {"href": "#pd-balance-sheet-calibration"}),
             ],
             {"incoming": True, "extra_class": "pd-flow-tests-balance"},

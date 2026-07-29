@@ -82,10 +82,11 @@ from .....shared.domain.calculations import (
     build_pd_discrimination_rag_trend,
     build_pd_overview_performance_rag_tooltip,
     build_pd_performance_trend_for_horizon,
-    calculate_pd_calibration_assignment_rag,
     calculate_pd_calibration_conservatism_details,
+    calibration_assignment_rag_with_fallback,
     calculate_pd_default_count_for_horizon,
     calculate_pd_discrimination_section_rag,
+    resolve_pd_fallback_rule,
     calculate_pd_ead_summaries,
     calculate_pd_metric_rag,
     calculate_pd_notching_components,
@@ -96,7 +97,6 @@ from .....shared.domain.calculations import (
     calculate_pd_rag_metrics_for_horizon,
     filter_pd_performance_observations,
     filter_pd_performance_observations_for_horizon,
-    fmt_n,
     get_pd_crr_master_scale,
     get_pd_go_live_quarter,
     get_pd_performance_context,
@@ -135,6 +135,8 @@ SCENARIO_RANKING_STORE_ID = "pd-scenario-ranking-store"
 SCENARIO_RANKING_FILTER_ID = "pd-scenario-ranking-filter"
 CONCLUSIONS_NOTES_ID = "pd-conclusions-notes-input"
 CONCLUSIONS_NOTES_STORE_ID = "pd-conclusions-notes-store"
+COMPENSATING_CONTROLS_ID = "pd-compensating-controls-input"
+COMPENSATING_CONTROLS_STORE_ID = "pd-compensating-controls-store"
 PD_REVIEW_FLOW_OPTION_ID = "pd-review-flow-option"
 PD_REVIEW_FLOW_PENDING_STORE_ID = "pd-review-flow-pending-store"
 PD_REVIEW_FLOW_STATUS_STORE_ID = "pd-review-flow-status-store"
@@ -155,6 +157,9 @@ PD_REVIEW_FLOW_COLUMNS = {
 # The reviewer sign-off commentary lives in the same portfolio-file mechanism (self-healing column,
 # written via the same generic write path) but isn't a RAG, so it's kept out of PD_REVIEW_FLOW_COLUMNS.
 REVIEWER_COMMENTARY_COLUMN = "reviewer_commentary"
+# The reviewer's compensating-controls justification for the Post Mitigation RAG -- same free-text,
+# same self-healing portfolio-file mechanism as the sign-off commentary above.
+COMPENSATING_CONTROLS_COLUMN = "compensating_controls"
 
 # Maps each per-panel trend-horizon control to the shared store group it
 # reads/writes. Ports the JS PD_CALIBRATION_TREND_HORIZON /
@@ -225,6 +230,16 @@ def _safe_text(value, fallback: str = "") -> str:
         return fallback
     text = str(value).strip()
     return text or fallback
+
+
+def _fallback_options(fallback_rules, component: str, test: str, default_count) -> dict:
+    """``build_pd_test_card`` options for a Chapter-1 test's fallback rule (empty
+    when the test is Applicable). Driven by the dynamically-loaded rules -- see
+    ``resolve_pd_fallback_rule``."""
+    status, note = resolve_pd_fallback_rule(fallback_rules, component, test, default_count)
+    if status == "applicable":
+        return {}
+    return {"fallback_status": status, "fallback_note": note}
 
 
 def _psi_rule_label(rule: str | None) -> str:
@@ -1203,7 +1218,7 @@ def _build_pd_chapter_1_diagram(chapter_1_rag: str, summaries: list[dict], chapt
     rows = []
     for index, (name, label, href, extra_class) in enumerate([
         ("Calibration Conservatism", "Calibration Conservatism RAG (ECL PIT)", "#pd-calibration-rag", "overview-chapter-diagram-node-primary"),
-        ("Discriminatory Power", "Discriminatory Power RAG", "#pd-discrimination-rag", ""),
+        ("Discriminatory Power", "Discriminatory Power RAG (ECL PIT)", "#pd-discrimination-rag", ""),
         ("Balance Sheet Calibration", "Calibration Conservatism RAG (Balance Sheet)", "#pd-balance-sheet-calibration", ""),
     ], start=1):
         summary = by_name.get(name, {"rag": "N/A"})
@@ -1218,7 +1233,7 @@ def _build_pd_chapter_1_diagram(chapter_1_rag: str, summaries: list[dict], chapt
             className=f"overview-chapter-diagram-output overview-chapter-diagram-output-{tone}",
             children=[
                 html.Span(
-                    ["Performance", html.Br(), "PD RAG", _pd_overview_info_chip(chapter_1_tooltip)],
+                    ["Performance RAG", _pd_overview_info_chip(chapter_1_tooltip)],
                     className="overview-chapter-diagram-output-label",
                 ),
                 html.Span([pd_rag_dot(chapter_1_rag), html.Strong(chapter_1_rag)], className="overview-chapter-diagram-output-value"),
@@ -2115,6 +2130,17 @@ def pd_reviewer_commentary(ctx: PdFilterContext, quarter: str) -> str:
     return str(row.get(REVIEWER_COMMENTARY_COLUMN, "") or "").strip()
 
 
+def pd_compensating_controls(ctx: PdFilterContext, quarter: str) -> str:
+    """The compensating-controls note saved for this scope, or "" if none has been saved yet."""
+    row = (
+        precomputed_row(ctx, quarter, "1y")
+        or precomputed_row(ctx, quarter, "2y")
+        or precomputed_row(ctx, quarter, "nco_1y")
+        or {}
+    )
+    return str(row.get(COMPENSATING_CONTROLS_COLUMN, "") or "").strip()
+
+
 def _build_pd_rag_lifecycle_metric_list(chapter_2_summaries: list[dict]) -> html.Div:
     """Every Chapter 2 finding with its own RAG -- no single aggregated dot.
 
@@ -2229,6 +2255,7 @@ def build_pd_review_flow_save_bar(
     current_values: dict,
     save_status: str | None,
     commentary_changed: bool = False,
+    compensating_changed: bool = False,
 ) -> html.Div | None:
     """Diff summary + Save button for staged RAG edits and/or reviewer commentary, plus the last save status."""
     changed = {
@@ -2236,7 +2263,7 @@ def build_pd_review_flow_save_bar(
         if value in ("Green", "Amber", "Red") and value != current_values.get(field)
     }
     children = []
-    if changed or commentary_changed:
+    if changed or commentary_changed or compensating_changed:
         items = [
             html.Li([
                 html.Strong(PD_REVIEW_FLOW_FIELD_LABELS.get(field, field)),
@@ -2244,6 +2271,8 @@ def build_pd_review_flow_save_bar(
             ])
             for field, value in changed.items()
         ]
+        if compensating_changed:
+            items.append(html.Li([html.Strong("Compensating controls"), ": will be updated"]))
         if commentary_changed:
             items.append(html.Li([html.Strong("Reviewer sign-off commentary"), ": will be updated"]))
         children.extend([
@@ -2470,7 +2499,7 @@ def _build_pd_required_actions_panel(
                 children=[_build_pd_action_card(selection, pending_fields) for selection in selections],
             ),
             html.Div(
-                "Source: monitoring_rules.xlsm · monitoring_actions. Each action keys off the review-flow RAG named in "
+                "Source: monitoring_rules.xlsx · monitoring_actions. Each action keys off the review-flow RAG named in "
                 "its Trigger column; two consecutive Red Post Mitigation quarters escalate to the persistent-breach "
                 "protocol.",
                 className="pd-test-footnote",
@@ -2490,6 +2519,8 @@ def _build_pd_conclusions_verdict_section(
     saved_commentary: str = "",
     monitoring_actions: list[dict] | None = None,
     previous_post_mitigation_rag: str = "",
+    compensating_controls: str | None = None,
+    saved_compensating: str = "",
 ) -> html.Section:
     lifecycle_diagram = _build_pd_rag_lifecycle_diagram(
         chapter_1_rag, chapter_2_summaries,
@@ -2508,21 +2539,44 @@ def _build_pd_conclusions_verdict_section(
         monitoring_actions or [], effective_rags, previous_post_mitigation_rag, pending_fields,
     )
     commentary_changed = (conclusions_notes or "") != (saved_commentary or "")
+    compensating_changed = (compensating_controls or "") != (saved_compensating or "")
     save_bar = build_pd_review_flow_save_bar(
-        pending_edits or {}, review_flow_rags, review_flow_save_status, commentary_changed,
+        pending_edits or {}, review_flow_rags, review_flow_save_status, commentary_changed, compensating_changed,
     )
 
     reviewer_signoff = _build_pd_collapsible_card(
         "pd-conclusions-reviewer",
         "Reviewer sign-off",
-        "Record the reviewer's conclusions, caveats, or rationale for the Post Mitigation RAG shown above.",
+        "Record the compensating controls relied on and the reviewer's conclusions for the Post Mitigation RAG shown above.",
         [
             _build_pd_conclusions_signoff_chip(review_flow_rags["post_mitigation"]),
-            dcc.Textarea(
-                id=CONCLUSIONS_NOTES_ID,
-                value=conclusions_notes or "",
-                placeholder="Record conclusions, caveats, or a sign-off note for this monitoring cycle...",
-                className="pd-conclusions-textarea",
+            # Compensating controls -- the reviewer's justification for the Post
+            # Mitigation (post-overlay) RAG: the controls/mitigations the residual
+            # risk is judged against (see the monitoring playbook's Post-Mitigation
+            # actions, which prompt for exactly this).
+            html.Div(
+                className="pd-conclusions-field",
+                children=[
+                    html.Label("Compensating controls", htmlFor=COMPENSATING_CONTROLS_ID, className="pd-conclusions-field-label"),
+                    dcc.Textarea(
+                        id=COMPENSATING_CONTROLS_ID,
+                        value=compensating_controls or "",
+                        placeholder="Describe the compensating / mitigating controls relied on for the Post Mitigation RAG...",
+                        className="pd-conclusions-textarea",
+                    ),
+                ],
+            ),
+            html.Div(
+                className="pd-conclusions-field",
+                children=[
+                    html.Label("Reviewer sign-off note", htmlFor=CONCLUSIONS_NOTES_ID, className="pd-conclusions-field-label"),
+                    dcc.Textarea(
+                        id=CONCLUSIONS_NOTES_ID,
+                        value=conclusions_notes or "",
+                        placeholder="Record conclusions, caveats, or a sign-off note for this monitoring cycle...",
+                        className="pd-conclusions-textarea",
+                    ),
+                ],
             ),
             html.Div(
                 "Saved to portfolio.xlsx via the Save button above once edited.",
@@ -2570,6 +2624,7 @@ def render_pd_performance_content(
     reporting_cycle: str,
     scenario: str,
     conclusions_notes: str | None = None,
+    compensating_controls: str | None = None,
     review_flow_pending_edits: dict | None = None,
     review_flow_save_status: str | None = None,
 ) -> list:
@@ -2579,6 +2634,9 @@ def render_pd_performance_content(
     monitoring_thresholds = data["monitoring_thresholds"]
     performance_horizons = data["performance_horizons"]
     thresholds = get_pd_thresholds(monitoring_thresholds)
+    # Chapter-1 RAG-Assignment fallback rules (low default count), loaded
+    # dynamically from the workbook -- see resolve_pd_fallback_rule.
+    fallback_rules = monitoring_thresholds.get("fallback_amber_rules") or []
     crr_scale = get_pd_crr_master_scale(monitoring_thresholds)
     # Which reporting cycle each quarter in ctx.quarters actually came from --
     # trend charts can now chain in history from a prior same-family cycle
@@ -2642,11 +2700,19 @@ def render_pd_performance_content(
         filter_pd_performance_observations_for_horizon(observations, balance_sheet_context["previous_quarter"], "nco_1y", ctx), crr_scale,
     )
 
-    balance_sheet_assignment_rag = calculate_pd_calibration_assignment_rag(
+    balance_sheet_default_count = calculate_pd_default_count_for_horizon(observations, balance_sheet_context["snapshot_quarter"], "nco_1y", ctx)
+    previous_balance_sheet_default_count = calculate_pd_default_count_for_horizon(observations, balance_sheet_context["previous_quarter"], "nco_1y", ctx)
+    balance_sheet_notching_fallback = _fallback_options(fallback_rules, "Balance Sheet PD", "Notching Test 1 year", balance_sheet_default_count)
+
+    balance_sheet_assignment_rag = calibration_assignment_rag_with_fallback(
         balance_sheet_values["Confidence Interval Test"], balance_sheet_notching["signed_difference"], monitoring_thresholds,
+        fallback_rules=fallback_rules, component="Balance Sheet PD",
+        notching_test="Notching Test 1 year", default_count=balance_sheet_default_count,
     )
-    previous_balance_sheet_assignment_rag = calculate_pd_calibration_assignment_rag(
+    previous_balance_sheet_assignment_rag = calibration_assignment_rag_with_fallback(
         previous_balance_sheet_values["Confidence Interval Test"], previous_balance_sheet_notching["signed_difference"], monitoring_thresholds,
+        fallback_rules=fallback_rules, component="Balance Sheet PD",
+        notching_test="Notching Test 1 year", default_count=previous_balance_sheet_default_count,
     )
 
     if balance_sheet_assignment_rag == "N/A":
@@ -2663,8 +2729,11 @@ def render_pd_performance_content(
     else:
         previous_balance_sheet_rag = previous_balance_sheet_assignment_rag
 
+    balance_sheet_notching_na = balance_sheet_notching_fallback.get("fallback_status") == "non_applicable"
     balance_sheet_confidence_rag = calculate_pd_metric_rag(thresholds, "Confidence Interval Test", balance_sheet_values["Confidence Interval Test"])
-    balance_sheet_notching_rag = calculate_pd_metric_rag(thresholds, "Notching Test", balance_sheet_values["Notching Test"])
+    # Not calculated -> no notching value/RAG to display anywhere.
+    balance_sheet_notching_rag = "N/A" if balance_sheet_notching_na else calculate_pd_metric_rag(thresholds, "Notching Test", balance_sheet_values["Notching Test"])
+    balance_sheet_notching_display_value = None if balance_sheet_notching_na else balance_sheet_values["Notching Test"]
     balance_sheet_assignment_tooltip = build_pd_calibration_assignment_tooltip(
         "Balance Sheet 1 year",
         balance_sheet_values["Confidence Interval Test"],
@@ -2689,8 +2758,8 @@ def render_pd_performance_content(
     current_monitoring_ead = calculate_pd_ead_summaries(observations, cq, ctx)
     previous_monitoring_ead = calculate_pd_ead_summaries(observations, pq, ctx)
 
-    previous_calibration_assignment_details = calculate_pd_calibration_conservatism_details(observations, rating_observations, pq, ctx, crr_scale, monitoring_thresholds)
-    calibration_assignment_details = calculate_pd_calibration_conservatism_details(observations, rating_observations, cq, ctx, crr_scale, monitoring_thresholds)
+    previous_calibration_assignment_details = calculate_pd_calibration_conservatism_details(observations, rating_observations, pq, ctx, crr_scale, monitoring_thresholds, fallback_rules)
+    calibration_assignment_details = calculate_pd_calibration_conservatism_details(observations, rating_observations, cq, ctx, crr_scale, monitoring_thresholds, fallback_rules)
 
     calibration_assignment_rag = calibration_assignment_details["rag"]
     calibration_rag = group_rag("calibration") if calibration_assignment_rag == "N/A" else calibration_assignment_rag
@@ -2713,6 +2782,22 @@ def render_pd_performance_content(
     )
     accuracy_ratio_rag = calculate_pd_metric_rag(thresholds, "Accuracy Ratio", current_rag_values["Accuracy Ratio"])
     delta_accuracy_ratio_rag = calculate_pd_metric_rag(thresholds, "Delta Accuracy Ratio", current_rag_values["Delta Accuracy Ratio"])
+
+    # Discrimination-test fallbacks (Fallback Amber when < 15 defaults): forced to
+    # Amber with the metric value suppressed. Resolved once and reused by both the
+    # test cards and the at-a-glance flow nodes.
+    accuracy_fallback = _fallback_options(fallback_rules, "ECL PIT PD", "Accuracy Ratio 1 year", discrimination_default_count)
+    delta_fallback = _fallback_options(fallback_rules, "ECL PIT PD", "Delta Accuracy Ratio 1 year", discrimination_default_count)
+    accuracy_hide = accuracy_fallback.get("fallback_status") in ("fallback_amber", "non_applicable")
+    delta_hide = delta_fallback.get("fallback_status") in ("fallback_amber", "non_applicable")
+    if accuracy_fallback.get("fallback_status") == "fallback_amber":
+        accuracy_ratio_rag = "Amber"
+    elif accuracy_fallback.get("fallback_status") == "non_applicable":
+        accuracy_ratio_rag = "N/A"
+    if delta_fallback.get("fallback_status") == "fallback_amber":
+        delta_accuracy_ratio_rag = "Amber"
+    elif delta_fallback.get("fallback_status") == "non_applicable":
+        delta_accuracy_ratio_rag = "N/A"
 
     # -- 1.2 calibration horizon cards (summary card + 1y/2y EAD/RAG/test cards) --
     calibration_horizon_cards = [
@@ -2744,8 +2829,21 @@ def render_pd_performance_content(
         previous_horizon_notching = precomputed_notching_components(ctx, horizon_context["previous_quarter"], horizon_key, crr_scale) or calculate_pd_notching_components(
             filter_pd_performance_observations_for_horizon(observations, horizon_context["previous_quarter"], horizon_key, ctx), crr_scale,
         )
-        horizon_assignment_rag = calculate_pd_calibration_assignment_rag(horizon_values["Confidence Interval Test"], horizon_notching["signed_difference"], monitoring_thresholds)
-        previous_horizon_assignment_rag = calculate_pd_calibration_assignment_rag(previous_horizon_values["Confidence Interval Test"], previous_horizon_notching["signed_difference"], monitoring_thresholds)
+        horizon_default_count = calculate_pd_default_count_for_horizon(observations, horizon_context["snapshot_quarter"], horizon_key, ctx)
+        previous_horizon_default_count = calculate_pd_default_count_for_horizon(observations, horizon_context["previous_quarter"], horizon_key, ctx)
+        horizon_notching_test_name = f"Notching Test {suffix}"
+        horizon_notching_fallback = _fallback_options(fallback_rules, "ECL PIT PD", horizon_notching_test_name, horizon_default_count)
+        horizon_notching_na = horizon_notching_fallback.get("fallback_status") == "non_applicable"
+        horizon_assignment_rag = calibration_assignment_rag_with_fallback(
+            horizon_values["Confidence Interval Test"], horizon_notching["signed_difference"], monitoring_thresholds,
+            fallback_rules=fallback_rules, component="ECL PIT PD",
+            notching_test=horizon_notching_test_name, default_count=horizon_default_count,
+        )
+        previous_horizon_assignment_rag = calibration_assignment_rag_with_fallback(
+            previous_horizon_values["Confidence Interval Test"], previous_horizon_notching["signed_difference"], monitoring_thresholds,
+            fallback_rules=fallback_rules, component="ECL PIT PD",
+            notching_test=horizon_notching_test_name, default_count=previous_horizon_default_count,
+        )
 
         if horizon_assignment_rag == "N/A":
             horizon_calibration_rag = get_worst_pd_rag([
@@ -2762,7 +2860,9 @@ def render_pd_performance_content(
             previous_horizon_calibration_rag = previous_horizon_assignment_rag
 
         horizon_confidence_rag = calculate_pd_metric_rag(thresholds, "Confidence Interval Test", horizon_values["Confidence Interval Test"])
-        horizon_notching_rag = calculate_pd_metric_rag(thresholds, "Notching Test", horizon_values["Notching Test"])
+        # Not calculated -> no notching value/RAG to display anywhere.
+        horizon_notching_rag = "N/A" if horizon_notching_na else calculate_pd_metric_rag(thresholds, "Notching Test", horizon_values["Notching Test"])
+        horizon_notching_display_value = None if horizon_notching_na else horizon_values["Notching Test"]
         horizon_assignment_tooltip = build_pd_calibration_assignment_tooltip(
             suffix,
             horizon_values["Confidence Interval Test"],
@@ -2777,8 +2877,10 @@ def render_pd_performance_content(
         previous_horizon_ead = previous_monitoring_ead.get(horizon_key) or {"ead": None, "share": None, "combined_ead": None}
 
         calibration_overview[horizon_key] = {
-            "notching_value": horizon_values["Notching Test"],
+            "notching_value": horizon_notching_display_value,
             "notching_rag": horizon_notching_rag,
+            "notching_non_applicable": horizon_notching_na,
+            "notching_flow_note": horizon_notching_fallback.get("fallback_note"),
             "confidence_value": horizon_values["Confidence Interval Test"],
             "confidence_rag": horizon_confidence_rag,
             "assignment_rag": horizon_calibration_rag,
@@ -2800,7 +2902,7 @@ def render_pd_performance_content(
             ),
             build_pd_test_card(
                 "Notching Test", horizon_values, previous_horizon_values, thresholds, horizon_context,
-                options={"card_title": f"Notching Test {suffix}", "format": "count"},
+                options={"card_title": f"Notching Test {suffix}", "format": "count", **horizon_notching_fallback},
             ),
             build_pd_test_card(
                 "Confidence Interval Test", horizon_values, previous_horizon_values, thresholds, horizon_context,
@@ -2826,16 +2928,21 @@ def render_pd_performance_content(
         "discrimination": {
             "overall_rag": discrimination_rag,
             "tooltip": discrimination_rag_tooltip,
-            "accuracy_value": current_rag_values["Accuracy Ratio"],
+            # Value suppressed when the test falls back (only the RAG is shown).
+            "accuracy_value": None if accuracy_hide else current_rag_values["Accuracy Ratio"],
             "accuracy_rag": accuracy_ratio_rag,
-            "delta_value": current_rag_values["Delta Accuracy Ratio"],
+            "accuracy_flow_note": accuracy_fallback.get("fallback_note") if accuracy_hide else None,
+            "delta_value": None if delta_hide else current_rag_values["Delta Accuracy Ratio"],
             "delta_rag": delta_accuracy_ratio_rag,
+            "delta_flow_note": delta_fallback.get("fallback_note") if delta_hide else None,
         },
         "balance_sheet": {
             "overall_rag": balance_sheet_rag,
             "assignment_tooltip": balance_sheet_assignment_tooltip,
-            "notching_value": balance_sheet_values["Notching Test"],
+            "notching_value": balance_sheet_notching_display_value,
             "notching_rag": balance_sheet_notching_rag,
+            "notching_non_applicable": balance_sheet_notching_na,
+            "notching_flow_note": balance_sheet_notching_fallback.get("fallback_note"),
             "confidence_value": balance_sheet_values["Confidence Interval Test"],
             "confidence_rag": balance_sheet_confidence_rag,
         },
@@ -2868,7 +2975,7 @@ def render_pd_performance_content(
     calibration_performance_trend = _tag_reporting_cycle(build_pd_performance_trend_for_horizon(
         observations, rating_observations, calibration_trend_context["snapshot_quarter"], calibration_trend_horizon_key, ctx, crr_scale,
     ))
-    calibration_rag_trend = _tag_reporting_cycle(build_pd_calibration_rag_trend(observations, rating_observations, cq, ctx, crr_scale, monitoring_thresholds))
+    calibration_rag_trend = _tag_reporting_cycle(build_pd_calibration_rag_trend(observations, rating_observations, cq, ctx, crr_scale, monitoring_thresholds, fallback_rules))
     calibration_section_periods = calibration_trend_periods or get_pd_range_periods(ctx.quarters, cq)
 
     section_1_2 = html.Section(
@@ -2988,7 +3095,7 @@ def render_pd_performance_content(
     # -----------------------------------------------------------------
     # 1.2 ECL PIT PD - Discriminatory Power
     # -----------------------------------------------------------------
-    discrimination_rag_trend = _tag_reporting_cycle(build_pd_discrimination_rag_trend(observations, rating_observations, cq, ctx, crr_scale, monitoring_thresholds))
+    discrimination_rag_trend = _tag_reporting_cycle(build_pd_discrimination_rag_trend(observations, rating_observations, cq, ctx, crr_scale, monitoring_thresholds, fallback_rules))
     go_live_performance_trend = _tag_reporting_cycle(build_pd_performance_trend_for_horizon(
         observations, rating_observations, go_live_context["snapshot_quarter"], go_live_horizon_key, ctx, crr_scale,
     ))
@@ -3010,20 +3117,23 @@ def render_pd_performance_content(
                 className="pd-test-grid pd-discrimination-test-grid",
                 children=[
                     build_pd_section_rag_card(
-                        "Discriminatory Power RAG", discrimination_rag, previous_discrimination_rag, context,
+                        "Discriminatory Power RAG (ECL PIT)", discrimination_rag, previous_discrimination_rag, context,
                         options={
-                            "card_title": "Discriminatory Power RAG",
+                            "card_title": "Discriminatory Power RAG (ECL PIT)",
                             "tooltip": discrimination_rag_tooltip,
                             "hide_status": True,
                             "meta_label": "Monitoring point",
                             "meta_value": context["monitoring_point"],
-                            "extra_meta_rows": [{"label": "Default 1 year count", "value": fmt_n(discrimination_default_count)}],
                             "hide_comparison": True,
                         },
                     ),
                     build_pd_test_card(
                         "Accuracy Ratio", current_rag_values, previous_rag_values, thresholds, context,
-                        options={"test_label": "Accuracy Ratio 1 year", "format": "ratio"},
+                        options={
+                            "test_label": "Accuracy Ratio 1 year",
+                            "format": "ratio",
+                            **accuracy_fallback,
+                        },
                     ),
                     build_pd_test_card(
                         "Delta Accuracy Ratio", current_rag_values, previous_rag_values, thresholds, context,
@@ -3036,6 +3146,7 @@ def render_pd_performance_content(
                                 if current_rag_values.get("Go Live Quarter")
                                 else "No go-live quarter between 2019Q2 and 2019Q4 is available for the selected filters."
                             ),
+                            **delta_fallback,
                         },
                     ),
                 ],
@@ -3054,8 +3165,8 @@ def render_pd_performance_content(
                 className="section-card pd-discrimination-trend-section",
                 children=[
                     build_chart_header(
-                        "Discriminatory Power RAG Trend",
-                        "Quarter-by-quarter Discriminatory Power RAG shown as a simple color-coded dot timeline.",
+                        "Discriminatory Power RAG (ECL PIT) Trend",
+                        "Quarter-by-quarter Discriminatory Power RAG (ECL PIT) shown as a simple color-coded dot timeline.",
                     ),
                     _chart_surface(
                         "pd-discrimination-rag-trend-chart",
@@ -3101,7 +3212,7 @@ def render_pd_performance_content(
         observations, rating_observations, balance_sheet_context["snapshot_quarter"], "nco_1y", ctx, crr_scale,
     ))
     balance_sheet_rag_trend = _tag_reporting_cycle(build_pd_balance_sheet_calibration_rag_trend(
-        observations, rating_observations, balance_sheet_context["snapshot_quarter"], ctx, crr_scale, monitoring_thresholds,
+        observations, rating_observations, balance_sheet_context["snapshot_quarter"], ctx, crr_scale, monitoring_thresholds, fallback_rules,
     ))
     balance_sheet_section_periods = balance_sheet_periods
 
@@ -3127,7 +3238,7 @@ def render_pd_performance_content(
                     ),
                     build_pd_test_card(
                         "Notching Test", balance_sheet_values, previous_balance_sheet_values, thresholds, balance_sheet_context,
-                        options={"card_title": "Notching Test 1 year", "format": "count"},
+                        options={"card_title": "Notching Test 1 year", "format": "count", **balance_sheet_notching_fallback},
                     ),
                     build_pd_test_card(
                         "Confidence Interval Test", balance_sheet_values, previous_balance_sheet_values, thresholds, balance_sheet_context,
@@ -3382,6 +3493,7 @@ def render_pd_performance_content(
     )
     review_flow_rags = pd_review_flow_rags(ctx, cq)
     saved_commentary = pd_reviewer_commentary(ctx, cq)
+    saved_compensating = pd_compensating_controls(ctx, cq)
     previous_review_flow_rags = pd_review_flow_rags(ctx, get_previous_pd_quarter(cq))
     section_3_1 = _build_pd_conclusions_verdict_section(
         performance_pd_overview["rag"], post_review_summaries, review_flow_rags,
@@ -3391,6 +3503,8 @@ def render_pd_performance_content(
         saved_commentary=saved_commentary,
         monitoring_actions=data.get("monitoring_actions") or [],
         previous_post_mitigation_rag=previous_review_flow_rags["post_mitigation"],
+        compensating_controls=compensating_controls if compensating_controls else saved_compensating,
+        saved_compensating=saved_compensating,
     )
     chapter_3_body = html.Div(
         className="pd-chapter-body pd-chapter-body-conclusions",
@@ -3618,6 +3732,7 @@ def build_stores() -> list:
         dcc.Store(id=SCENARIO_RANKING_STORE_ID, data={}),
         dcc.Store(id=APPLIED_FILTERS_STORE_ID),
         dcc.Store(id=CONCLUSIONS_NOTES_STORE_ID, data=""),
+        dcc.Store(id=COMPENSATING_CONTROLS_STORE_ID, data=""),
         dcc.Store(id=PD_REVIEW_FLOW_PENDING_STORE_ID, data={}),
         dcc.Store(id=PD_REVIEW_FLOW_STATUS_STORE_ID, data=""),
     ]

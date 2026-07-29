@@ -934,7 +934,13 @@ def calculate_pd_default_count_for_horizon(performance_observations, quarter, ho
         return 0
     precomp = precomputed_row(ctx, quarter, horizon_key)
     if precomp is not None:
-        count = precomp.get("default_count_1y")
+        # ``total_defaults`` is the authoritative per-horizon default count from
+        # the ``PD_Performance_Metrics`` sheet (the loader only synthesises the
+        # legacy ``default_count_1y`` for the 1y row, so non-1y horizons -- e.g.
+        # Balance Sheet ``nco_1y`` -- must read ``total_defaults`` directly).
+        count = precomp.get("total_defaults")
+        if count is None:
+            count = precomp.get("default_count_1y")
         return int(count) if count is not None else 0
     rows = filter_pd_performance_observations_for_horizon(performance_observations, quarter, horizon_key, ctx)
     return sum(1 for row in rows if row["observed"] == 1)
@@ -952,6 +958,94 @@ def get_worst_pd_rag(rags):
         if scores.get(rag, 0) > scores.get(worst, 0):
             worst = rag
     return worst
+
+
+_FALLBACK_LOW_DEFAULT_THRESHOLD = 15
+
+
+def _norm_fallback_text(value) -> str:
+    return " ".join(str(value or "").split()).strip().lower()
+
+
+def resolve_pd_fallback_rule(fallback_rules, component: str, test: str, default_count) -> tuple[str, str]:
+    """Resolve the Chapter-1 RAG-Assignment fallback for a single PD test.
+
+    Reads the ``fallback_amber_rules`` workbook sheet (passed in as its list of
+    row-dicts, loaded dynamically -- see ``load_monitoring_thresholds`` -- so the
+    rules can change in the file without a code change) and returns
+    ``(status, note)`` where ``status`` is one of:
+
+      * ``"applicable"``     -- the test's normal calculation stands (note "").
+      * ``"fallback_amber"`` -- the test is forced to Amber (low default count).
+      * ``"non_applicable"`` -- the test is not calculated / excluded from its
+        dimension RAG.
+
+    The rule is matched by ``(Model Type == "PD", Component, Test)`` and keyed on
+    the default count: fewer than 15 -> the ``"< 15 Defaults"`` column, otherwise
+    ``">= 15 Defaults"``. Any unmatched test (or missing/non-finite default
+    count) is treated as ``"applicable"``.
+    """
+    if default_count is None or not math.isfinite(default_count):
+        return "applicable", ""
+    threshold = _FALLBACK_LOW_DEFAULT_THRESHOLD
+    is_low = default_count < threshold
+    bucket = "< 15 Defaults" if is_low else ">= 15 Defaults"
+    # e.g. "8 defaults (< 15)" -- surfaces how far the count is from the threshold.
+    count = int(default_count)
+    count_text = f"{count} default{'' if count == 1 else 's'} ({'<' if is_low else '≥'} {threshold})"
+    component_n, test_n = _norm_fallback_text(component), _norm_fallback_text(test)
+    for row in fallback_rules or []:
+        if (
+            _norm_fallback_text(row.get("Model Type")) == "pd"
+            and _norm_fallback_text(row.get("Component")) == component_n
+            and _norm_fallback_text(row.get("Test")) == test_n
+        ):
+            action = _norm_fallback_text(row.get(bucket))
+            if action == "fallback amber":
+                return "fallback_amber", f"Fallback Amber applied — {count_text}"
+            if action == "non-applicable":
+                return "non_applicable", f"Not calculated — {count_text}"
+            return "applicable", ""
+    return "applicable", ""
+
+
+def _apply_fallback_to_trend_metric(fallback_rules, test, default_count, rag, value):
+    """For a trend row: apply a test's Chapter-1 fallback (component ``ECL PIT
+    PD``) to its ``(rag, value)`` pair -- forcing the RAG (Amber / N/A) and
+    suppressing the value to ``None`` so no misleading number is plotted. Returns
+    the pair unchanged when the test is Applicable."""
+    status, _ = resolve_pd_fallback_rule(fallback_rules, "ECL PIT PD", test, default_count)
+    if status == "fallback_amber":
+        return "Amber", None
+    if status == "non_applicable":
+        return "N/A", None
+    return rag, value
+
+
+def calibration_assignment_rag_with_fallback(
+    confidence_interval,
+    signed_notching_difference,
+    monitoring_thresholds,
+    fallback_rules=None,
+    component=None,
+    notching_test=None,
+    default_count=None,
+):
+    """RAG Assignment for one calibration horizon, honoring the Non-Applicable
+    Notching fallback. When the notching test resolves to ``"non_applicable"``
+    (low default count -- see :func:`resolve_pd_fallback_rule`) the Notching Test
+    is excluded and the RAG Assignment reduces to the Confidence Interval Test
+    RAG alone; otherwise the standard 2D (Confidence x Notching) lookup applies.
+    With no fallback rule supplied this is exactly
+    :func:`calculate_pd_calibration_assignment_rag`."""
+    if fallback_rules and component and notching_test:
+        status, _ = resolve_pd_fallback_rule(fallback_rules, component, notching_test, default_count)
+        if status == "non_applicable":
+            thresholds = get_pd_thresholds(monitoring_thresholds)
+            return calculate_pd_metric_rag(thresholds, "Confidence Interval Test", confidence_interval)
+    return calculate_pd_calibration_assignment_rag(
+        confidence_interval, signed_notching_difference, monitoring_thresholds,
+    )
 
 
 def calculate_pd_discrimination_section_rag(thresholds, values, default_count_1y=None):
@@ -1004,14 +1098,14 @@ def build_pd_overview_performance_rag_tooltip(calibration_rag, discrimination_ra
 
     if not is_finite_number(weighted_score) or not is_finite_number(rounded_score):
         return (
-            "Performance PD RAG combines three inputs with weights of 25%, 25%, and 50%. Higher scores are better: "
+            "Performance RAG combines three inputs with weights of 25%, 25%, and 50%. Higher scores are better: "
             f"Green = 3, Amber = 2, Red = 1. Current inputs: {component_summary}. One or more inputs are unavailable, "
-            f"so the displayed Performance PD RAG is {details['rag']}."
+            f"so the displayed Performance RAG is {details['rag']}."
         )
     return (
-        "Performance PD RAG combines three inputs with weights of 25%, 25%, and 50%. Higher scores are better: "
+        "Performance RAG combines three inputs with weights of 25%, 25%, and 50%. Higher scores are better: "
         f"Green = 3, Amber = 2, Red = 1. Current inputs: {component_summary}. Weighted average score: {weighted_label}. "
-        f"Rounded score: {rounded_label}. Displayed Performance PD RAG: {details['rag']}."
+        f"Rounded score: {rounded_label}. Displayed Performance RAG: {details['rag']}."
     )
 
 
@@ -1073,7 +1167,7 @@ def calculate_pd_ead_summaries(observations, quarter, ctx: PdFilterContext):
 # ---------------------------------------------------------------------------
 
 
-def calculate_pd_calibration_conservatism_details(observations, rating_observations, monitoring_quarter, ctx: PdFilterContext, crr_scale, monitoring_thresholds):
+def calculate_pd_calibration_conservatism_details(observations, rating_observations, monitoring_quarter, ctx: PdFilterContext, crr_scale, monitoring_thresholds, fallback_rules=None):
     if not monitoring_quarter:
         return {"rag": "N/A", "weighted_average": None, "rounded_score": None, "horizons": [], "total_weight": 0}
 
@@ -1099,8 +1193,12 @@ def calculate_pd_calibration_conservatism_details(observations, rating_observati
             signed_notch = horizon_notching["signed_difference"]
             weight = (ead_summaries.get(horizon_key) or {}).get("share")
 
-        rag = calculate_pd_calibration_assignment_rag(
+        default_count = calculate_pd_default_count_for_horizon(observations, snapshot_quarter, horizon_key, ctx)
+        notching_test = "Notching Test 1 year" if horizon_key == "1y" else "Notching Test 2 year"
+        rag = calibration_assignment_rag_with_fallback(
             confidence_interval, signed_notch, monitoring_thresholds,
+            fallback_rules=fallback_rules, component="ECL PIT PD",
+            notching_test=notching_test, default_count=default_count,
         )
         score = pd_rag_score(rag)
         if score is not None and is_finite_number(weight):
@@ -1210,13 +1308,13 @@ def build_pd_calibration_assignment_tooltip(label, confidence_interval, signed_n
 # ---------------------------------------------------------------------------
 
 
-def build_pd_calibration_rag_trend(observations, rating_observations, monitoring_quarter, ctx: PdFilterContext, crr_scale, monitoring_thresholds):
+def build_pd_calibration_rag_trend(observations, rating_observations, monitoring_quarter, ctx: PdFilterContext, crr_scale, monitoring_thresholds, fallback_rules=None):
     quarters = sorted({q for q in ctx.quarters if q and q <= monitoring_quarter})
     quarters = pd_quarters_with_data(quarters, observations, ("1y", "2y"), ctx)
     trend = []
     for quarter in quarters:
         details = calculate_pd_calibration_conservatism_details(
-            observations, rating_observations, quarter, ctx, crr_scale, monitoring_thresholds,
+            observations, rating_observations, quarter, ctx, crr_scale, monitoring_thresholds, fallback_rules,
         )
         trend.append({
             "quarter": quarter,
@@ -1228,7 +1326,7 @@ def build_pd_calibration_rag_trend(observations, rating_observations, monitoring
     return trend
 
 
-def build_pd_discrimination_rag_trend(observations, rating_observations, monitoring_quarter, ctx: PdFilterContext, crr_scale, monitoring_thresholds):
+def build_pd_discrimination_rag_trend(observations, rating_observations, monitoring_quarter, ctx: PdFilterContext, crr_scale, monitoring_thresholds, fallback_rules=None):
     thresholds = get_pd_thresholds(monitoring_thresholds)
     quarters = sorted({q for q in ctx.quarters if q and q <= monitoring_quarter})
     quarters = pd_quarters_with_data(quarters, observations, ("1y",), ctx)
@@ -1241,6 +1339,14 @@ def build_pd_discrimination_rag_trend(observations, rating_observations, monitor
         accuracy_rag = calculate_pd_metric_rag(thresholds, "Accuracy Ratio", accuracy_ratio)
         delta_accuracy_rag = calculate_pd_metric_rag(thresholds, "Delta Accuracy Ratio", delta_accuracy_ratio)
         rag = calculate_pd_discrimination_section_rag(thresholds, values, default_count_1y)
+        # Fallback Amber (low defaults): the metric is not a valid measurement, so
+        # suppress its value in the hover and show only the forced RAG.
+        accuracy_rag, accuracy_ratio = _apply_fallback_to_trend_metric(
+            fallback_rules, "Accuracy Ratio 1 year", default_count_1y, accuracy_rag, accuracy_ratio,
+        )
+        delta_accuracy_rag, delta_accuracy_ratio = _apply_fallback_to_trend_metric(
+            fallback_rules, "Delta Accuracy Ratio 1 year", default_count_1y, delta_accuracy_rag, delta_accuracy_ratio,
+        )
         trend.append({
             "quarter": quarter,
             "rag": rag,
@@ -1255,7 +1361,7 @@ def build_pd_discrimination_rag_trend(observations, rating_observations, monitor
     return trend
 
 
-def build_pd_balance_sheet_calibration_rag_trend(observations, rating_observations, monitoring_quarter, ctx: PdFilterContext, crr_scale, monitoring_thresholds):
+def build_pd_balance_sheet_calibration_rag_trend(observations, rating_observations, monitoring_quarter, ctx: PdFilterContext, crr_scale, monitoring_thresholds, fallback_rules=None):
     thresholds = get_pd_thresholds(monitoring_thresholds)
     quarters = sorted({q for q in ctx.quarters if q and q <= monitoring_quarter})
     quarters = pd_quarters_with_data(quarters, observations, ("nco_1y",), ctx)
@@ -1269,8 +1375,14 @@ def build_pd_balance_sheet_calibration_rag_trend(observations, rating_observatio
             signed_difference = calculate_pd_notching_components(
                 filter_pd_performance_observations_for_horizon(observations, quarter, "nco_1y", ctx), crr_scale,
             )["signed_difference"]
-        assignment_rag = calculate_pd_calibration_assignment_rag(
+        default_count = calculate_pd_default_count_for_horizon(observations, quarter, "nco_1y", ctx)
+        notching_na = resolve_pd_fallback_rule(
+            fallback_rules, "Balance Sheet PD", "Notching Test 1 year", default_count,
+        )[0] == "non_applicable"
+        assignment_rag = calibration_assignment_rag_with_fallback(
             values["Confidence Interval Test"], signed_difference, monitoring_thresholds,
+            fallback_rules=fallback_rules, component="Balance Sheet PD",
+            notching_test="Notching Test 1 year", default_count=default_count,
         )
         if assignment_rag == "N/A":
             rag = get_worst_pd_rag([
@@ -1285,8 +1397,9 @@ def build_pd_balance_sheet_calibration_rag_trend(observations, rating_observatio
             "rag_score": pd_rag_score(rag),
             "confidence_interval": values["Confidence Interval Test"],
             "confidence_rag": calculate_pd_metric_rag(thresholds, "Confidence Interval Test", values["Confidence Interval Test"]),
-            "notching_difference": signed_difference,
-            "notching_rag": calculate_pd_metric_rag(thresholds, "Notching Test", signed_difference),
+            # Not calculated -> suppress the notching value/RAG in the hover.
+            "notching_difference": None if notching_na else signed_difference,
+            "notching_rag": "N/A" if notching_na else calculate_pd_metric_rag(thresholds, "Notching Test", signed_difference),
             "assignment_rag": assignment_rag,
         })
     return trend

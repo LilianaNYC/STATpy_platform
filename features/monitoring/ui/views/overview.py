@@ -2409,6 +2409,16 @@ def _esc_row(record: dict, reporting_cycle: str, entity_key: str) -> html.Detail
                 className="overview-esc-card-note",
             )
         )
+    if record.get("Compensating Controls"):
+        body_children.append(
+            html.Div(
+                className="overview-esc-card-commentary",
+                children=[
+                    html.Span("Compensating controls", className="overview-esc-card-commentary-label"),
+                    html.Blockquote(record["Compensating Controls"], className="overview-esc-card-commentary-text"),
+                ],
+            )
+        )
     if record["Commentary"]:
         body_children.append(
             html.Div(
@@ -2433,9 +2443,14 @@ def _esc_row(record: dict, reporting_cycle: str, entity_key: str) -> html.Detail
     )
 
 
-def _esc_watch_row(record: dict, reporting_cycle: str, entity_key: str) -> html.Div:
-    """Compact watch-list row: the worst stage (or finding) and its one-line
-    playbook action -- enough to document without a full escalation card."""
+def _esc_watch_row(record: dict, reporting_cycle: str, entity_key: str):
+    """One watch-list entity.
+
+    A compact, scannable one-liner (worst stage/finding + its one-line playbook
+    action) when the reviewer hasn't recorded anything extra; a collapsible card
+    -- like the escalation rows -- when there ARE compensating controls or a
+    sign-off note to show, so that detail is available on demand without
+    cluttering the list."""
     selections = record["Selections"]
     if selections:
         worst = max(selections, key=lambda selection: _ESC_RAG_RANK.get(selection["rag"], -1))
@@ -2451,14 +2466,60 @@ def _esc_watch_row(record: dict, reporting_cycle: str, entity_key: str) -> html.
         rag = record["Overall RAG"]
         context = f"Overall RAG · {rag}"
         line = "Review on the tab."
-    return html.Div(
-        className="overview-esc-watch-row",
+
+    href = _esc_tab_href(record, reporting_cycle, entity_key)
+    compensating = record.get("Compensating Controls")
+    commentary = record["Commentary"]
+    summary_content = [
+        pd_rag_dot(rag),
+        html.Strong(record["Entity Label"], className="overview-esc-watch-name"),
+        html.Span(context, className="overview-esc-watch-context"),
+        html.Span(line, className="overview-esc-watch-action"),
+    ]
+
+    if not compensating and not commentary:
+        # Nothing extra to expand -- keep the flat, scannable one-liner.
+        return html.Div(
+            className="overview-esc-watch-row",
+            children=[*summary_content, html.A("Open tab →", href=href, className="overview-esc-watch-link")],
+        )
+
+    # Has reviewer detail -- collapsible card, mirroring the escalation rows:
+    # the one-liner stays as the summary, the compensating controls / sign-off
+    # (and the tab link) move into an expandable body.
+    body = []
+    if compensating:
+        body.append(
+            html.Div(
+                className="overview-esc-card-commentary",
+                children=[
+                    html.Span("Compensating controls", className="overview-esc-card-commentary-label"),
+                    html.Blockquote(compensating, className="overview-esc-card-commentary-text"),
+                ],
+            )
+        )
+    if commentary:
+        body.append(
+            html.Div(
+                className="overview-esc-card-commentary",
+                children=[
+                    html.Span("Reviewer sign-off", className="overview-esc-card-commentary-label"),
+                    html.Blockquote(commentary, className="overview-esc-card-commentary-text"),
+                ],
+            )
+        )
+    body.append(html.A("Open tab →", href=href, className="overview-esc-watch-link"))
+    return html.Details(
+        className="overview-esc-watch-card",
         children=[
-            pd_rag_dot(rag),
-            html.Strong(record["Entity Label"], className="overview-esc-watch-name"),
-            html.Span(context, className="overview-esc-watch-context"),
-            html.Span(line, className="overview-esc-watch-action"),
-            html.A("Open tab →", href=_esc_tab_href(record, reporting_cycle, entity_key), className="overview-esc-watch-link"),
+            html.Summary(
+                className="overview-esc-watch-summary",
+                children=[
+                    html.Span("▸", className="overview-esc-watch-chevron", **{"aria-hidden": "true"}),
+                    *summary_content,
+                ],
+            ),
+            html.Div(body, className="overview-esc-watch-body"),
         ],
     )
 
