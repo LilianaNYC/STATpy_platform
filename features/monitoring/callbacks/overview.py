@@ -10,7 +10,7 @@ from ....shared.ui import controls
 from ....shared.registration import already_registered
 from ....shared.theme import APP_THEME_ID, URL_ID, normalize_theme_value
 from ..data_access import PD_PERFORMANCE_DATA
-from ..domain.overview import overview_model_options
+from ..domain.overview import overview_model_cycle_quarters, overview_model_cycles, overview_model_options
 
 _RANGE_PRESET_COUNTS = {"last-4": 4, "last-8": 8, "last-12": 12}
 _OVERVIEW_PATH = "/overview"
@@ -24,7 +24,7 @@ def _overview_filter_snapshot(
 ) -> dict[str, str]:
     """Build an applied snapshot that matches the values visible in the top bar."""
     cycle = str(reporting_cycle or "").strip()
-    valid_points = controls.REPORTING_CYCLE_QUARTERS.get(cycle, [])
+    valid_points = controls.ALL_REPORTING_CYCLE_QUARTERS.get(cycle, [])
     resolved_point = filter_shell.resolve_monitoring_point_value(valid_points, monitoring_point)
     return {
         "reporting_cycle": cycle,
@@ -65,6 +65,11 @@ def register_callbacks(app) -> None:
         return
 
     data = PD_PERFORMANCE_DATA
+    model_cycles = overview_model_cycles(data)
+    model_cycle_quarters = overview_model_cycle_quarters(data)
+
+    from ....shared.repositories.filters_config import load_filter_config as _load_filter_config
+    _cfg_cycle_options = [{"label": c["label"], "value": c["value"]} for c in _load_filter_config()["reporting_cycles"]]
 
     for value_id, toggle_id, menu_id, filter_key in (
         (layout.REPORTING_CYCLE_ID, layout.REPORTING_CYCLE_TOGGLE_ID, layout.REPORTING_CYCLE_MENU_ID, layout.REPORTING_CYCLE_FILTER_KEY),
@@ -81,14 +86,41 @@ def register_callbacks(app) -> None:
             filter_key=filter_key,
         )
 
+    # -----------------------------------------------------------------
+    # Model Group/Model now come before Model Use Case / Cycle in the top
+    # filter bar, so Cycle narrows to whichever cycles the in-scope models
+    # actually have data for (pooled across every selected model), mirroring
+    # each individual Performance tab's own model-to-cycle narrowing. With no
+    # models selected, the full cycle list shows (unchanged fallback).
+    # -----------------------------------------------------------------
+    @app.callback(
+        Output(layout.REPORTING_CYCLE_ID, "options"),
+        Output(layout.REPORTING_CYCLE_ID, "value"),
+        Input(layout.SEGMENT_MODEL_GROUP_ID, "value"),
+        Input(layout.OVERVIEW_MODEL_ID, "value"),
+        State(layout.REPORTING_CYCLE_ID, "value"),
+    )
+    def sync_overview_cycle_options(_model_group, selected_models, current_cycle):
+        cycles: set[str] = set()
+        for model in selected_models or []:
+            cycles.update(model_cycles.get(model, set()))
+        options = ([option for option in _cfg_cycle_options if option["value"] in cycles] or _cfg_cycle_options) if cycles else _cfg_cycle_options
+        allowed_values = {option["value"] for option in options}
+        value = current_cycle if current_cycle in allowed_values else (options[0]["value"] if options else "")
+        return options, value
+
     @app.callback(
         Output(layout.MONITORING_POINT_ID, "options"),
         Output(layout.MONITORING_POINT_ID, "value"),
         Input(layout.REPORTING_CYCLE_ID, "value"),
+        Input(layout.OVERVIEW_MODEL_ID, "value"),
         Input(layout.MONITORING_POINT_ID, "value"),
     )
-    def sync_overview_monitoring_point_dropdown(reporting_cycle, selected_monitoring_point):
-        options = controls.REPORTING_CYCLE_QUARTERS.get(reporting_cycle, [])
+    def sync_overview_monitoring_point_dropdown(reporting_cycle, selected_models, selected_monitoring_point):
+        quarters: set[str] = set()
+        for model in selected_models or []:
+            quarters.update(model_cycle_quarters.get((model, reporting_cycle), set()))
+        options = sorted(quarters) if quarters else controls.ALL_REPORTING_CYCLE_QUARTERS.get(reporting_cycle, [])
         value = filter_shell.resolve_monitoring_point_value(options, selected_monitoring_point)
         return [{"label": option, "value": option} for option in options], value
 
@@ -294,7 +326,7 @@ def register_callbacks(app) -> None:
 
         from ....shared.repositories.filters_config import load_filter_config
         cfg = load_filter_config()
-        default_cycle = cfg["reporting_cycles"][0]["value"] if cfg["reporting_cycles"] else "CCAR 2026"
+        default_cycle = cfg["reporting_cycles"][0]["value"]
 
         reporting_cycle = applied.get("reporting_cycle") or default_cycle
 

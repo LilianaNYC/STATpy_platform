@@ -9,6 +9,7 @@ what each individual tab shows. No thresholds are re-derived here.
 
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from typing import Any
 
@@ -35,6 +36,8 @@ from ....shared.domain.calculations import (
     set_precomputed_metrics,
 )
 from ....shared.repositories.filters_config import model_names
+
+log = logging.getLogger(__name__)
 
 MODEL_GROUPS = ["PD", "LGD", "EAD", "Loss"]
 
@@ -232,6 +235,15 @@ def _pd_review_flow_rags(ctx: PdFilterContext, quarter: str) -> dict[str, str]:
         "Pre Mitigation RAG": _text("rag_pre_mitig"),
         "Post Mitigation RAG": _text("rag_post_mitig"),
         "Reviewer Commentary": str(row.get("reviewer_commentary", "") or "").strip(),
+        # The reviewer's compensating-controls justification for the Post
+        # Mitigation RAG (see loader.py's "compensating_controls" column),
+        # surfaced on the Overview escalation card. PD only for now.
+        "Compensating Controls": str(row.get("compensating_controls", "") or "").strip(),
+        # The Scenario filter value in effect the last time this row's review
+        # flow was saved (see loader.py's "scenario" column) -- empty when
+        # this row has never been saved, in which case callers fall back to
+        # a portfolio-wide default (see _default_scenario in ui/views/overview.py).
+        "Scenario": str(row.get("scenario", "") or "").strip(),
     }
 
 
@@ -247,10 +259,68 @@ def _review_flow_rags_from_metric_row(metric_row: dict[str, Any] | None) -> dict
         "Pre Mitigation RAG": _text("rag_pre_mitig"),
         "Post Mitigation RAG": _text("rag_post_mitig"),
         "Reviewer Commentary": str(row.get("reviewer_commentary", "") or "").strip(),
+        "Compensating Controls": str(row.get("compensating_controls", "") or "").strip(),
+        "Scenario": str(row.get("scenario", "") or "").strip(),
     }
 
 
-def _pd_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
+def _pd_chapter1_scope(
+    quarters: list[str], performance_observations: Any, model_name: str, pd_model_segments: dict[str, list[str]],
+    reporting_cycle: str,
+) -> tuple[str, str, list[str], dict[str, Any] | None]:
+    """Chapter 1 pools each PD model across every segment via ``ctx.segment ==
+    "all"`` (mirroring the PD Performance tab's own Models chapter), which
+    resolves to a literal ``(model, "All")`` precomputed-store lookup (see
+    ``ctx_store_keys``). A model with no such aggregate row -- only real-
+    segment rows -- would otherwise vanish from Chapter 1 entirely (e.g. "PD
+    Corp Model" in CCAR 2025, which only has a "Cyclical" row). If it owns
+    exactly one real segment, use that segment directly instead of dropping
+    the model -- mirrors LGD/EAD's ``_chapter1_model_metric_rows``. Two or
+    more real segments is left unsupported (no principled way to collapse
+    several segments' rows into one without either recomputing metrics from
+    raw observations or picking a worse-RAG-wins rollup, neither of which is
+    implemented here) -- logged, and returned as an exclusion entry so the
+    Overview page can surface it in the UI (see ``_chapter1_gap_notice``).
+
+    Returns ``(ctx_segment, display_segment, quarters_with_data, exclusion)``.
+    """
+    models = {model_name}
+    probe_ctx = PdFilterContext(quarters=quarters, models=models, segment="all", monitoring_point="")
+    quarters_with_data = pd_quarters_with_data(quarters, performance_observations, ("1y", "2y", "nco_1y"), probe_ctx)
+    if quarters_with_data:
+        return "all", "All", quarters_with_data, None
+    real_segments = pd_model_segments.get(model_name, [])
+    if len(real_segments) == 1:
+        segment = real_segments[0]
+        probe_ctx = PdFilterContext(quarters=quarters, models=models, segment=segment, monitoring_point="")
+        quarters_with_data = pd_quarters_with_data(quarters, performance_observations, ("1y", "2y", "nco_1y"), probe_ctx)
+        return segment, segment, quarters_with_data, None
+    if len(real_segments) > 1:
+        # pd_model_segments is built across every reporting cycle, not scoped
+        # to this one -- a model can own 2+ segments overall while having no
+        # rows at all in this particular cycle (that's just "not in this
+        # cycle", not a data gap). Only treat it as a genuine gap, worth
+        # logging/surfacing, if at least one of its segments actually has
+        # data here.
+        has_any_segment_data = any(
+            pd_quarters_with_data(
+                quarters, performance_observations, ("1y", "2y", "nco_1y"),
+                PdFilterContext(quarters=quarters, models=models, segment=segment, monitoring_point=""),
+            )
+            for segment in real_segments
+        )
+        if has_any_segment_data:
+            log.warning(
+                "Overview Chapter 1 [%s/PD/%s]: no 'All' aggregate row and %d real segments (%s); "
+                "dropping from Chapter 1 Models.",
+                reporting_cycle, model_name, len(real_segments), ", ".join(real_segments),
+            )
+            exclusion = {"Model Group": "PD", "Model": model_name, "Segments": real_segments}
+            return "all", "All", [], exclusion
+    return "all", "All", [], None
+
+
+def _pd_rows(data: dict, reporting_cycle: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     quarters, performance_observations, rating_migration_observations, metrics_store = _pd_cycle_data(data, reporting_cycle)
     set_precomputed_metrics(metrics_store)
 
@@ -259,21 +329,24 @@ def _pd_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
     crr_scale = get_pd_crr_master_scale(monitoring_thresholds)
     performance_horizons = data["performance_horizons"]
     pd_model_names = data.get("model_names", [])
+    pd_model_segments = data.get("pd_model_segments") or {}
 
     model_entities = pd_model_names
 
     rows: list[dict[str, Any]] = []
+    exclusions: list[dict[str, Any]] = []
     for model_name in model_entities:
-        # Metrics stay pooled across segments here, matching the Models
-        # chapter on the PD Performance tab.
         models = {model_name}
-        probe_ctx = PdFilterContext(quarters=quarters, models=models, segment="all", monitoring_point="")
+        ctx_segment, display_segment, model_quarters, exclusion = _pd_chapter1_scope(
+            quarters, performance_observations, model_name, pd_model_segments, reporting_cycle,
+        )
+        if exclusion:
+            exclusions.append(exclusion)
         # Skip quarters before this model has any real data, so a model with a
         # shorter history than the reporting cycle's full quarter range doesn't
         # pad the RAG Trend Analysis heatmap with a long empty stretch.
-        model_quarters = pd_quarters_with_data(quarters, performance_observations, ("1y", "2y", "nco_1y"), probe_ctx)
         for quarter in model_quarters:
-            ctx = PdFilterContext(quarters=quarters, models=models, segment="all", monitoring_point=quarter)
+            ctx = PdFilterContext(quarters=quarters, models=models, segment=ctx_segment, monitoring_point=quarter)
             metrics = _pd_chapter1_metrics(
                 performance_observations, rating_migration_observations, performance_horizons,
                 monitoring_thresholds, thresholds, crr_scale, ctx, quarter,
@@ -282,11 +355,11 @@ def _pd_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
                 "Monitoring Period": quarter,
                 "Model Group": "PD",
                 "Model": model_name,
-                "Segment": "All",
+                "Segment": display_segment,
                 **metrics,
                 **_pd_review_flow_rags(ctx, quarter),
             })
-    return rows
+    return rows, exclusions
 
 
 def _pd_segment_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
@@ -436,7 +509,47 @@ def _loss_segment_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]
     return rows
 
 
-def _lgd_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
+def _chapter1_model_metric_rows(
+    metrics_by_period_fn, data: dict, model_name: str, model_segments_key: str, model_group: str, reporting_cycle: str,
+) -> tuple[list[dict[str, Any]], str, dict[str, Any] | None]:
+    """Chapter 1 rows are keyed off each model's ``Segment: All`` aggregate row.
+
+    A model with no literal ``All`` row (only real-segment rows) would
+    otherwise vanish from Chapter 1 entirely. If it owns exactly one real
+    segment, use that segment's rows as a stand-in. Two or more real segments
+    is left unsupported (no principled way to collapse several segments' rows
+    into one without either recomputing metrics from raw observations or
+    picking a worse-RAG-wins rollup, neither of which is implemented here) --
+    logged, and returned as an exclusion entry so the Overview page can
+    surface it in the UI (see ``_chapter1_gap_notice``).
+    """
+    metric_rows = metrics_by_period_fn(data, model_name, "All")
+    if metric_rows:
+        return metric_rows, "All", None
+    real_segments = (data.get(model_segments_key) or {}).get(model_name, [])
+    if len(real_segments) == 1:
+        segment = real_segments[0]
+        return metrics_by_period_fn(data, model_name, segment), segment, None
+    if len(real_segments) > 1:
+        # model_segments_key is built across every reporting cycle, not
+        # scoped to this one -- a model can own 2+ segments overall while
+        # having no rows at all in this particular cycle (that's just "not in
+        # this cycle", not a data gap). Only treat it as a genuine gap, worth
+        # logging/surfacing, if at least one of its segments actually has
+        # data here.
+        segment_rows_by_segment = {segment: metrics_by_period_fn(data, model_name, segment) for segment in real_segments}
+        if any(segment_rows_by_segment.values()):
+            log.warning(
+                "Overview Chapter 1 [%s/%s/%s]: no 'All' aggregate row and %d real segments (%s); "
+                "dropping from Chapter 1 Models.",
+                reporting_cycle, model_group, model_name, len(real_segments), ", ".join(real_segments),
+            )
+            exclusion = {"Model Group": model_group, "Model": model_name, "Segments": real_segments}
+            return [], "All", exclusion
+    return [], "All", None
+
+
+def _lgd_rows(data: dict, reporting_cycle: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     from . import lgd as lgd_domain
 
     cycle_data = (data.get("lgd_observations_by_cycle") or {}).get(reporting_cycle)
@@ -446,8 +559,13 @@ def _lgd_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
     )
 
     rows: list[dict[str, Any]] = []
+    exclusions: list[dict[str, Any]] = []
     for model_name in model_names("lgd"):
-        metric_rows = lgd_domain.lgd_metrics_by_period(data, model_name, "All")
+        metric_rows, segment, exclusion = _chapter1_model_metric_rows(
+            lgd_domain.lgd_metrics_by_period, data, model_name, "lgd_model_segments", "LGD", reporting_cycle,
+        )
+        if exclusion:
+            exclusions.append(exclusion)
         if not metric_rows:
             continue
         metric_by_quarter = {row["Monitoring Period"]: row for row in metric_rows}
@@ -462,7 +580,7 @@ def _lgd_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
                 "Monitoring Period": quarter,
                 "Model Group": "LGD",
                 "Model": model_name,
-                "Segment": "All",
+                "Segment": segment,
                 "Calibration RAG": calibration_rag,
                 "Discrimination RAG": discrimination_rag,
                 "Overall RAG": get_worst_pd_rag([calibration_rag, discrimination_rag]),
@@ -470,10 +588,10 @@ def _lgd_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
                 "PSI Metric": f"{psi_value:.3f}" if psi_value is not None else "—",
                 **_review_flow_rags_from_metric_row(metric_by_quarter.get(quarter)),
             })
-    return rows
+    return rows, exclusions
 
 
-def _ead_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
+def _ead_rows(data: dict, reporting_cycle: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     from . import ead as ead_domain
 
     cycle_data = (data.get("ead_observations_by_cycle") or {}).get(reporting_cycle)
@@ -483,8 +601,13 @@ def _ead_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
     )
 
     rows: list[dict[str, Any]] = []
+    exclusions: list[dict[str, Any]] = []
     for model_name in model_names("ead"):
-        metric_rows = ead_domain.ead_metrics_by_period(data, model_name, "All")
+        metric_rows, segment, exclusion = _chapter1_model_metric_rows(
+            ead_domain.ead_metrics_by_period, data, model_name, "ead_model_segments", "EAD", reporting_cycle,
+        )
+        if exclusion:
+            exclusions.append(exclusion)
         if not metric_rows:
             continue
         metric_by_quarter = {row["Monitoring Period"]: row for row in metric_rows}
@@ -499,7 +622,7 @@ def _ead_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
                 "Monitoring Period": quarter,
                 "Model Group": "EAD",
                 "Model": model_name,
-                "Segment": "All",
+                "Segment": segment,
                 "Calibration RAG": calibration_rag,
                 "Discrimination RAG": discrimination_rag,
                 "Overall RAG": get_worst_pd_rag([calibration_rag, discrimination_rag]),
@@ -507,10 +630,10 @@ def _ead_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
                 "PSI Metric": f"{psi_value:.3f}" if psi_value is not None else "—",
                 **_review_flow_rags_from_metric_row(metric_by_quarter.get(quarter)),
             })
-    return rows
+    return rows, exclusions
 
 
-def _loss_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
+def _loss_rows(data: dict, reporting_cycle: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     from . import loss as loss_domain
 
     cycle_data = (data.get("loss_observations_by_cycle") or {}).get(reporting_cycle)
@@ -520,7 +643,10 @@ def _loss_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
     )
 
     model_label = (model_names("loss") or ["All Models"])[0]
-    metric_rows = loss_domain.loss_metrics_by_period(data, model_label, "All")
+    metric_rows, segment, exclusion = _chapter1_model_metric_rows(
+        loss_domain.loss_metrics_by_period, data, model_label, "loss_model_segments", "Loss", reporting_cycle,
+    )
+    exclusions = [exclusion] if exclusion else []
 
     rows: list[dict[str, Any]] = []
     for row in metric_rows:
@@ -529,22 +655,33 @@ def _loss_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
             "Monitoring Period": row["Monitoring Period"],
             "Model Group": "Loss",
             "Model": model_label,
-            "Segment": "All",
+            "Segment": segment,
             "Calibration RAG": rag,
             "Discrimination RAG": "N/A",
             "Overall RAG": rag,
         })
-    return rows
+    return rows, exclusions
 
 
-def build_overview_rows(data: dict, reporting_cycle: str) -> list[dict[str, Any]]:
+def build_overview_rows(data: dict, reporting_cycle: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Build the full cross-portfolio row set for one reporting cycle.
 
     PD, LGD, EAD, and Loss each keep a separate precomputed metrics store per
     reporting cycle, so every row builder needs ``reporting_cycle`` to pick
     the right one -- mirroring how each tab's own callback scopes its data.
+
+    Returns ``(rows, chapter1_exclusions)`` -- ``chapter1_exclusions`` lists
+    any model that owns 2+ real segments but no ``All`` aggregate row, and so
+    couldn't be given a Chapter 1 row (see ``_pd_chapter1_scope`` /
+    ``_chapter1_model_metric_rows``).
     """
-    return _pd_rows(data, reporting_cycle) + _lgd_rows(data, reporting_cycle) + _ead_rows(data, reporting_cycle) + _loss_rows(data, reporting_cycle)
+    pd_rows, pd_exclusions = _pd_rows(data, reporting_cycle)
+    lgd_rows, lgd_exclusions = _lgd_rows(data, reporting_cycle)
+    ead_rows, ead_exclusions = _ead_rows(data, reporting_cycle)
+    loss_rows, loss_exclusions = _loss_rows(data, reporting_cycle)
+    rows = pd_rows + lgd_rows + ead_rows + loss_rows
+    exclusions = pd_exclusions + lgd_exclusions + ead_exclusions + loss_exclusions
+    return rows, exclusions
 
 
 def overview_model_options(data: dict, model_group: str = "All") -> list[dict[str, str]]:
@@ -564,6 +701,45 @@ def overview_model_options(data: dict, model_group: str = "All") -> list[dict[st
     if model_group and model_group != "All":
         groups = [(group, model) for group, model in groups if group == model_group]
     return [{"label": model, "value": model} for group, model in groups]
+
+
+def overview_model_cycles(data: dict) -> dict[str, set[str]]:
+    """Every reporting cycle each model (PD/LGD/EAD/Loss, pooled across all of
+    that model's segments) actually has data for -- source for narrowing the
+    top filter bar's Model Use Case / Cycle options to the selected Model
+    Group/Model scope, mirroring each individual Performance tab's own
+    model-to-cycle narrowing (e.g. ``sync_pd_population_to_cycle_options``).
+    """
+    model_cycles: dict[str, set[str]] = {}
+    for key in ("pd_model_segment_cycles", "lgd_model_segment_cycles", "ead_model_segment_cycles"):
+        for (model, _segment), cycles in (data.get(key) or {}).items():
+            model_cycles.setdefault(model, set()).update(cycles)
+    loss_cycles = set((data.get("loss_observations_by_cycle") or {}).keys())
+    if loss_cycles:
+        for model in model_names("loss"):
+            model_cycles.setdefault(model, set()).update(loss_cycles)
+    return model_cycles
+
+
+def overview_model_cycle_quarters(data: dict) -> dict[tuple[str, str], set[str]]:
+    """Every quarter each model (pooled across all of that model's segments)
+    actually has data for, within a given reporting cycle -- source for
+    scoping the top filter bar's Monitoring Point options to the selected
+    Model Group/Model scope, mirroring each individual Performance tab's own
+    model-scoped Monitoring Point narrowing.
+    """
+    result: dict[tuple[str, str], set[str]] = {}
+    for cycle, cycle_data in (data.get("observations_by_cycle") or {}).items():
+        for (model, _segment, quarter, _horizon) in (cycle_data.get("metrics_store") or {}):
+            result.setdefault((model, cycle), set()).add(quarter)
+    for key in ("lgd_observations_by_cycle", "ead_observations_by_cycle", "loss_observations_by_cycle"):
+        for cycle, cycle_data in (data.get(key) or {}).items():
+            for (model, _segment), rows in (cycle_data.get("metrics_store") or {}).items():
+                for row in rows:
+                    quarter = row.get("Monitoring Period")
+                    if quarter:
+                        result.setdefault((model, cycle), set()).add(quarter)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -712,6 +888,8 @@ def heatmap_rows(current_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             metric_key = column.replace(" RAG", " Metric")
             worst_row = _worst_row_for_column(model_rows, column)
             entry[metric_key] = (worst_row or {}).get(metric_key, "—")
+            if column == "MEV Range RAG":
+                entry["MEV Range Scenario"] = (worst_row or {}).get("MEV Range Scenario", "")
         output.append(entry)
     return output
 
@@ -743,6 +921,8 @@ def segment_heatmap_rows(current_rows: list[dict[str, Any]]) -> list[dict[str, A
             metric_key = column.replace(" RAG", " Metric")
             worst_row = _worst_row_for_column(segment_rows, column)
             entry[metric_key] = (worst_row or {}).get(metric_key, "—")
+            if column == "MEV Range RAG":
+                entry["MEV Range Scenario"] = (worst_row or {}).get("MEV Range Scenario", "")
         output.append(entry)
     return output
 
@@ -873,21 +1053,59 @@ def escalation_next_steps(
     monitoring_actions: list[dict[str, Any]],
     entity_key: str = "Model",
 ) -> dict[str, Any]:
-    """Escalation tiers with the governance playbook's next steps per entity.
+    """Governance-tier each entity (escalate / watch / clear) and attach the
+    playbook's next steps, mirroring each Performance tab's 3.1 Conclusion.
 
-    Mirrors each Performance tab's 3.1 Conclusion: an entity's review-flow RAGs
-    (Post Subjective Review -> Pre Mitigation -> Post Mitigation, read from the
-    same portfolio columns the tabs edit) are matched against the monitoring
-    playbook via ``select_pd_monitoring_actions``, so the next step shown on the
-    Overview is always the same action the tab's own Required Actions panel
-    prescribes -- including the two-consecutive-Red persistent-breach protocol,
-    detected from the entity's prior monitoring period in ``scoped_rows``.
+    ---------------------------------------------------------------------------
+    Governance tiering rules -- the authoritative encoding of the business
+    monitoring policy. Revise HERE (and the ``monitoring_actions`` playbook
+    sheet in ``monitoring_rules.xlsx``) if the policy changes.
+    ---------------------------------------------------------------------------
 
-    Tiers: ``escalate`` (any Red across Overall RAG, a review-flow stage, or an
-    underlying test finding -- or a persistent breach), ``watch`` (Amber
-    somewhere, nothing Red), ``clear`` (everything Green). Entities without
-    review-flow data (e.g. the Loss workstream) still tier off their findings;
-    they just carry no playbook selections.
+    RAG glossary (business term -> code / portfolio column):
+      * "Model RAG (initial)" = Performance RAG  = ``Overall RAG`` column.
+            Roll-up of the RAG-Assignment tests. It is the *input* to the
+            subjective review, NOT a tiering trigger on its own.
+      * "Model RAG (post subjective review)"     = ``Post Subjective Review RAG``
+            (review_flow field ``post_subjective``). Drives the Pre-Mitigation
+            stage.
+      * "Pre-Mitigation RAG" (= Pre-Overlay)     = ``Pre Mitigation RAG``
+            (``pre_mitigation``). A DISPLAYED pipeline stage (trend of the
+            post-subjective-review RAG; for ST models == the current one), NOT
+            a separate playbook trigger -- deliberately not read for tiering.
+      * "Post-Mitigation RAG" (= Post-Overlay)   = ``Post Mitigation RAG``
+            (``post_mitigation``). Drives the Post-Mitigation stage.
+
+    The playbook (``monitoring_rules.xlsx`` -> ``monitoring_actions`` sheet,
+    matched per entity by :func:`select_pd_monitoring_actions`) triggers off
+    exactly two RAGs, so the TIER is decided by exactly those two, plus the
+    persistent-breach protocol:
+
+        Trigger RAG state                          -> Tier      (playbook name)
+        ------------------------------------------    --------   -------------------
+        Post Subjective Review RAG == Red          -> escalate  (Pre-Mit Model Breach)
+        Post Mitigation RAG        == Red          -> escalate  (Post-Mit Model Breach)
+        Post Mitigation Red for 2 quarters running -> escalate  (Persistent Breach)
+        either of the two == Amber (nothing Red)   -> watch     (Early Warning)
+        both Green / N-A                           -> clear     (normal monitoring)
+
+    Deliberately EXCLUDED from the tier decision (policy choice -- the
+    subjective review already accounts for them; they remain visible on the
+    card as "Driven by" context and drive the Performance RAG, but never move
+    the tier by themselves):
+      * the Performance / Model-initial RAG (``Overall RAG``), and
+      * the underlying RAG-Assignment / Post-Subjective test findings
+        (Calibration, Discrimination, PSI, Transition Matrix, Scenario Ranking,
+        Sensitivity, MEV Range, ...).
+
+    Fallback: entities that record NO review-flow RAGs at all (e.g. the Loss
+    workstream, which has no post-subjective/pre-/post-mitigation pipeline)
+    can't be tiered by the playbook, so they fall back to their Performance
+    RAG: Red -> escalate, Amber -> watch, else clear.
+
+    The playbook next steps shown on each card come from the same
+    ``select_pd_monitoring_actions`` selection the tab's own Required Actions
+    panel uses, so Overview and the tab always agree.
     """
     from .actions import select_pd_monitoring_actions
 
@@ -914,6 +1132,20 @@ def escalation_next_steps(
         has_review_flow = any(value in ("Green", "Amber", "Red") for value in review_flow.values())
         commentary = next(
             (text for row in entity_rows if (text := str(row.get("Reviewer Commentary", "") or "").strip())),
+            "",
+        )
+        # The reviewer's compensating-controls note for this entity (PD only
+        # for now) -- surfaced on the escalation card next to the sign-off.
+        compensating_controls = next(
+            (text for row in entity_rows if (text := str(row.get("Compensating Controls", "") or "").strip())),
+            "",
+        )
+        # The scenario MEV Range was actually computed under (see
+        # augment_rows_with_post_subjective) -- surfaced next to the "MEV
+        # Range RAG" driver chip on the escalation card so it's not silently
+        # invisible there either.
+        mev_range_scenario = next(
+            (text for row in entity_rows if (text := str(row.get("MEV Range Scenario", "") or "").strip())),
             "",
         )
 
@@ -946,14 +1178,23 @@ def escalation_next_steps(
             selections = select_pd_monitoring_actions(monitoring_actions, review_flow, previous_post_mitigation)
             persistent_breach = any(selection.get("persistent_breach") for selection in selections)
 
-        red_signal = (
-            persistent_breach
-            or overall == "Red"
-            or any(value == "Red" for value in review_flow.values())
-            or any(rag == "Red" for _metric, rag in drivers)
-        )
-        amber_signal = overall == "Amber" or any(value == "Amber" for value in review_flow.values()) or bool(drivers)
-        tier = "escalate" if red_signal else ("watch" if amber_signal else "clear")
+        # Playbook-only tiering -- see this function's docstring for the full
+        # rules and rationale. Only the two playbook trigger RAGs (Post
+        # Subjective Review + Post Mitigation) and the persistent breach decide
+        # the tier; the Pre Mitigation RAG, the Performance RAG, and the test
+        # findings are deliberately excluded here.
+        if has_review_flow:
+            playbook_rags = (review_flow["post_subjective"], review_flow["post_mitigation"])
+            if persistent_breach or "Red" in playbook_rags:
+                tier = "escalate"
+            elif "Amber" in playbook_rags:
+                tier = "watch"
+            else:
+                tier = "clear"
+        else:
+            # No review-flow RAGs (e.g. Loss) -- the playbook can't apply, so
+            # fall back to the entity's Performance (Model-initial) RAG.
+            tier = "escalate" if overall == "Red" else ("watch" if overall == "Amber" else "clear")
 
         tiers[tier].append({
             "Model Group": group,
@@ -968,6 +1209,8 @@ def escalation_next_steps(
             "Selections": selections,
             "Persistent Breach": persistent_breach,
             "Commentary": commentary,
+            "Compensating Controls": compensating_controls,
+            "MEV Range Scenario": mev_range_scenario,
             "Tab Path": MODEL_GROUP_TAB_PATHS.get(group, "/"),
         })
 
@@ -994,18 +1237,18 @@ def escalation_next_steps(
         names = ", ".join(record["Entity Label"] for record in tiers["escalate"])
         requires = "requires" if counts["escalate"] == 1 else "require"
         narrative = (
-            f"As of {period}, {_n(counts['escalate'])} {requires} escalation -- Red on a review-flow stage or an "
-            f"underlying test: {names}. The next steps below come from the monitoring playbook, matching each "
-            f"Performance tab's own Conclusion section."
+            f"As of {period}, {_n(counts['escalate'])} {requires} escalation -- Red on the Post Subjective Review "
+            f"or Post Mitigation RAG, or a persistent breach: {names}. The next steps below come from the "
+            f"monitoring playbook, matching each Performance tab's own Conclusion section."
         )
         if counts["watch"]:
             is_are = "is" if counts["watch"] == 1 else "are"
-            narrative += f" {_n(counts['watch'])} more {is_are} on watch with Amber findings."
+            narrative += f" {_n(counts['watch'])} more {is_are} on watch with an Amber review-flow RAG."
     elif counts["watch"]:
         names = ", ".join(record["Entity Label"] for record in tiers["watch"])
         narrative = (
-            f"As of {period}, no {noun} requires escalation, but {_n(counts['watch'])} carry Amber findings to "
-            f"keep on watch: {names}."
+            f"As of {period}, no {noun} requires escalation, but {_n(counts['watch'])} carry an Amber review-flow "
+            f"RAG to keep on watch: {names}."
         )
     else:
         narrative = f"As of {period}, all {_n(total)} are fully in tolerance. Continue normal monitoring."

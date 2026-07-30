@@ -350,7 +350,7 @@ def _mev_range_summary(cfg: PostSubjectiveConfig, data: dict, selected_model, se
     """Worst-case MEV-range RAG across the entity's in-scope MEVs (2.5 MEV Range)."""
     catalog = data.get("mev_catalog") or {}
     selected_models = get_mev_selected_models_simple(catalog, selected_model, selected_segment, model_type=cfg.model_type)
-    available = get_pd_mev_available_names_for_models(catalog, selected_models)
+    available = get_pd_mev_available_names_for_models(catalog, selected_models, selected_segment)
     counts = {"Green": 0, "Amber": 0, "Red": 0, "N/A": 0}
     total = 0
     for model_name in selected_models:
@@ -593,7 +593,11 @@ def build_psi_section(
         ]
 
     psi_trend = [
-        {"quarter": row.get("Monitoring Period"), "population_stability_index": row.get(PSI_METRIC)}
+        {
+            "quarter": row.get("Monitoring Period"),
+            "population_stability_index": row.get(PSI_METRIC),
+            "reporting_cycle": row.get("reporting_cycle"),
+        }
         for row in (summary.get("metric_rows") or [])
         if row.get("Monitoring Period") and row.get(PSI_METRIC) is not None
     ]
@@ -770,14 +774,14 @@ def build_scenario_ranking_section(
                         className="section-card pd-default-rate-trend-section pd-sensitivity-chart-card",
                         children=[
                             build_chart_header(f"Projected {cfg.label} by Scenario", f"{_entity_label(model, segment)} projected {cfg.label} paths for selected scenarios."),
-                            dcc.Graph(id=f"{cfg.prefix}-scenario-projection-chart", figure=build_pd_scenario_projection_figure(rows, theme=theme), config=_GRAPH_CONFIG, className="pd-default-rate-trend-chart pd-default-rate-trend-chart-medium"),
+                            dcc.Graph(id=f"{cfg.prefix}-scenario-projection-chart", figure=build_pd_scenario_projection_figure(rows, theme=theme, metric_label=cfg.label), config=_GRAPH_CONFIG, className="pd-default-rate-trend-chart pd-default-rate-trend-chart-medium"),
                         ],
                     ),
                     html.Div(
                         className="section-card pd-default-rate-trend-section pd-sensitivity-chart-card",
                         children=[
                             build_chart_header("Scenario Rank Matrix", f"Rank 1 identifies the scenario with the highest projected {cfg.label} in each projection quarter."),
-                            dcc.Graph(id=f"{cfg.prefix}-scenario-rank-chart", figure=build_pd_scenario_rank_figure(rows, theme=theme), config=_GRAPH_CONFIG, className="pd-default-rate-trend-chart pd-default-rate-trend-chart-medium"),
+                            dcc.Graph(id=f"{cfg.prefix}-scenario-rank-chart", figure=build_pd_scenario_rank_figure(rows, theme=theme, metric_label=cfg.label), config=_GRAPH_CONFIG, className="pd-default-rate-trend-chart pd-default-rate-trend-chart-medium"),
                         ],
                     ),
                 ],
@@ -912,7 +916,7 @@ def build_sensitivity_section(
                     ),
                     dcc.Graph(
                         id=f"{cfg.prefix}-sensitivity-combined-chart",
-                        figure=build_pd_sensitivity_combined_figure(rows, threshold, range_value=None, theme=theme),
+                        figure=build_pd_sensitivity_combined_figure(rows, threshold, range_value=None, theme=theme, metric_label=cfg.label),
                         config=_GRAPH_CONFIG,
                         className="pd-default-rate-trend-chart",
                     ),

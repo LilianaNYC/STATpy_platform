@@ -49,7 +49,7 @@ class Settings:
 
     @property
     def monitoring_thresholds_file(self) -> Path:
-        return self.source_data_dir / "statpy_monitoring_thresholds.xlsm"
+        return self.source_data_dir / "monitoring_rules.xlsx"
 
     @property
     def dummy_mev_data_file(self) -> Path:

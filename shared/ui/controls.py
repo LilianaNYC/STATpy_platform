@@ -24,7 +24,7 @@ from dash import dcc, html
 
 from ..domain.calculations import get_pd_range_preset, get_pd_range_selection
 from ..domain.quarter_labels import format_pd_compact_quarter_label
-from ..repositories.filters_config import monitoring_points_by_cycle
+from ..repositories.filters_config import MONITORING_POINT_WINDOW, monitoring_points_by_cycle
 
 # ---------------------------------------------------------------------------
 # Component ids
@@ -34,9 +34,15 @@ REPORTING_CYCLE_ID = "pd-reporting-cycle"
 REPORTING_CYCLE_TOGGLE_ID = "pd-reporting-cycle-toggle"
 REPORTING_CYCLE_MENU_ID = "pd-reporting-cycle-menu"
 
-# Monitoring points available per reporting cycle, sourced from the workbook's
-# ``Filters`` tab so cycles/quarters can be edited without code changes.
-REPORTING_CYCLE_QUARTERS = monitoring_points_by_cycle()
+# Monitoring points available per reporting cycle, scoped to each tab's own
+# ``_Performance_Metrics`` sheet -- a tab only ever offers a quarter that
+# actually exists in its own raw data. ``ALL_REPORTING_CYCLE_QUARTERS`` pools
+# every tab's sheet together, for the cross-portfolio Overview page.
+PD_REPORTING_CYCLE_QUARTERS = monitoring_points_by_cycle("pd")
+LGD_REPORTING_CYCLE_QUARTERS = monitoring_points_by_cycle("lgd")
+EAD_REPORTING_CYCLE_QUARTERS = monitoring_points_by_cycle("ead")
+LOSS_REPORTING_CYCLE_QUARTERS = monitoring_points_by_cycle("loss")
+ALL_REPORTING_CYCLE_QUARTERS = monitoring_points_by_cycle("all")
 SCENARIO_ID = "pd-scenario"
 SCENARIO_TOGGLE_ID = "pd-scenario-toggle"
 SCENARIO_MENU_ID = "pd-scenario-menu"
@@ -50,7 +56,6 @@ PORTFOLIO_SEGMENT_MENU_ID = "pd-portfolio-segment-menu"
 MODELS_ID = "pd-models"
 MODELS_TOGGLE_ID = "pd-models-toggle"
 MODELS_MENU_ID = "pd-models-menu"
-FILTER_HELP_ID = "pd-filter-help"
 SINGLE_SELECT_OPTION_ID = "pd-single-select-option"
 
 REGION_ID = "pd-region"
@@ -187,21 +192,27 @@ def build_single_select_dropdown(
 # ---------------------------------------------------------------------------
 
 
-def build_global_filters(data: dict, extra_controls=None) -> html.Div:
+def build_global_filters(data: dict, extra_controls=None, initial: dict | None = None) -> html.Div:
     """The top filter bar: region, portfolio, model group, model, segment,
     model use case / cycle, monitoring point, scenario -- primary (cascading)
-    row followed by a secondary row, mirroring SAAS's own two-row layout."""
+    row followed by a secondary row, mirroring SAAS's own two-row layout.
+
+    ``initial`` (from ``shared.deep_link.parse_deep_link_params``) lets a
+    deep link from the Overview page's escalation cards pre-select Model/
+    Segment/Model Use Case/Monitoring Point instead of the usual empty/latest
+    defaults -- unrecognized values fall back to the normal default, so a
+    stale or malformed link degrades gracefully rather than erroring."""
     from ..domain.mev_range import model_field_values
     from ..repositories.filters_config import (
         load_filter_config, model_names as cfg_model_names, segment_values as cfg_segment_values,
     )
 
     cfg = load_filter_config()
-    quarters_desc = sorted(data["quarters"], reverse=True)
-    latest_quarter = quarters_desc[0] if quarters_desc else ""
+    quarters_asc = sorted(data["quarters"])
+    latest_quarter = quarters_asc[-1] if quarters_asc else ""
     model_names = cfg_model_names("pd")
     segment_values = cfg_segment_values()
-    monitoring_point_options = [{"label": q, "value": q} for q in quarters_desc]
+    monitoring_point_options = [{"label": q, "value": q} for q in quarters_asc]
     segment_options = [{"label": "All", "value": "all"}] + [{"label": value, "value": value} for value in segment_values]
 
     mev_catalog = data.get("mev_catalog") or {}
@@ -214,8 +225,23 @@ def build_global_filters(data: dict, extra_controls=None) -> html.Div:
 
     reporting_cycle_options = [{"label": c["label"], "value": c["value"]} for c in cfg["reporting_cycles"]]
     scenario_options = [{"label": s["label"], "value": s["value"]} for s in cfg["scenarios"]]
-    default_cycle = reporting_cycle_options[0]["value"] if reporting_cycle_options else "CCAR 2026"
-    default_scenario = scenario_options[0]["value"] if scenario_options else "intsevere"
+    default_cycle = reporting_cycle_options[0]["value"]
+    default_scenario = scenario_options[0]["value"]
+
+    initial = initial or {}
+    initial_model = initial.get("model", "") if initial.get("model") in model_names else ""
+    initial_segment = (
+        initial.get("segment", "")
+        if initial.get("segment") in segment_values or initial.get("segment") == "all"
+        else ""
+    )
+    initial_cycle = initial.get("cycle") if initial.get("cycle") in {c["value"] for c in reporting_cycle_options} else default_cycle
+    initial_monitoring_point = (
+        initial.get("monitoring_point") if initial.get("monitoring_point") in set(quarters_asc) else latest_quarter
+    )
+    initial_scenario = (
+        initial.get("scenario") if initial.get("scenario") in {s["value"] for s in scenario_options} else default_scenario
+    )
 
     primary_row = html.Div(
         className="monitoring-controls saas-top-filter-row monitoring-primary-filter-row",
@@ -272,7 +298,7 @@ def build_global_filters(data: dict, extra_controls=None) -> html.Div:
                         menu_id=MODELS_MENU_ID,
                         filter_key="specific-models",
                         options=[{"label": "Select model", "value": ""}] + [{"label": name, "value": name} for name in model_names],
-                        value="",
+                        value=initial_model,
                     ),
                 ],
             ),
@@ -286,7 +312,7 @@ def build_global_filters(data: dict, extra_controls=None) -> html.Div:
                         menu_id=PORTFOLIO_SEGMENT_MENU_ID,
                         filter_key="portfolio-segment",
                         options=segment_options,
-                        value="",
+                        value=initial_segment,
                     ),
                 ],
             ),
@@ -304,7 +330,7 @@ def build_global_filters(data: dict, extra_controls=None) -> html.Div:
                     menu_id=REPORTING_CYCLE_MENU_ID,
                     filter_key="reporting-cycle",
                     options=reporting_cycle_options,
-                    value=default_cycle,
+                    value=initial_cycle,
                 ),
             ],
         ),
@@ -318,7 +344,7 @@ def build_global_filters(data: dict, extra_controls=None) -> html.Div:
                     menu_id=MONITORING_POINT_MENU_ID,
                     filter_key="monitoring-point",
                     options=monitoring_point_options,
-                    value=latest_quarter,
+                    value=initial_monitoring_point,
                 ),
             ],
         ),
@@ -332,7 +358,7 @@ def build_global_filters(data: dict, extra_controls=None) -> html.Div:
                     menu_id=SCENARIO_MENU_ID,
                     filter_key="scenario",
                     options=scenario_options,
-                    value=default_scenario,
+                    value=initial_scenario,
                 ),
             ],
         ),

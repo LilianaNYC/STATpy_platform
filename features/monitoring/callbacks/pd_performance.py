@@ -21,10 +21,46 @@ from ....shared.theme import APP_THEME_ID, URL_ID
 from ....shared.domain.calculations import PdFilterContext, ctx_store_keys, set_precomputed_metrics
 from ....shared.domain.mev_range import model_field_values, models_matching
 from ....shared.registration import already_registered
+from ....shared.repositories.filters_config import cycle_family
 from ..data_access import PD_PERFORMANCE_DATA
 from ..services import data_service
 
 _RANGE_PRESET_COUNTS = {"last-4": 4, "last-8": 8, "last-12": 12}
+
+
+def _merge_same_family_pd_cycle_data(observations_by_cycle: dict, reporting_cycle: str) -> dict:
+    """Pool ``observations_by_cycle`` across every cycle in the same family as
+    ``reporting_cycle`` (e.g. "CCAR 2025" + "CCAR 2026", never "BAU 2025Q1")
+    so trend charts can show history from prior same-family cycles, not just
+    the selected one. Every chart that reads ``ctx.quarters`` already trims
+    to ``<= snapshot_quarter`` (see ``get_pd_range_periods`` and
+    ``build_pd_performance_trend_for_horizon``), so widening the pool here is
+    the only change needed -- the existing "up to the monitoring point"
+    trimming does the rest.
+    """
+    family = cycle_family(reporting_cycle)
+    quarters: set[str] = set()
+    performance_observations: list = []
+    rating_migration_observations: list = []
+    metrics_store: dict = {}
+    quarter_cycle_map: dict[str, str] = {}
+    for cycle, cycle_data in (observations_by_cycle or {}).items():
+        if cycle_family(cycle) != family:
+            continue
+        cycle_quarters = cycle_data.get("quarters") or []
+        quarters.update(cycle_quarters)
+        performance_observations.extend(cycle_data.get("performance_observations") or [])
+        rating_migration_observations.extend(cycle_data.get("rating_migration_observations") or [])
+        metrics_store.update(cycle_data.get("metrics_store") or {})
+        for quarter in cycle_quarters:
+            quarter_cycle_map[quarter] = cycle
+    return {
+        "quarters": sorted(quarters),
+        "performance_observations": performance_observations,
+        "rating_migration_observations": rating_migration_observations,
+        "metrics_store": metrics_store,
+        "quarter_cycle_map": quarter_cycle_map,
+    }
 
 
 def _resolve_pd_scope(data: dict, applied: dict | None) -> tuple[PdFilterContext, str, str]:
@@ -36,7 +72,7 @@ def _resolve_pd_scope(data: dict, applied: dict | None) -> tuple[PdFilterContext
     """
     from ....shared.repositories.filters_config import load_filter_config
     cfg = load_filter_config()
-    default_cycle = cfg["reporting_cycles"][0]["value"] if cfg["reporting_cycles"] else "CCAR 2026"
+    default_cycle = cfg["reporting_cycles"][0]["value"]
 
     applied = applied or {}
     reporting_cycle = applied.get("reporting_cycle") or default_cycle
@@ -69,6 +105,32 @@ def register_callbacks(app) -> None:
     pd_model_segment_cycles = data.get("pd_model_segment_cycles") or {}
     mev_catalog = data.get("mev_catalog") or {}
     all_pd_segments = sorted({segment for segments in pd_model_segments.values() for segment in segments})
+    # Which models actually have a literal (model, "All") row in each cycle's
+    # precomputed store -- e.g. "PD Corp Model" in CCAR 2025 only has a
+    # "Cyclical" row, no "All" aggregate. Picking "All" for such a model
+    # silently resolves to a missing store key and every metric on the tab
+    # goes blank, so sync_pd_model_to_segment_options below omits "All" from
+    # the Segment dropdown whenever it wouldn't actually return data.
+    pd_models_with_all_by_cycle: dict[str, set[str]] = {
+        cycle: {model for (model, segment, _quarter, _horizon) in (cycle_data.get("metrics_store") or {}) if segment == "All"}
+        for cycle, cycle_data in (data.get("observations_by_cycle") or {}).items()
+    }
+    # A model's own quarters for a cycle, pooled across its segments -- e.g.
+    # "PD Corp Model" was deliberately left out of a portfolio-wide quarter
+    # cleanup, so its CCAR 2025 footprint (2024Q3-2025Q2) differs from other
+    # PD models' (2024Q4-2025Q3). Picking Monitoring Point options from the
+    # tab-pooled PD_REPORTING_CYCLE_QUARTERS instead of this would offer
+    # quarters the selected model has no data for (and hide ones it does).
+    pd_model_cycle_quarters: dict[tuple[str, str], set[str]] = {}
+    # The same, further scoped to (model, segment, cycle) -- a model's
+    # segments can themselves have different footprints within a cycle, so
+    # once a real segment is picked its own quarters take precedence over
+    # the model-wide pool above.
+    pd_model_segment_cycle_quarters: dict[tuple[str, str, str], set[str]] = {}
+    for cycle, cycle_data in (data.get("observations_by_cycle") or {}).items():
+        for (model, segment, quarter, _horizon) in (cycle_data.get("metrics_store") or {}):
+            pd_model_cycle_quarters.setdefault((model, cycle), set()).add(quarter)
+            pd_model_segment_cycle_quarters.setdefault((model, segment, cycle), set()).add(quarter)
 
     mev_scenarios_by_cycle = data.get("mev_scenarios_by_cycle") or {}
 
@@ -85,16 +147,24 @@ def register_callbacks(app) -> None:
         return narrowed or _cfg_cycle_options
 
     # -----------------------------------------------------------------
-    # Region, Portfolio, Model Group: brand new filters, registered through
-    # the shared single-select machinery (open/close, click-to-value, and
-    # menu-rebuild-on-options-change all come for free -- unlike Model/
-    # Segment above, there's no legacy hand-rolled callback set to conflict
-    # with here).
+    # Every top-bar filter's open/close, click-to-value, and menu-rebuild-
+    # on-options-change behaviour is registered through the shared
+    # single-select machinery (mirrors LGD/EAD/Loss/Overview) -- each
+    # filter's own narrowing callback (sync_pd_filters_to_model_options,
+    # sync_pd_model_to_segment_options, sync_pd_population_to_cycle_options,
+    # sync_reporting_cycle_to_monitoring_point, sync_pd_cycle_to_scenario_options,
+    # below) is unaffected and still separately owns each filter's
+    # ``options``/``value`` outputs; this loop only owns the shell chrome.
     # -----------------------------------------------------------------
     for value_id, toggle_id, menu_id, filter_key in (
         (controls.REGION_ID, controls.REGION_TOGGLE_ID, controls.REGION_MENU_ID, "region"),
         (controls.PORTFOLIO_ID, controls.PORTFOLIO_TOGGLE_ID, controls.PORTFOLIO_MENU_ID, "portfolio"),
         (controls.MODEL_GROUP_ID, controls.MODEL_GROUP_TOGGLE_ID, controls.MODEL_GROUP_MENU_ID, "model-group"),
+        (controls.MODELS_ID, controls.MODELS_TOGGLE_ID, controls.MODELS_MENU_ID, "specific-models"),
+        (controls.PORTFOLIO_SEGMENT_ID, controls.PORTFOLIO_SEGMENT_TOGGLE_ID, controls.PORTFOLIO_SEGMENT_MENU_ID, "portfolio-segment"),
+        (controls.REPORTING_CYCLE_ID, controls.REPORTING_CYCLE_TOGGLE_ID, controls.REPORTING_CYCLE_MENU_ID, "reporting-cycle"),
+        (controls.MONITORING_POINT_ID, controls.MONITORING_POINT_TOGGLE_ID, controls.MONITORING_POINT_MENU_ID, "monitoring-point"),
+        (controls.SCENARIO_ID, controls.SCENARIO_TOGGLE_ID, controls.SCENARIO_MENU_ID, "scenario"),
     ):
         filter_shell.register_single_select_callbacks(
             app, value_id=value_id, toggle_id=toggle_id, menu_id=menu_id, filter_key=filter_key,
@@ -143,6 +213,7 @@ def register_callbacks(app) -> None:
     @app.callback(
         Output(layout.PD_REVIEW_FLOW_PENDING_STORE_ID, "data", allow_duplicate=True),
         Output(layout.CONCLUSIONS_NOTES_STORE_ID, "data", allow_duplicate=True),
+        Output(layout.COMPENSATING_CONTROLS_STORE_ID, "data", allow_duplicate=True),
         Output(layout.PD_REVIEW_FLOW_STATUS_STORE_ID, "data", allow_duplicate=True),
         Input(URL_ID, "pathname"),
         prevent_initial_call=True,
@@ -152,34 +223,41 @@ def register_callbacks(app) -> None:
         # the master re-render that this triggers has a live content container to
         # write into rather than firing against a page that has been swapped out.
         if pathname != "/":
-            return no_update, no_update, no_update
-        return {}, "", ""
+            return no_update, no_update, no_update, no_update
+        return {}, "", "", ""
 
     # -----------------------------------------------------------------
     # Reporting Cycle -> Monitoring Point options
     # -----------------------------------------------------------------
-    all_quarters_desc = sorted(data["quarters"], reverse=True)
+    all_quarters_asc = sorted(data["quarters"])
 
     @app.callback(
         Output(controls.MONITORING_POINT_ID, "options"),
         Output(controls.MONITORING_POINT_ID, "value"),
         Input(controls.REPORTING_CYCLE_ID, "value"),
+        Input(controls.MODELS_ID, "value"),
+        Input(controls.PORTFOLIO_SEGMENT_ID, "value"),
         State(controls.MONITORING_POINT_ID, "value"),
     )
-    def sync_reporting_cycle_to_monitoring_point(cycle, current_mp):
-        allowed = controls.REPORTING_CYCLE_QUARTERS.get(cycle)
-        if allowed is None:
-            quarters = all_quarters_desc
+    def sync_reporting_cycle_to_monitoring_point(cycle, model, segment, current_mp):
+        if model:
+            model_quarters = None
+            if segment:
+                segment_key = "All" if segment == "all" else segment
+                model_quarters = pd_model_segment_cycle_quarters.get((model, segment_key, cycle))
+            if not model_quarters:
+                model_quarters = pd_model_cycle_quarters.get((model, cycle))
+            allowed = sorted(model_quarters)[-controls.MONITORING_POINT_WINDOW:] if model_quarters else None
         else:
-            # Latest-first. dcc.Dropdown resets its value to the first option when
-            # the options list changes (as it does here when the reporting cycle
-            # rebuilds the monitoring-point list on load), so ordering latest-first
-            # makes that reset land on the latest quarter -- keeping the hidden
-            # value in sync with the "latest" default the toggle shows, instead of
-            # silently snapping back to the earliest quarter.
-            quarters = sorted(allowed, reverse=True)
+            allowed = controls.PD_REPORTING_CYCLE_QUARTERS.get(cycle)
+        # Oldest-first, matching the LGD/EAD/Loss/Overview monitoring-point
+        # dropdowns. The default value is resolved via resolve_monitoring_point_value
+        # (options[-1], the latest quarter) rather than options[0], so ordering
+        # doesn't change which quarter gets picked when the current selection
+        # falls out of range.
+        quarters = all_quarters_asc if allowed is None else sorted(allowed)
         options = [{"label": q, "value": q} for q in quarters]
-        value = current_mp if current_mp in quarters else (quarters[0] if quarters else "")
+        value = filter_shell.resolve_monitoring_point_value(quarters, current_mp)
         return options, value
 
     # -----------------------------------------------------------------
@@ -192,17 +270,26 @@ def register_callbacks(app) -> None:
     # above) -- picking a segment restricts Models to models that actually
     # own it, clearing a now-invalid selection.
     # -----------------------------------------------------------------
+    # reporting_cycle is read as State, not Input: sync_pd_population_to_cycle_options
+    # below already reacts to PORTFOLIO_SEGMENT_ID and writes REPORTING_CYCLE_ID,
+    # so making this callback also react to REPORTING_CYCLE_ID would form a cycle
+    # (Segment -> Cycle -> Segment -> ...), which Dash rejects at registration.
     @app.callback(
         Output(controls.PORTFOLIO_SEGMENT_ID, "options"),
         Output(controls.PORTFOLIO_SEGMENT_ID, "value"),
         Input(controls.MODELS_ID, "value"),
+        State(controls.REPORTING_CYCLE_ID, "value"),
         State(controls.PORTFOLIO_SEGMENT_ID, "value"),
     )
-    def sync_pd_model_to_segment_options(model, current_segment):
+    def sync_pd_model_to_segment_options(model, reporting_cycle, current_segment):
         if model:
             segments = pd_model_segments.get(model, [])
-            options = [{"label": "All", "value": "all"}] + [{"label": s, "value": s} for s in segments]
-            value = current_segment if current_segment in segments else "all"
+            has_all = model in pd_models_with_all_by_cycle.get(reporting_cycle, set())
+            options = ([{"label": "All", "value": "all"}] if has_all else []) + [{"label": s, "value": s} for s in segments]
+            if current_segment in segments or (has_all and current_segment == "all"):
+                value = current_segment
+            else:
+                value = "all" if has_all else (segments[0] if segments else "")
         else:
             options = (
                 [{"label": "Select segment", "value": ""}, {"label": "All", "value": "all"}]
@@ -248,145 +335,6 @@ def register_callbacks(app) -> None:
         return options, value
 
     # -----------------------------------------------------------------
-    # Single-select dropdown open/close toggles
-    # -----------------------------------------------------------------
-    @app.callback(
-        Output(controls.MONITORING_POINT_MENU_ID, "className"),
-        Input(controls.MONITORING_POINT_TOGGLE_ID, "n_clicks"),
-        State(controls.MONITORING_POINT_MENU_ID, "className"),
-        prevent_initial_call=True,
-    )
-    def toggle_monitoring_point_menu(_n_clicks, current_class):
-        if "open" in (current_class or "").split():
-            return "checkbox-dropdown-menu single-select-menu"
-        return "checkbox-dropdown-menu single-select-menu open"
-
-    @app.callback(
-        Output(controls.PORTFOLIO_SEGMENT_MENU_ID, "className"),
-        Input(controls.PORTFOLIO_SEGMENT_TOGGLE_ID, "n_clicks"),
-        State(controls.PORTFOLIO_SEGMENT_MENU_ID, "className"),
-        prevent_initial_call=True,
-    )
-    def toggle_segment_menu(_n_clicks, current_class):
-        if "open" in (current_class or "").split():
-            return "checkbox-dropdown-menu single-select-menu"
-        return "checkbox-dropdown-menu single-select-menu open"
-
-    # -----------------------------------------------------------------
-    # Single-select dropdown option clicks -> value + close
-    # Each filter_key routes to its own hidden dcc.Dropdown value.
-    # -----------------------------------------------------------------
-    @app.callback(
-        Output(controls.MONITORING_POINT_ID, "value", allow_duplicate=True),
-        Output(controls.MONITORING_POINT_MENU_ID, "className", allow_duplicate=True),
-        Input({"type": controls.SINGLE_SELECT_OPTION_ID, "filter": "monitoring-point", "value": ALL}, "n_clicks"),
-        prevent_initial_call=True,
-    )
-    def select_monitoring_point(_clicks):
-        triggered = ctx.triggered_id
-        if not triggered:
-            return no_update, no_update
-        value = triggered["value"]
-        return value, "checkbox-dropdown-menu single-select-menu"
-
-    @app.callback(
-        Output(controls.MONITORING_POINT_TOGGLE_ID, "children"),
-        Output(controls.MONITORING_POINT_MENU_ID, "children"),
-        Input(controls.MONITORING_POINT_ID, "value"),
-        Input(controls.MONITORING_POINT_ID, "options"),
-    )
-    def sync_monitoring_point_shell(value, options):
-        return filter_shell.build_single_select_shell(
-            options=options,
-            value=value,
-            filter_key="monitoring-point",
-        )
-
-    @app.callback(
-        Output(controls.PORTFOLIO_SEGMENT_ID, "value"),
-        Output(controls.PORTFOLIO_SEGMENT_MENU_ID, "className", allow_duplicate=True),
-        Input({"type": controls.SINGLE_SELECT_OPTION_ID, "filter": "portfolio-segment", "value": ALL}, "n_clicks"),
-        prevent_initial_call=True,
-    )
-    def select_segment(_clicks):
-        # The option buttons are re-created whenever Models changes (the Segment
-        # menu narrows to that model's own segments), so this pattern-matching
-        # callback can fire on that remount with ctx.triggered_id pointing at an
-        # option whose n_clicks never actually incremented. Only act on a real
-        # click (mirrors ui/common.py's select_single_select_option).
-        triggered = ctx.triggered_id
-        if not triggered or not any(_clicks or []):
-            return no_update, no_update
-        return triggered["value"], "checkbox-dropdown-menu single-select-menu"
-
-    # -----------------------------------------------------------------
-    # Single-select dropdown shell sync (toggle label + full menu rebuild --
-    # the Segment menu's option set now changes per selected model, so the
-    # menu itself must be rebuilt rather than just re-highlighting a fixed
-    # button set; mirrors sync_monitoring_point_shell above).
-    # -----------------------------------------------------------------
-    @app.callback(
-        Output(controls.PORTFOLIO_SEGMENT_TOGGLE_ID, "children"),
-        Output(controls.PORTFOLIO_SEGMENT_MENU_ID, "children"),
-        Input(controls.PORTFOLIO_SEGMENT_ID, "value"),
-        Input(controls.PORTFOLIO_SEGMENT_ID, "options"),
-    )
-    def sync_segment_shell(value, options):
-        return filter_shell.build_single_select_shell(
-            options=options,
-            value=value,
-            filter_key="portfolio-segment",
-        )
-
-    # Reporting Cycle toggle
-    @app.callback(
-        Output(controls.REPORTING_CYCLE_MENU_ID, "className"),
-        Input(controls.REPORTING_CYCLE_TOGGLE_ID, "n_clicks"),
-        State(controls.REPORTING_CYCLE_MENU_ID, "className"),
-        prevent_initial_call=True,
-    )
-    def toggle_reporting_cycle_menu(_n_clicks, current_class):
-        if "open" in (current_class or "").split():
-            return "checkbox-dropdown-menu single-select-menu"
-        return "checkbox-dropdown-menu single-select-menu open"
-
-    @app.callback(
-        Output(controls.REPORTING_CYCLE_ID, "value"),
-        Output(controls.REPORTING_CYCLE_MENU_ID, "className", allow_duplicate=True),
-        Input({"type": controls.SINGLE_SELECT_OPTION_ID, "filter": "reporting-cycle", "value": ALL}, "n_clicks"),
-        prevent_initial_call=True,
-    )
-    def select_reporting_cycle(_clicks):
-        # The option buttons are re-created whenever Model/Segment changes (the
-        # Cycle menu narrows to that population's real cycles), so this
-        # pattern-matching callback can fire on that remount with
-        # ctx.triggered_id pointing at an option whose n_clicks never actually
-        # incremented. Only act on a real click (mirrors select_model/select_segment).
-        triggered = ctx.triggered_id
-        if not triggered or not any(_clicks or []):
-            return no_update, no_update
-        return triggered["value"], "checkbox-dropdown-menu single-select-menu"
-
-    # -----------------------------------------------------------------
-    # Single-select dropdown shell sync (toggle label + full menu rebuild --
-    # the Cycle menu's option set now changes per selected Model/Segment, so
-    # the menu itself must be rebuilt rather than just re-highlighting a
-    # fixed button set; mirrors sync_monitoring_point_shell/sync_segment_shell).
-    # -----------------------------------------------------------------
-    @app.callback(
-        Output(controls.REPORTING_CYCLE_TOGGLE_ID, "children"),
-        Output(controls.REPORTING_CYCLE_MENU_ID, "children"),
-        Input(controls.REPORTING_CYCLE_ID, "value"),
-        Input(controls.REPORTING_CYCLE_ID, "options"),
-    )
-    def sync_reporting_cycle_shell(value, options):
-        return filter_shell.build_single_select_shell(
-            options=options,
-            value=value,
-            filter_key="reporting-cycle",
-        )
-
-    # -----------------------------------------------------------------
     # Scenario options come from dummy_mev_data.xlsx's "scenario" sheet: the
     # distinct "Scenario" values available for the "Run For" cycle matching
     # the selected Model Use Case / Cycle (not a static config list). Falls
@@ -408,101 +356,6 @@ def register_callbacks(app) -> None:
         allowed_values = {option["value"] for option in options}
         value = current_scenario if current_scenario in allowed_values else (options[0]["value"] if options else "")
         return options, value
-
-    @app.callback(
-        Output(controls.SCENARIO_MENU_ID, "className"),
-        Input(controls.SCENARIO_TOGGLE_ID, "n_clicks"),
-        State(controls.SCENARIO_MENU_ID, "className"),
-        prevent_initial_call=True,
-    )
-    def toggle_scenario_menu(_n_clicks, current_class):
-        if "open" in (current_class or "").split():
-            return "checkbox-dropdown-menu single-select-menu"
-        return "checkbox-dropdown-menu single-select-menu open"
-
-    @app.callback(
-        Output(controls.SCENARIO_ID, "value"),
-        Output(controls.SCENARIO_MENU_ID, "className", allow_duplicate=True),
-        Input({"type": controls.SINGLE_SELECT_OPTION_ID, "filter": "scenario", "value": ALL}, "n_clicks"),
-        prevent_initial_call=True,
-    )
-    def select_scenario(_clicks):
-        # The option buttons are re-created whenever Model Use Case / Cycle
-        # changes (the Scenario menu narrows to that cycle's real scenarios),
-        # so this pattern-matching callback can fire on that remount with
-        # ctx.triggered_id pointing at an option whose n_clicks never actually
-        # incremented. Only act on a real click (mirrors select_model/select_segment).
-        triggered = ctx.triggered_id
-        if not triggered or not any(_clicks or []):
-            return no_update, no_update
-        return triggered["value"], "checkbox-dropdown-menu single-select-menu"
-
-    # -----------------------------------------------------------------
-    # Single-select dropdown shell sync (toggle label + full menu rebuild --
-    # the Scenario menu's option set now changes per selected Cycle, so the
-    # menu itself must be rebuilt rather than just re-highlighting a fixed
-    # button set; mirrors sync_reporting_cycle_shell above).
-    # -----------------------------------------------------------------
-    @app.callback(
-        Output(controls.SCENARIO_TOGGLE_ID, "children"),
-        Output(controls.SCENARIO_MENU_ID, "children"),
-        Input(controls.SCENARIO_ID, "value"),
-        Input(controls.SCENARIO_ID, "options"),
-    )
-    def sync_scenario_shell(value, options):
-        return filter_shell.build_single_select_shell(
-            options=options,
-            value=value,
-            filter_key="scenario",
-        )
-
-    # Models toggle
-    @app.callback(
-        Output(controls.MODELS_MENU_ID, "className"),
-        Input(controls.MODELS_TOGGLE_ID, "n_clicks"),
-        State(controls.MODELS_MENU_ID, "className"),
-        prevent_initial_call=True,
-    )
-    def toggle_models_menu(_n_clicks, current_class):
-        if "open" in (current_class or "").split():
-            return "checkbox-dropdown-menu single-select-menu"
-        return "checkbox-dropdown-menu single-select-menu open"
-
-    @app.callback(
-        Output(controls.MODELS_ID, "value"),
-        Output(controls.MODELS_MENU_ID, "className", allow_duplicate=True),
-        Input({"type": controls.SINGLE_SELECT_OPTION_ID, "filter": "specific-models", "value": ALL}, "n_clicks"),
-        prevent_initial_call=True,
-    )
-    def select_model(_clicks):
-        # The option buttons are re-created whenever Region/Portfolio changes
-        # (the Model menu narrows to matching models), so this pattern-matching
-        # callback can fire on that remount with ctx.triggered_id pointing at an
-        # option whose n_clicks never actually incremented. Only act on a real
-        # click (mirrors ui/common.py's select_single_select_option).
-        triggered = ctx.triggered_id
-        if not triggered or not any(_clicks or []):
-            return no_update, no_update
-        return triggered["value"], "checkbox-dropdown-menu single-select-menu"
-
-    # -----------------------------------------------------------------
-    # Single-select dropdown shell sync (toggle label + full menu rebuild --
-    # the Model menu's option set now changes per selected Region/Portfolio,
-    # so the menu itself must be rebuilt rather than just re-highlighting a
-    # fixed button set; mirrors sync_monitoring_point_shell/sync_segment_shell).
-    # -----------------------------------------------------------------
-    @app.callback(
-        Output(controls.MODELS_TOGGLE_ID, "children"),
-        Output(controls.MODELS_MENU_ID, "children"),
-        Input(controls.MODELS_ID, "value"),
-        Input(controls.MODELS_ID, "options"),
-    )
-    def sync_models_shell(value, options):
-        return filter_shell.build_single_select_shell(
-            options=options,
-            value=value,
-            filter_key="specific-models",
-        )
 
     # -----------------------------------------------------------------
     # Per-chart range controls (Window / From / To) -> pd-range-store
@@ -615,6 +468,7 @@ def register_callbacks(app) -> None:
     @app.callback(
         Output(layout.APPLIED_FILTERS_STORE_ID, "data"),
         Output(layout.CONCLUSIONS_NOTES_STORE_ID, "data", allow_duplicate=True),
+        Output(layout.COMPENSATING_CONTROLS_STORE_ID, "data", allow_duplicate=True),
         Output(layout.PD_REVIEW_FLOW_PENDING_STORE_ID, "data", allow_duplicate=True),
         Output(layout.PD_REVIEW_FLOW_STATUS_STORE_ID, "data", allow_duplicate=True),
         Input(layout.APPLY_FILTERS_ID, "n_clicks"),
@@ -629,8 +483,9 @@ def register_callbacks(app) -> None:
         """Snapshot the current top filters so the content renders only on Apply.
 
         Also discards the scope-specific review-flow state: the unsaved
-        reviewer sign-off draft, any staged (not-yet-saved) RAG picks, and the
-        last save-status message. All three describe the scope that was on
+        reviewer sign-off draft, the unsaved compensating-controls draft, any
+        staged (not-yet-saved) RAG picks, and the last save-status message.
+        All of these describe the scope that was on
         screen before the click, so carrying them across an Apply would show
         them against a different model/segment/quarter. Clearing them here
         (same callback as the applied-filters snapshot) guarantees the
@@ -642,14 +497,14 @@ def register_callbacks(app) -> None:
         disabled in that case, but a stale click event is still guarded here).
         """
         if not _n_clicks or not models:
-            return no_update, no_update, no_update, no_update
+            return no_update, no_update, no_update, no_update, no_update
         return {
             "monitoring_point": monitoring_point,
             "segment": segment,
             "models": models,
             "reporting_cycle": reporting_cycle,
             "scenario": scenario,
-        }, "", {}, ""
+        }, "", "", {}, ""
 
     # -----------------------------------------------------------------
     # Master re-render: applied store + per-chart stores -> pd-performance-content
@@ -657,6 +512,7 @@ def register_callbacks(app) -> None:
     @app.callback(
         Output(layout.CONTENT_ID, "children"),
         Input(layout.APPLIED_FILTERS_STORE_ID, "data"),
+        Input(layout.PD_DEEP_LINK_STORE_ID, "data"),
         Input(layout.RANGE_STORE_ID, "data"),
         Input(layout.TREND_HORIZON_STORE_ID, "data"),
         Input(layout.MEV_FILTER_STORE_ID, "data"),
@@ -664,43 +520,64 @@ def register_callbacks(app) -> None:
         Input(layout.PD_REVIEW_FLOW_PENDING_STORE_ID, "data"),
         Input(APP_THEME_ID, "value"),
         State(layout.CONCLUSIONS_NOTES_STORE_ID, "data"),
+        State(layout.COMPENSATING_CONTROLS_STORE_ID, "data"),
         State(layout.PD_REVIEW_FLOW_STATUS_STORE_ID, "data"),
-        prevent_initial_call=True,
+        # Not prevent_initial_call: PD_DEEP_LINK_STORE_ID (see its own comment
+        # in ui/views/pd_performance.py) bakes a deep link's scope directly
+        # into this page's initial layout, and a full page load's very first
+        # callback batch is exactly the "initial call" this flag would
+        # otherwise suppress. With no deep link and nothing yet Applied this
+        # session, both stores are empty and this just re-renders the same
+        # getting-started prompt page_layout already server-rendered.
     )
     def render_pd_performance_content(
-        applied, range_store, trend_horizon_store, mev_filter_store, scenario_ranking_store,
-        review_flow_pending_edits, theme_value, conclusions_notes, review_flow_save_status,
+        applied, deep_link_applied, range_store, trend_horizon_store, mev_filter_store, scenario_ranking_store,
+        review_flow_pending_edits, theme_value, conclusions_notes, compensating_controls, review_flow_save_status,
     ):
-        # Until the user clicks "Apply filters", keep the getting-started guide
-        # that ``page_layout`` rendered into the content container.
+        # Prefer an explicit Apply click this session over the deep-link
+        # snapshot from page load -- once the user applies for real, that
+        # should win even if they arrived via a deep link.
+        applied = applied or deep_link_applied
+        # Until either applies, keep the getting-started guide that
+        # ``page_layout`` rendered into the content container.
         if not applied:
             return layout.build_pd_apply_prompt()
 
         from ....shared.repositories.filters_config import load_filter_config
         cfg = load_filter_config()
-        default_cycle = cfg["reporting_cycles"][0]["value"] if cfg["reporting_cycles"] else "CCAR 2026"
-        default_scenario = cfg["scenarios"][0]["value"] if cfg["scenarios"] else "intsevere"
+        default_cycle = cfg["reporting_cycles"][0]["value"]
+        default_scenario = cfg["scenarios"][0]["value"]
 
         applied = applied or {}
         reporting_cycle = applied.get("reporting_cycle") or default_cycle
         scenario = applied.get("scenario") or default_scenario
 
-        cycle_data = (data.get("observations_by_cycle") or {}).get(reporting_cycle)
+        observations_by_cycle = data.get("observations_by_cycle") or {}
+        cycle_data = observations_by_cycle.get(reporting_cycle)
         if cycle_data:
-            quarters = cycle_data["quarters"]
-            performance_observations = cycle_data["performance_observations"]
-            rating_migration_observations = cycle_data["rating_migration_observations"]
-            metrics_store = cycle_data.get("metrics_store")
+            merged = _merge_same_family_pd_cycle_data(observations_by_cycle, reporting_cycle)
+            quarters = merged["quarters"]
+            performance_observations = merged["performance_observations"]
+            rating_migration_observations = merged["rating_migration_observations"]
+            metrics_store = merged["metrics_store"]
+            quarter_cycle_map = merged["quarter_cycle_map"]
         else:
             quarters = data["quarters"]
             performance_observations = data["performance_observations"]
             rating_migration_observations = data["rating_migration_observations"]
             metrics_store = None
+            quarter_cycle_map = {}
 
         # The PD Performance tab reads every metric straight from the workbook.
         set_precomputed_metrics(metrics_store)
 
-        render_data = {**data, "quarters": quarters, "performance_observations": performance_observations, "rating_migration_observations": rating_migration_observations}
+        render_data = {
+            **data,
+            "quarters": quarters,
+            "performance_observations": performance_observations,
+            "rating_migration_observations": rating_migration_observations,
+            "quarter_cycle_map": quarter_cycle_map,
+        }
 
         monitoring_point = applied.get("monitoring_point") or (quarters[-1] if quarters else "")
         segment = applied.get("segment") or "all"
@@ -722,6 +599,7 @@ def register_callbacks(app) -> None:
             scenario_ranking_store or {},
             theme_value=theme_value, reporting_cycle=reporting_cycle, scenario=scenario,
             conclusions_notes=conclusions_notes or "",
+            compensating_controls=compensating_controls or "",
             review_flow_pending_edits=review_flow_pending_edits or {},
             review_flow_save_status=review_flow_save_status or "",
         )
@@ -735,6 +613,17 @@ def register_callbacks(app) -> None:
         prevent_initial_call=True,
     )
     def save_pd_conclusions_notes(value):
+        return value or ""
+
+    # -----------------------------------------------------------------
+    # Compensating-controls textarea -> pd-compensating-controls-store
+    # -----------------------------------------------------------------
+    @app.callback(
+        Output(layout.COMPENSATING_CONTROLS_STORE_ID, "data"),
+        Input(layout.COMPENSATING_CONTROLS_ID, "value"),
+        prevent_initial_call=True,
+    )
+    def save_pd_compensating_controls(value):
         return value or ""
 
     # -----------------------------------------------------------------
@@ -776,9 +665,10 @@ def register_callbacks(app) -> None:
         State(layout.PD_REVIEW_FLOW_PENDING_STORE_ID, "data"),
         State(layout.APPLIED_FILTERS_STORE_ID, "data"),
         State(layout.CONCLUSIONS_NOTES_STORE_ID, "data"),
+        State(layout.COMPENSATING_CONTROLS_STORE_ID, "data"),
         prevent_initial_call=True,
     )
-    def save_pd_review_flow_rag_changes(n_clicks, pending, applied, conclusions_notes):
+    def save_pd_review_flow_rag_changes(n_clicks, pending, applied, conclusions_notes, compensating_controls):
         # Same dynamic-mount quirk as the picker above: the Save button only exists once there's a
         # pending edit or commentary change, so it "just appeared" at least once and could fire
         # without a real click.
@@ -801,6 +691,15 @@ def register_callbacks(app) -> None:
             if ok:
                 saved_fields.append(field)
 
+        saved_compensating = layout.pd_compensating_controls(filter_ctx, monitoring_point)
+        if (compensating_controls or "") != (saved_compensating or ""):
+            ok = data_service.save_pd_review_flow_rag(
+                data, reporting_cycle, model, segment, monitoring_point,
+                layout.COMPENSATING_CONTROLS_COLUMN, compensating_controls or "",
+            )
+            if ok:
+                saved_fields.append("compensating_controls")
+
         saved_commentary = layout.pd_reviewer_commentary(filter_ctx, monitoring_point)
         if (conclusions_notes or "") != (saved_commentary or ""):
             ok = data_service.save_pd_review_flow_rag(
@@ -814,6 +713,18 @@ def register_callbacks(app) -> None:
             return no_update, (
                 "Could not save -- no matching rows were found in the portfolio file for the current scope."
             )
+
+        # Also persist the Scenario filter value in effect for this save, so
+        # Overview's MEV Range can look up the scenario this row was actually
+        # reviewed under instead of assuming a single portfolio-wide default
+        # (see shared.repositories.filters_config.load_filter_config and
+        # augment_rows_with_post_subjective in ui/views/overview.py). Not
+        # counted in saved_fields/the status message -- it's metadata, not a
+        # reviewer-facing field edit.
+        from ....shared.repositories.filters_config import load_filter_config
+        default_scenario = load_filter_config()["scenarios"][0]["value"]
+        scenario = (applied or {}).get("scenario") or default_scenario
+        data_service.save_pd_review_flow_rag(data, reporting_cycle, model, segment, monitoring_point, "scenario", scenario)
 
         from datetime import datetime
         timestamp = datetime.now().strftime("%H:%M:%S")
@@ -829,17 +740,20 @@ def register_callbacks(app) -> None:
     @app.callback(
         Output(layout.PD_REVIEW_FLOW_SAVE_BAR_ID, "children"),
         Input(layout.CONCLUSIONS_NOTES_ID, "value"),
+        Input(layout.COMPENSATING_CONTROLS_ID, "value"),
         Input(layout.PD_REVIEW_FLOW_PENDING_STORE_ID, "data"),
         State(layout.APPLIED_FILTERS_STORE_ID, "data"),
         State(layout.PD_REVIEW_FLOW_STATUS_STORE_ID, "data"),
         prevent_initial_call=True,
     )
-    def sync_pd_review_flow_save_bar(conclusions_notes, pending, applied, save_status):
+    def sync_pd_review_flow_save_bar(conclusions_notes, compensating_controls, pending, applied, save_status):
         filter_ctx, _reporting_cycle, monitoring_point = _resolve_pd_scope(data, applied)
         review_flow_rags = layout.pd_review_flow_rags(filter_ctx, monitoring_point)
         saved_commentary = layout.pd_reviewer_commentary(filter_ctx, monitoring_point)
+        saved_compensating = layout.pd_compensating_controls(filter_ctx, monitoring_point)
         commentary_changed = (conclusions_notes or "") != (saved_commentary or "")
+        compensating_changed = (compensating_controls or "") != (saved_compensating or "")
         save_bar = layout.build_pd_review_flow_save_bar(
-            pending or {}, review_flow_rags, save_status, commentary_changed,
+            pending or {}, review_flow_rags, save_status, commentary_changed, compensating_changed,
         )
         return [save_bar] if save_bar is not None else []

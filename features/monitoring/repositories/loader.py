@@ -108,6 +108,12 @@ def load_monitoring_thresholds() -> dict[str, list[dict[str, Any]]]:
         ("ead_thresholds", config.EAD_THRESHOLDS_SHEET_NAME),
         ("loss_thresholds", config.LOSS_THRESHOLDS_SHEET_NAME),
         ("scenario_test_thresholds", "Scenario_Test_Thresholds"),
+        # Chapter-1 RAG-Assignment fallback rules, keyed by
+        # (Model Type, Component, Test), giving each test's behaviour by
+        # default count (< 15 vs >= 15): "Applicable" / "Non-Applicable" /
+        # "Fallback Amber". Loaded dynamically so the rules can change in the
+        # workbook without a code change (see resolve_pd_fallback_rule).
+        ("fallback_amber_rules", "fallback_amber_rules"),
     ):
         try:
             df = pd.read_excel(settings.monitoring_thresholds_file, sheet_name=sheet_name)
@@ -210,7 +216,17 @@ def load_pd_mev_catalog() -> dict[str, Any]:
     mev_long_names: dict[str, str] = {}
     mev_descriptions: dict[str, str] = {}
     model_transformed_mevs: dict[str, set[str]] = {}
+    # A model can own different MEVs per segment (e.g. PD Model B's Defensive
+    # rows use HPI/UNEMP while its Cyclical rows use CRE_PRICE/OILPRICE/GDP) --
+    # tracked per (model, mnemonic) so the catalog can tag each MEV with the
+    # segment(s) it actually belongs to, instead of flattening every segment's
+    # MEVs into one undifferentiated set per model.
+    model_mev_segments: dict[str, dict[str, set[str]]] = {}
     model_mev_contributions: dict[str, dict[str, float]] = {}
+    # Per-segment contributions, keyed by (model, segment, mnemonic) so the
+    # Post-Scenario MEV Summary can show a specific segment's own weights instead
+    # of the segment-collapsed, last-write-wins ``model_mev_contributions``.
+    model_mev_segment_contributions: dict[str, dict[str, dict[str, float]]] = {}
     for _, row in desc_df.iterrows():
         model_key = str(row.get("Model Name", "")).strip()
         segment = str(row.get("Segment", "")).strip()
@@ -228,11 +244,17 @@ def load_pd_mev_catalog() -> dict[str, Any]:
             mev_descriptions[mnemonic] = description
         if model_key and mnemonic:
             model_transformed_mevs.setdefault(model_key, set()).add(mnemonic)
+        if model_key and mnemonic and segment:
+            model_mev_segments.setdefault(model_key, {}).setdefault(mnemonic, set()).add(segment)
         if model_key and mnemonic and contribution is not None:
             try:
-                model_mev_contributions.setdefault(model_key, {})[mnemonic] = float(contribution)
+                contribution_value = float(contribution)
             except (TypeError, ValueError):
-                pass
+                contribution_value = None
+            if contribution_value is not None:
+                model_mev_contributions.setdefault(model_key, {})[mnemonic] = contribution_value
+                if segment:
+                    model_mev_segment_contributions.setdefault(model_key, {}).setdefault(segment, {})[mnemonic] = contribution_value
 
     # -- scenario (all scenarios): time series per model+MEV+scenario
     ts_df = pd.read_excel(
@@ -322,6 +344,7 @@ def load_pd_mev_catalog() -> dict[str, Any]:
                 "scenario_series": scenario_series,
                 "scenario_series_by_cycle": scenario_series_by_cycle,
                 "scenario_quarter_zero_by_cycle": scenario_quarter_zero_by_cycle,
+                "segments": sorted(model_mev_segments.get(model_key, {}).get(mev_name, set())),
             }
 
         contributions = {}
@@ -329,6 +352,13 @@ def load_pd_mev_catalog() -> dict[str, Any]:
         for mnemonic, value in raw_contribs.items():
             display_name = mev_long_names.get(mnemonic, mnemonic)
             contributions[display_name] = value
+
+        contributions_by_segment: dict[str, dict[str, float]] = {}
+        for segment_key, seg_contribs in model_mev_segment_contributions.get(model_key, {}).items():
+            seg_map = {}
+            for mnemonic, value in seg_contribs.items():
+                seg_map[mev_long_names.get(mnemonic, mnemonic)] = value
+            contributions_by_segment[segment_key] = seg_map
 
         catalog[model_name] = {
             "model_type": model_types.get(model_key, ""),
@@ -338,6 +368,7 @@ def load_pd_mev_catalog() -> dict[str, Any]:
             "severe_scenario_date": "",
             "mevs": mevs,
             "contributions": contributions,
+            "contributions_by_segment": contributions_by_segment,
         }
 
     # -- Model Use Case / Cycle -> Scenario: the Scenario filter's options are
@@ -412,6 +443,8 @@ _OPTIONAL_REVIEW_TEXT_COLUMNS = (
     "rag_pre_mitig",
     "rag_post_mitig",
     "reviewer_commentary",
+    "compensating_controls",  # see the matching comment on _PD_TEXT_COLUMNS in this module
+    "scenario",  # see the matching comment on _PD_TEXT_COLUMNS in this module
 )
 
 
@@ -631,6 +664,18 @@ _PD_TEXT_COLUMNS = (
     "rag_pre_mitig",
     "rag_post_mitig",
     "reviewer_commentary",
+    # The reviewer's compensating-controls justification for the Post
+    # Mitigation RAG (the judgement/controls that move Pre-Mitigation ->
+    # Post-Mitigation). Free text, saved/read exactly like reviewer_commentary
+    # (self-healing column, see _update_review_flow_field). PD only for now;
+    # LGD/EAD would add it to their own *_TEXT_COLUMNS when rolled out there.
+    "compensating_controls",
+    # Not a reviewer-facing RAG/commentary field -- the Scenario filter value
+    # in effect the last time this row's review flow was saved, so Overview's
+    # MEV Range can look up the scenario each row was actually reviewed under
+    # instead of assuming a single portfolio-wide default (see
+    # save_pd_review_flow_rag_changes).
+    "scenario",
 )
 
 # The horizons each per-horizon row is replicated to when its ``horizon`` cell
@@ -700,6 +745,8 @@ _LGD_TEXT_COLUMNS = (
     "rag_pre_mitig",
     "rag_post_mitig",
     "reviewer_commentary",
+    "compensating_controls",  # see the matching comment on _PD_TEXT_COLUMNS
+    "scenario",  # see the matching comment on _PD_TEXT_COLUMNS
 )
 
 _EAD_TEXT_COLUMNS = (
@@ -707,6 +754,8 @@ _EAD_TEXT_COLUMNS = (
     "rag_pre_mitig",
     "rag_post_mitig",
     "reviewer_commentary",
+    "compensating_controls",  # see the matching comment on _PD_TEXT_COLUMNS
+    "scenario",  # see the matching comment on _PD_TEXT_COLUMNS
 )
 
 
@@ -773,7 +822,7 @@ def update_pd_review_flow_rag(
 ) -> int:
     """Write ``new_value`` for ``field`` into the ``PD_Performance_Metrics`` sheet, in place.
 
-    ``field`` is one of ``rag_post_sr`` / ``rag_pre_mitig`` / ``rag_post_mitig`` / ``reviewer_commentary``.
+    ``field`` is one of ``rag_post_sr`` / ``rag_pre_mitig`` / ``rag_post_mitig`` / ``reviewer_commentary`` / ``scenario``.
     """
     return _update_review_flow_field(
         PD_AGGREGATED_SHEET_NAME, _PD_TEXT_COLUMNS,
@@ -786,7 +835,7 @@ def update_lgd_review_flow_rag(
 ) -> int:
     """Write ``new_value`` for ``field`` into the ``LGD_Performance_Metrics`` sheet, in place.
 
-    ``field`` is one of ``rag_post_sr`` / ``rag_pre_mitig`` / ``rag_post_mitig`` / ``reviewer_commentary``.
+    ``field`` is one of ``rag_post_sr`` / ``rag_pre_mitig`` / ``rag_post_mitig`` / ``reviewer_commentary`` / ``scenario``.
     """
     return _update_review_flow_field(
         LGD_AGGREGATED_SHEET_NAME, _LGD_TEXT_COLUMNS,
@@ -799,7 +848,7 @@ def update_ead_review_flow_rag(
 ) -> int:
     """Write ``new_value`` for ``field`` into the ``EAD_Performance_Metrics`` sheet, in place.
 
-    ``field`` is one of ``rag_post_sr`` / ``rag_pre_mitig`` / ``rag_post_mitig`` / ``reviewer_commentary``.
+    ``field`` is one of ``rag_post_sr`` / ``rag_pre_mitig`` / ``rag_post_mitig`` / ``reviewer_commentary`` / ``scenario``.
     """
     return _update_review_flow_field(
         EAD_AGGREGATED_SHEET_NAME, _EAD_TEXT_COLUMNS,
@@ -937,6 +986,7 @@ def load_pd_performance_data_from_aggregated() -> dict[str, Any]:
     pd_segment_models = _invert_str_list_map(pd_model_segments)
     lgd_model_segments = _build_model_segment_map_from_sheet(LGD_AGGREGATED_SHEET_NAME)
     ead_model_segments = _build_model_segment_map_from_sheet(EAD_AGGREGATED_SHEET_NAME)
+    loss_model_segments = _build_model_segment_map_from_sheet(LOSS_AGGREGATED_SHEET_NAME)
 
     monitoring_thresholds = load_monitoring_thresholds()
 
@@ -988,6 +1038,8 @@ def load_pd_performance_data_from_aggregated() -> dict[str, Any]:
         "lgd_segment_models": _invert_str_list_map(lgd_model_segments),
         "ead_model_segments": ead_model_segments,
         "ead_segment_models": _invert_str_list_map(ead_model_segments),
+        "loss_model_segments": loss_model_segments,
+        "loss_segment_models": _invert_str_list_map(loss_model_segments),
         "lgd_model_segment_cycles": _build_model_segment_cycle_map_from_sheet(LGD_AGGREGATED_SHEET_NAME),
         "ead_model_segment_cycles": _build_model_segment_cycle_map_from_sheet(EAD_AGGREGATED_SHEET_NAME),
         "mev_scenarios_by_cycle": mev_scenarios_by_cycle,

@@ -58,17 +58,6 @@ def test_model_toggle_label_uses_descriptive_name():
     assert selectors.model_toggle_label(["Model A", "Model C"], options, False) == "2 models selected"
 
 
-def test_models_in_group_reads_descriptive_groups(monkeypatch):
-    monkeypatch.setitem(
-        selectors.SAAS_PAGE_DATA,
-        "descriptive_groups",
-        {"PD Model D": ["PD_model_d", "PD_model_e"], "PD Model A": ["PD_model_a"]},
-    )
-    assert selectors.models_in_group("PD Model D") == ["PD_model_d", "PD_model_e"]
-    assert selectors.models_in_group("PD Model A") == ["PD_model_a"]
-    assert selectors.models_in_group("Unknown") == []
-
-
 def test_group_effective_models_groups_children_under_parent(monkeypatch):
     # Two Model Names sharing a Descriptive Name collapse into one parent group
     # (even when not adjacent in the effective list); a model that is its own

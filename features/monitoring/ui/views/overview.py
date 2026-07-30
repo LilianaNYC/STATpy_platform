@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections import Counter
 from textwrap import wrap
+from urllib.parse import urlencode
 
 import plotly.graph_objects as go
 from dash import dcc, html
@@ -108,6 +109,15 @@ _RAG_FLOW_STAGES = [
     ("Pre Mitigation RAG", "Pre Mitigation RAG"),
     ("Post Mitigation RAG", "Post Mitigation RAG"),
 ]
+# One definition per _RAG_FLOW_STAGES entry (same order) -- shared by the
+# card-level "i" help chip and the Sankey chart's own HTML column headers
+# (_rag_flow_column_headers).
+_RAG_FLOW_STAGE_DEFINITIONS = [
+    "Based on the results of tests applied at the modelled outcomes.",
+    "Reflects the impact of any subjective overlays and considers the post-subjective review.",
+    "Pre-Overlay RAG obtained from the trend of the post-subjective-review model RAG.",
+    "Post-Overlay RAG based on the residual risk of the model, including compensating controls.",
+]
 _RAG_FLOW_TONE_ORDER = ("Green", "Amber", "Red", "N/A")
 _RAG_FLOW_VALID_TONES = ("Green", "Amber", "Red")
 _RAG_FLOW_BAND_RANGES = {
@@ -196,8 +206,37 @@ _RAG_FLOW_THEME_PALETTES = {
 
 def _default_scenario(data: dict) -> str:
     from .....shared.repositories.filters_config import load_filter_config
-    scenarios = load_filter_config().get("scenarios") or []
-    return scenarios[0]["value"] if scenarios else "intsevere"
+    return load_filter_config()["scenarios"][0]["value"]
+
+
+def _latest_scenario_by_key(rows: list[dict], group: str, key_fn) -> dict:
+    """The saved Scenario (see loader.py's ``scenario`` column, surfaced onto
+    rows as ``"Scenario"`` by ``_pd_review_flow_rags``/
+    ``_review_flow_rags_from_metric_row``) for each ``key_fn(row)`` group's
+    most recent quarter within ``rows``. MEV Range is reporting-cycle-scoped,
+    not quarter-conditioned (see the module comment above), so this uses the
+    scenario the *latest* reviewed quarter was actually saved under -- keys
+    with no saved scenario at all (never reviewed) are omitted, and callers
+    fall back to ``_default_scenario`` for those. ``key_fn`` lets callers
+    group by (Model, Segment) (the Models chapter, and PD's Segments chapter,
+    which resolve per model) or by Segment alone (LGD/EAD's Segments chapter,
+    which already pools its Scenario Ranking/Sensitivity/MEV lookup across
+    every model sharing a segment -- see augment_segment_rows_with_post_subjective)."""
+    by_key: dict = {}
+    for row in rows:
+        if row["Model Group"] != group:
+            continue
+        by_key.setdefault(key_fn(row), []).append(row)
+    result: dict = {}
+    for key, key_rows in by_key.items():
+        periods = available_periods(key_rows)
+        if not periods:
+            continue
+        latest_row = next((row for row in key_rows if row["Monitoring Period"] == periods[-1]), None)
+        scenario = str((latest_row or {}).get("Scenario", "") or "").strip()
+        if scenario:
+            result[key] = scenario
+    return result
 
 
 def _pd_post_subjective_rag(data: dict, models: set[str], segment: str, reporting_cycle: str, scenario: str) -> dict[str, str]:
@@ -244,16 +283,30 @@ def _pd_post_subjective_rag(data: dict, models: set[str], segment: str, reportin
         "Sensitivity Analysis Metric": _metric("Sensitivity Analysis"),
         "MEV Range RAG": _rag("MEV Range"),
         "MEV Range Metric": _metric("MEV Range"),
+        # The scenario actually used to compute MEV Range above (the row's own
+        # saved scenario, or the portfolio-wide default when never reviewed --
+        # see _latest_scenario_by_key) -- surfaced separately from "Scenario"
+        # (the raw saved value, which can be empty) so callers always have a
+        # value to show, e.g. in a hover tooltip or escalation card.
+        "MEV Range Scenario": scenario,
     }
 
 
-def _lgd_ead_post_subjective_rag(data: dict, model_type: str, sensitivity_key: str, entity: str, reporting_cycle: str, scenario: str, level: str = "model") -> dict[str, str]:
+def _lgd_ead_post_subjective_rag(data: dict, model_type: str, sensitivity_key: str, entity: str, reporting_cycle: str, scenario: str, level: str = "model", model_segment: str = "All", segment_model: str | None = None) -> dict[str, str]:
     """``entity`` is a model name when ``level == "model"`` (Models chapter),
     or a segment name when ``level == "segment"``
     (Segments chapter) -- mirrors the ``(model, segment)`` scoping each tab's
-    own sensitivity-projections and MEV catalog already support. Segment
-    lookups resolve against ``f"{model_type} Model A"``, the sheet's single
-    model with segment-level rows."""
+    own sensitivity-projections and MEV catalog already support. ``model_segment``
+    is the real segment to use for the ``level == "model"`` case when the model
+    has no ``All`` aggregate row (see ``_chapter1_model_metric_rows``) -- the
+    Chapter 1 row itself is already standing in for that model's single real
+    segment, so its subjective-review columns must resolve against the same
+    segment. ``segment_model`` is the real owning model to use for the
+    ``level == "segment"`` case -- more than one model can own the same
+    segment name (e.g. both LGD Model A and LGD Model B have "O&M"), so this
+    must be the specific model the Segments-chapter row is actually showing,
+    not a fixed stand-in model; defaults to ``f"{model_type} Model A"`` only
+    when the caller doesn't know the real model."""
     from .post_subjective import (
         PostSubjectiveConfig, _fmt_pct, _impact_summary, _mev_range_summary, _projection_rows,
         _scenario_ranking_summary, _sensitivity_threshold, resolve_scenario_selection,
@@ -263,7 +316,7 @@ def _lgd_ead_post_subjective_rag(data: dict, model_type: str, sensitivity_key: s
         prefix=model_type.lower(), label=model_type, model_type=model_type,
         sensitivity_key=sensitivity_key, scenario_filter_id="overview-unused",
     )
-    model, segment = (entity, "All") if level == "model" else (f"{model_type} Model A", entity)
+    model, segment = (entity, model_segment) if level == "model" else (segment_model or f"{model_type} Model A", entity)
     all_rows = _projection_rows(data.get(sensitivity_key) or [], reporting_cycle, model, segment)
     if all_rows:
         selected = resolve_scenario_selection(all_rows, None)
@@ -280,9 +333,9 @@ def _lgd_ead_post_subjective_rag(data: dict, model_type: str, sensitivity_key: s
         sensitivity_rag = "N/A"
         sensitivity_metric = "—"
     if level == "segment":
-        mev_summary = _mev_range_summary(cfg, data, "All", entity, reporting_cycle, scenario)
+        mev_summary = _mev_range_summary(cfg, data, model, entity, reporting_cycle, scenario)
     else:
-        mev_summary = _mev_range_summary(cfg, data, entity, "All", reporting_cycle, scenario)
+        mev_summary = _mev_range_summary(cfg, data, entity, segment, reporting_cycle, scenario)
     return {
         "Transition Matrix RAG": "N/A",
         "Transition Matrix Metric": "—",
@@ -292,6 +345,7 @@ def _lgd_ead_post_subjective_rag(data: dict, model_type: str, sensitivity_key: s
         "Sensitivity Analysis Metric": sensitivity_metric,
         "MEV Range RAG": mev_summary["rag"],
         "MEV Range Metric": mev_summary["metric"],
+        "MEV Range Scenario": scenario,  # see the matching comment on _pd_post_subjective_rag
     }
 
 
@@ -299,7 +353,13 @@ def augment_rows_with_post_subjective(rows: list[dict], data: dict, reporting_cy
     """Merge Transition Matrix / Scenario Ranking / Sensitivity / MEV Range RAG onto
     each row, keyed by (Model Group, Model, Segment) so every quarter row for a
     given model within this reporting cycle carries the same cycle-level verdict."""
-    scenario = _default_scenario(data)
+    def _model_segment_key(row: dict) -> tuple[str, str]:
+        return row["Model"], row.get("Segment", "All")
+
+    default_scenario = _default_scenario(data)
+    pd_scenarios = _latest_scenario_by_key(rows, "PD", _model_segment_key)
+    lgd_scenarios = _latest_scenario_by_key(rows, "LGD", _model_segment_key)
+    ead_scenarios = _latest_scenario_by_key(rows, "EAD", _model_segment_key)
     sidecar: dict[tuple[str, str, str], dict[str, str]] = {}
 
     pd_keys = {(row["Model"], row.get("Segment", "All")) for row in rows if row["Model Group"] == "PD"}
@@ -308,15 +368,20 @@ def augment_rows_with_post_subjective(rows: list[dict], data: dict, reporting_cy
         # the PD Performance tab's own convention (see _ctx_store_keys).
         ctx_segment = "all" if segment == "All" else segment
         models = {model}
+        scenario = pd_scenarios.get((model, segment), default_scenario)
         sidecar[("PD", model, segment)] = _pd_post_subjective_rag(data, models, ctx_segment, reporting_cycle, scenario)
     # Sourced from ``rows`` itself so the sidecar stays aligned with whatever
-    # model rows the Overview page is currently surfacing for LGD and EAD.
-    lgd_models = {row["Model"] for row in rows if row["Model Group"] == "LGD"}
-    ead_models = {row["Model"] for row in rows if row["Model Group"] == "EAD"}
-    for model in lgd_models:
-        sidecar[("LGD", model, "All")] = _lgd_ead_post_subjective_rag(data, "LGD", "lgd_sensitivity_projections", model, reporting_cycle, scenario)
-    for model in ead_models:
-        sidecar[("EAD", model, "All")] = _lgd_ead_post_subjective_rag(data, "EAD", "ead_sensitivity_projections", model, reporting_cycle, scenario)
+    # model rows the Overview page is currently surfacing for LGD and EAD --
+    # including a model's real segment when it's standing in for a missing
+    # ``All`` aggregate row (see ``_chapter1_model_metric_rows``).
+    lgd_keys = {(row["Model"], row.get("Segment", "All")) for row in rows if row["Model Group"] == "LGD"}
+    ead_keys = {(row["Model"], row.get("Segment", "All")) for row in rows if row["Model Group"] == "EAD"}
+    for model, segment in lgd_keys:
+        scenario = lgd_scenarios.get((model, segment), default_scenario)
+        sidecar[("LGD", model, segment)] = _lgd_ead_post_subjective_rag(data, "LGD", "lgd_sensitivity_projections", model, reporting_cycle, scenario, model_segment=segment)
+    for model, segment in ead_keys:
+        scenario = ead_scenarios.get((model, segment), default_scenario)
+        sidecar[("EAD", model, segment)] = _lgd_ead_post_subjective_rag(data, "EAD", "ead_sensitivity_projections", model, reporting_cycle, scenario, model_segment=segment)
 
     for row in rows:
         key = (row["Model Group"], row["Model"], row.get("Segment", "All"))
@@ -326,22 +391,44 @@ def augment_rows_with_post_subjective(rows: list[dict], data: dict, reporting_cy
 
 def augment_segment_rows_with_post_subjective(rows: list[dict], data: dict, reporting_cycle: str) -> list[dict]:
     """Segments-chapter equivalent of ``augment_rows_with_post_subjective``,
-    keyed by (Model Group, Segment): PD pools every PD model per segment
-    (there's no single "model" to key off of), while LGD/EAD look up their
-    own per-segment sensitivity/MEV data directly (see
+    keyed by (Model Group, Model, Segment): more than one PD model can own the
+    same segment name (e.g. both PD Model A and PD Model B have "Cyclical"),
+    and _pd_segment_rows already disambiguates by model, so this looks up
+    each row's Post Subjective Review data (Transition Matrix, Scenario
+    Ranking, Sensitivity Analysis, MEV Range) scoped to that single model
+    too -- previously it pooled every PD model sharing the segment, which
+    made a row labelled e.g. "PD Model B - Cyclical" show a MEV Range count
+    that actually spanned every Cyclical-owning model, not just Model B.
+    LGD/EAD look up their own per-segment sensitivity/MEV data directly (see
     _lgd_ead_post_subjective_rag's ``level="segment"``). Loss has no Post
     Subjective Review columns, so it's left out entirely."""
-    scenario = _default_scenario(data)
-    all_pd_models = set(data.get("model_names", []))
-    sidecar: dict[tuple[str, str], dict[str, str]] = {}
-    for segment in {row["Segment"] for row in rows if row["Model Group"] == "PD"}:
-        sidecar[("PD", segment)] = _pd_post_subjective_rag(data, all_pd_models, segment, reporting_cycle, scenario)
+    def _model_segment_key(row: dict) -> tuple[str, str]:
+        return row["Model"], row["Segment"]
+
+    default_scenario = _default_scenario(data)
+    pd_scenarios = _latest_scenario_by_key(rows, "PD", _model_segment_key)
+    # LGD/EAD pool their Scenario Ranking/Sensitivity/MEV lookup across every
+    # model sharing a segment (one result reused for all of them, see below),
+    # so the saved scenario is likewise resolved per Segment alone here, not
+    # per (Model, Segment).
+    lgd_scenarios = _latest_scenario_by_key(rows, "LGD", lambda row: row["Segment"])
+    ead_scenarios = _latest_scenario_by_key(rows, "EAD", lambda row: row["Segment"])
+    sidecar: dict[tuple[str, str, str], dict[str, str]] = {}
+    for model, segment in {(row["Model"], row["Segment"]) for row in rows if row["Model Group"] == "PD"}:
+        scenario = pd_scenarios.get((model, segment), default_scenario)
+        sidecar[("PD", model, segment)] = _pd_post_subjective_rag(data, {model}, segment, reporting_cycle, scenario)
     for segment in {row["Segment"] for row in rows if row["Model Group"] == "LGD"}:
-        sidecar[("LGD", segment)] = _lgd_ead_post_subjective_rag(data, "LGD", "lgd_sensitivity_projections", segment, reporting_cycle, scenario, level="segment")
+        scenario = lgd_scenarios.get(segment, default_scenario)
+        result = _lgd_ead_post_subjective_rag(data, "LGD", "lgd_sensitivity_projections", segment, reporting_cycle, scenario, level="segment")
+        for model in {row["Model"] for row in rows if row["Model Group"] == "LGD" and row["Segment"] == segment}:
+            sidecar[("LGD", model, segment)] = result
     for segment in {row["Segment"] for row in rows if row["Model Group"] == "EAD"}:
-        sidecar[("EAD", segment)] = _lgd_ead_post_subjective_rag(data, "EAD", "ead_sensitivity_projections", segment, reporting_cycle, scenario, level="segment")
+        scenario = ead_scenarios.get(segment, default_scenario)
+        result = _lgd_ead_post_subjective_rag(data, "EAD", "ead_sensitivity_projections", segment, reporting_cycle, scenario, level="segment")
+        for model in {row["Model"] for row in rows if row["Model Group"] == "EAD" and row["Segment"] == segment}:
+            sidecar[("EAD", model, segment)] = result
     for row in rows:
-        row.update(sidecar.get((row["Model Group"], row["Segment"]), {}))
+        row.update(sidecar.get((row["Model Group"], row.get("Model", ""), row["Segment"]), {}))
     return rows
 
 
@@ -532,60 +619,24 @@ def _rag_flow_palette(theme: str) -> dict[str, object]:
     return _RAG_FLOW_THEME_PALETTES["dark" if theme == "dark" else "light"]
 
 
-def _rag_flow_entity_label(row: dict) -> str:
+def _rag_flow_entity_label(row: dict, entity_kind: str = "model") -> str:
     group = str(row.get("Model Group", "") or "").strip()
     model = str(row.get("Model", "") or "").strip()
     segment = str(row.get("Segment", "") or "").strip()
-    # A real (non-"All") segment takes precedence over the model name -- more
-    # than one model within a group can cover the same segment, so combining
-    # both disambiguates which model's data this row shows.
-    if segment and segment != "All":
+    # The Segments chapter combines model + segment because more than one
+    # model within a group can cover the same segment name, so the pair
+    # disambiguates which model's data a row shows. The Models chapter has
+    # one row per model regardless of which segment (if any) it's standing in
+    # for -- e.g. a model whose Chapter 1 row falls back to its one real
+    # segment because it has no "All" aggregate row (see
+    # _chapter1_model_metric_rows) still reads as just that model's name.
+    if entity_kind == "segment" and segment and segment != "All":
         entity = f"{model} · {segment}" if model else segment
     else:
         entity = model
     if group and entity and not entity.lower().startswith(group.lower()):
         return f"{group} {entity}"
     return entity or group
-
-
-def _rag_flow_help_chip() -> html.Div:
-    definitions = [
-        ("Performance RAG", "Based on the results of tests applied at the modelled outcomes."),
-        ("Post Subjective Review", "Reflects the impact of any subjective overlays and considers the post-subjective review."),
-        ("Pre Mitigation", "Pre-Overlay RAG obtained from the trend of the post-subjective-review model RAG."),
-        ("Post Mitigation", "Post-Overlay RAG based on the residual risk of the model, including compensating controls."),
-    ]
-    return html.Div(
-        className="overview-help",
-        children=[
-            html.Button(
-                "i",
-                type="button",
-                className="overview-help-chip",
-                title="RAG definitions",
-                **{"aria-label": "Show RAG migration journey definitions"},
-            ),
-            html.Div(
-                className="overview-help-tooltip overview-help-tooltip-rag-flow",
-                children=[
-                    html.Div("RAG definitions", className="overview-help-tooltip-title"),
-                    html.Div(
-                        className="overview-help-tooltip-list",
-                        children=[
-                            html.Div(
-                                className="overview-help-tooltip-item",
-                                children=[
-                                    html.Strong(label),
-                                    html.Span(copy),
-                                ],
-                            )
-                            for label, copy in definitions
-                        ],
-                    ),
-                ],
-            ),
-        ],
-    )
 
 
 def _wrap_rag_flow_label(label: str, max_chars: int) -> str:
@@ -605,13 +656,24 @@ def _rag_flow_chart_height(flow_rows: list[dict[str, object]], compact: bool = F
     return 480 if compact else 460
 
 
-def _rag_flow_models(current_rows: list[dict]) -> list[dict[str, object]]:
+def _rag_flow_models(current_rows: list[dict], entity_kind: str = "model") -> list[dict[str, object]]:
     flow_rows: list[dict[str, object]] = []
     for row in current_rows:
-        entity_label = _rag_flow_entity_label(row)
+        entity_label = _rag_flow_entity_label(row, entity_kind)
         if not entity_label:
             continue
-        tones = [_normalize_rag_flow_tone(row.get(column)) for column, _ in _RAG_FLOW_STAGES]
+        if row.get("Model Group") == "Loss":
+            # Loss has no review/mitigation pipeline -- there's nothing in
+            # "Post Subjective Review RAG" / "Pre Mitigation RAG" / "Post
+            # Mitigation RAG" to read, so its Overall (Performance) RAG
+            # carries flat through all four stages instead of being dropped
+            # from the journey entirely (mirrors how
+            # _final_post_mitigation_distribution_card folds Loss into the
+            # Final RAG buckets using the same value).
+            overall_tone = _normalize_rag_flow_tone(row.get("Overall RAG"))
+            tones = [overall_tone] * len(_RAG_FLOW_STAGES)
+        else:
+            tones = [_normalize_rag_flow_tone(row.get(column)) for column, _ in _RAG_FLOW_STAGES]
         # A journey is only displayed when all four stages are explicitly
         # available. Missing or unrecognised values are not promoted into an
         # inferred N/A path.
@@ -625,6 +687,20 @@ def _rag_flow_models(current_rows: list[dict]) -> list[dict[str, object]]:
             "tones": tones,
         })
     return flow_rows
+
+
+def _rag_flow_visible_stages(row: dict[str, object]) -> list[tuple[tuple[str, str], str]]:
+    """Which (stage, tone) pairs the entity browser shows for one journey row.
+
+    Loss's row carries its Overall RAG flat across all four ``tones`` slots
+    so it still counts toward the Sankey's stage totals and the Final RAG
+    buckets (see ``_rag_flow_models``), but repeating that single value as
+    four identical chips would misrepresent it as having gone through a
+    review/mitigation pipeline it doesn't have -- so its row only displays
+    the first (Performance RAG) stage.
+    """
+    stages = list(zip(_RAG_FLOW_STAGES, row["tones"]))
+    return stages[:1] if row.get("Model Group") == "Loss" else stages
 
 
 def _rag_flow_summary(flow_rows: list[dict[str, object]]) -> dict[str, int]:
@@ -654,6 +730,7 @@ def _rag_flow_summary(flow_rows: list[dict[str, object]]) -> dict[str, int]:
         "pd_models": by_group.get("PD", 0),
         "lgd_models": by_group.get("LGD", 0),
         "ead_models": by_group.get("EAD", 0),
+        "loss_models": by_group.get("Loss", 0),
     }
 
 
@@ -684,7 +761,7 @@ def _rag_flow_entity_browser(
     selection: dict[str, object] | None,
     entity_kind: str,
 ) -> html.Div:
-    flow_rows = _rag_flow_models(current_rows)
+    flow_rows = _rag_flow_models(current_rows, entity_kind)
     selected_rows = _rag_flow_selection_rows(flow_rows, selection)
     scope = "segment" if entity_kind == "segment" else "model"
     entity_label = "segment" if scope == "segment" else "model"
@@ -802,7 +879,7 @@ def _rag_flow_entity_browser(
                                             html.Strong(tone_value),
                                         ],
                                     )
-                                    for (_, stage_name), tone_value in zip(_RAG_FLOW_STAGES, row["tones"])
+                                    for (_, stage_name), tone_value in _rag_flow_visible_stages(row)
                                 ],
                             ),
                         ],
@@ -814,10 +891,66 @@ def _rag_flow_entity_browser(
     )
 
 
-def _final_post_mitigation_distribution_card(current_rows: list[dict], entity_kind: str = "model") -> html.Div:
+def _chapter1_gap_card(exclusions: list[dict]) -> html.Div | None:
+    """List card for models Chapter 1 had to drop -- 2+ real segments but no
+    "All" aggregate row, so there's no single row to represent them (see
+    _pd_chapter1_scope / _chapter1_model_metric_rows in domain/overview.py).
+    Same value/label/list inner layout as its neighbours in this row (Models
+    monitored, Final Red/Amber/Green -- see _hero_kpi), just with a dashed
+    neutral border (borrowed from the PD/LGD/EAD Performance tabs' "Chapter 2"
+    RAG-lifecycle card) instead of a solid RAG-tinted one, since this card is
+    a data-gap notice rather than a RAG bucket. No RAG dot on the list items --
+    there's no per-model red/amber/green assessment to show here, so a dot
+    would just be decorative and imply a status judgement that doesn't exist.
+    Reuses existing theme-aware classes throughout, so no new dark-mode rules
+    are needed."""
+    if not exclusions:
+        return None
+    tooltip = "Segment data exists but there's no portfolio-wide (e.g. All) aggregate to summarize in this section."
+    return html.Div(
+        className="overview-hero-kpi overview-hero-kpi-neutral overview-hero-kpi-with-list overview-hero-kpi-dashed",
+        children=[
+            html.Div(
+                [
+                    html.Div(str(len(exclusions)), className="overview-hero-kpi-value"),
+                    html.Div(
+                        [
+                            "Models excluded",
+                            html.Span(
+                                "?", className="pd-info-chip overview-hero-kpi-info-chip", role="img",
+                                **{"aria-label": tooltip, "title": tooltip},
+                            ),
+                        ],
+                        className="overview-hero-kpi-label",
+                    ),
+                ],
+                className="overview-hero-kpi-main",
+            ),
+            html.Div(
+                [
+                    html.Span(
+                        f"{item['Model']} ({', '.join(item['Segments'])})",
+                        className="overview-hero-kpi-list-item",
+                    )
+                    for item in exclusions
+                ],
+                className="overview-hero-kpi-list",
+            ),
+        ],
+    )
+
+
+def _final_post_mitigation_distribution_card(
+    current_rows: list[dict], entity_kind: str = "model", exclusions: list[dict] | None = None,
+) -> html.Div:
     is_segment = entity_kind == "segment"
     summary = segment_overview_summary(current_rows) if is_segment else overview_summary(current_rows)
-    flow_rows = _rag_flow_models(current_rows)
+    # Loss has no review/mitigation pipeline, so _rag_flow_models carries its
+    # Overall (Performance) RAG flat through all four stages instead of
+    # dropping it from the journey -- that flat tone is what lands in
+    # tones[3] here too, so Loss folds into the same Red/Amber/Green buckets
+    # as everything else with no special-casing needed.
+    flow_rows = _rag_flow_models(current_rows, entity_kind)
     final_models = {"Red": [], "Amber": [], "Green": [], "N/A": []}
     for row in flow_rows:
         tones = row["tones"]
@@ -832,54 +965,37 @@ def _final_post_mitigation_distribution_card(current_rows: list[dict], entity_ki
     amber_models = _ordered_unique(final_models["Amber"])
     green_models = _ordered_unique(final_models["Green"])
 
-    loss_rows = [row for row in current_rows if row.get("Model Group") == "Loss"]
-    loss_models = []
-    for row in loss_rows:
-        label = _rag_flow_entity_label(row)
-        loss_models.append(f"{label} · {display_rag(row.get('Overall RAG'))}")
-    loss_models = _ordered_unique(loss_models)
-    loss_worst = "Green"
-    if loss_rows:
-        severity = {"Green": 1, "Amber": 2, "Red": 3, "N/A": 2}
-        loss_worst = max(
-            (effective_rag(row.get("Overall RAG")) for row in loss_rows),
-            key=lambda rag: severity.get(rag, 2),
-            default="Green",
-        )
+    kpis = [
+        _hero_kpi(
+            summary["segments"] if is_segment else summary["models"],
+            "Segments monitored" if is_segment else "Models monitored",
+            "blue",
+            description="Across every model group" if is_segment else "Across PD, LGD, EAD, and Loss",
+        ),
+        _hero_kpi(len(red_models), "Final Red", "Red", items=red_models or ["None in scope"]),
+        _hero_kpi(len(amber_models), "Final Amber", "Amber", items=amber_models or ["None in scope"]),
+        _hero_kpi(len(green_models), "Final Green", "Green", items=green_models or ["None in scope"]),
+    ]
+    gap_card = _chapter1_gap_card(exclusions)
+    if gap_card is not None:
+        kpis.append(gap_card)
 
+    kpis_class = "overview-hero-kpis overview-summary-kpis" + ("" if exclusions else " overview-summary-kpis-quad")
     return html.Div(
         className="section-card overview-summary-final-post-mitigation",
         children=[
             build_chart_header(
                 "Post Mitigation Distribution",
-                "Post Mitigation is treated as the final portfolio outcome for models with review coverage; Loss remains performance-only.",
+                "Post Mitigation is treated as the final portfolio outcome for models with review coverage; Loss's "
+                "Overall RAG (performance-only) is folded into the same buckets.",
             ),
-            html.Div(
-                className="overview-hero-kpis overview-summary-kpis",
-                children=[
-                    _hero_kpi(
-                        summary["segments"] if is_segment else summary["models"],
-                        "Segments monitored" if is_segment else "Models monitored",
-                        "blue",
-                        description="Across every model group" if is_segment else "Across PD, LGD, EAD, and Loss",
-                    ),
-                    _hero_kpi(len(red_models), "Final Red", "Red", items=red_models or ["None in scope"]),
-                    _hero_kpi(len(amber_models), "Final Amber", "Amber", items=amber_models or ["None in scope"]),
-                    _hero_kpi(len(green_models), "Final Green", "Green", items=green_models or ["None in scope"]),
-                    _hero_kpi(
-                        len(loss_models),
-                        "Loss performance-only",
-                        loss_worst,
-                        items=loss_models or ["No Loss models in scope"],
-                    ),
-                ],
-            ),
+            html.Div(className=kpis_class, children=kpis),
         ],
     )
 
 
 def _rag_flow_summary_card(current_rows: list[dict], theme: str, entity_kind: str = "model") -> html.Div:
-    rag_flow_summary = _rag_flow_summary(_rag_flow_models(current_rows))
+    rag_flow_summary = _rag_flow_summary(_rag_flow_models(current_rows, entity_kind))
     is_segment = entity_kind == "segment"
     entity_label = "segment" if is_segment else "model"
     entity_label_plural = "segments" if is_segment else "models"
@@ -895,27 +1011,35 @@ def _rag_flow_summary_card(current_rows: list[dict], theme: str, entity_kind: st
     return html.Div(
         className="section-card overview-summary-rag-flow",
         children=[
-            build_chart_header(
-                title,
-                header_copy,
-                extra_controls=_rag_flow_help_chip(),
-            ),
+            build_chart_header(title, header_copy),
             html.Div(
                 className="overview-rag-flow-graphs",
                 children=[
-                    dcc.Graph(
-                        id=desktop_graph_id,
-                        className="overview-rag-flow-graph overview-rag-flow-graph-desktop",
-                        figure=_rag_flow_sankey_figure(current_rows, theme, entity_kind=entity_kind),
-                        config=_GRAPH_CONFIG,
-                        style={"height": f"{_rag_flow_chart_height(_rag_flow_models(current_rows))}px"},
+                    html.Div(
+                        className="overview-rag-flow-graph-desktop",
+                        children=[
+                            _rag_flow_column_headers(),
+                            dcc.Graph(
+                                id=desktop_graph_id,
+                                className="overview-rag-flow-graph",
+                                figure=_rag_flow_sankey_figure(current_rows, theme, entity_kind=entity_kind),
+                                config=_GRAPH_CONFIG,
+                                style={"height": f"{_rag_flow_chart_height(_rag_flow_models(current_rows, entity_kind))}px"},
+                            ),
+                        ],
                     ),
-                    dcc.Graph(
-                        id=compact_graph_id,
-                        className="overview-rag-flow-graph overview-rag-flow-graph-compact",
-                        figure=_rag_flow_sankey_figure(current_rows, theme, compact=True, entity_kind=entity_kind),
-                        config=_GRAPH_CONFIG,
-                        style={"height": f"{_rag_flow_chart_height(_rag_flow_models(current_rows), compact=True)}px"},
+                    html.Div(
+                        className="overview-rag-flow-graph-compact",
+                        children=[
+                            _rag_flow_column_headers(compact=True),
+                            dcc.Graph(
+                                id=compact_graph_id,
+                                className="overview-rag-flow-graph",
+                                figure=_rag_flow_sankey_figure(current_rows, theme, compact=True, entity_kind=entity_kind),
+                                config=_GRAPH_CONFIG,
+                                style={"height": f"{_rag_flow_chart_height(_rag_flow_models(current_rows, entity_kind), compact=True)}px"},
+                            ),
+                        ],
                     ),
                 ],
             ),
@@ -931,7 +1055,8 @@ def _rag_flow_summary_card(current_rows: list[dict], theme: str, entity_kind: st
                         html.Span(f"{entity_label_plural.title()} in flow"),
                         html.Strong(
                             f"{rag_flow_summary['models']} {entity_label_plural} carried into the journey "
-                            f"({rag_flow_summary['pd_models']} PD, {rag_flow_summary['lgd_models']} LGD, {rag_flow_summary['ead_models']} EAD)"
+                            f"({rag_flow_summary['pd_models']} PD, {rag_flow_summary['lgd_models']} LGD, "
+                            f"{rag_flow_summary['ead_models']} EAD, {rag_flow_summary['loss_models']} Loss)"
                         ),
                     ]),
                     html.Div([
@@ -965,7 +1090,7 @@ def _rag_flow_sankey_figure(
     selection: dict[str, object] | None = None,
     entity_kind: str = "model",
 ) -> go.Figure:
-    flow_rows = _rag_flow_models(current_rows)
+    flow_rows = _rag_flow_models(current_rows, entity_kind)
     height = _rag_flow_chart_height(flow_rows, compact=compact)
     if not flow_rows:
         return _empty_figure("No review-to-mitigation flow data is available for the selected filters.", height=height, theme=theme)
@@ -979,14 +1104,15 @@ def _rag_flow_sankey_figure(
     link_colors = palette["link"]
     band_colors = palette["band"]
     text_color = "#e2e8f0" if is_dark else "#0f172a"
-    muted_color = "#94a3b8" if is_dark else "#64748b"
     stage_positions = [0.24, 1.12, 2.0, 2.88] if compact else [0.18, 1.08, 1.98, 2.88]
-    stage_font_size = 12 if compact else 14
     tone_font_size = 13 if compact else 15
-    stage_label_y = 0.955 if compact else 0.962
     left_label_room = 0.66 if compact else 0.72
     right_label_room = 0.42 if compact else 0.48
-    margin = dict(t=22, r=26, b=6, l=50) if compact else dict(t=26, r=30, b=8, l=60)
+    # Stage column labels/tooltips now render as an HTML header row above the
+    # chart (see _rag_flow_column_headers), matching the Model RAG Heatmap's
+    # _heatmap_column_headers pattern -- the plot itself no longer needs top
+    # margin reserved for its own label annotations.
+    margin = dict(t=0, r=26, b=6, l=50) if compact else dict(t=0, r=30, b=8, l=60)
     x_axis_range = [stage_positions[0] - left_label_room, stage_positions[-1] + right_label_room]
     tone_label_x = x_axis_range[0] + (0.05 if compact else 0.06)
     band_x0 = tone_label_x + (0.18 if compact else 0.22)
@@ -996,11 +1122,17 @@ def _rag_flow_sankey_figure(
         tone: (_RAG_FLOW_BAND_RANGES[tone][0] + _RAG_FLOW_BAND_RANGES[tone][1]) / 2
         for tone in _RAG_FLOW_TONE_ORDER
     }
+    # Loss's "tones" are its Performance RAG repeated across all four slots
+    # (see _rag_flow_models) purely so it still counts toward the Final RAG
+    # buckets elsewhere on the page -- it has no real review/mitigation
+    # pipeline, so the chart itself only plots it at stage 0 (Performance
+    # RAG) and draws no transition lines for it at all.
     stage_counts = {
         stage_index: Counter(
             row["tones"][stage_index]
             for row in selected_rows
             if isinstance(row.get("tones"), list) and len(row["tones"]) == len(_RAG_FLOW_STAGES)
+            and (stage_index == 0 or row.get("Model Group") != "Loss")
         )
         for stage_index in range(len(_RAG_FLOW_STAGES))
     }
@@ -1009,6 +1141,7 @@ def _rag_flow_sankey_figure(
             (row["tones"][stage_index], row["tones"][stage_index + 1])
             for row in selected_rows
             if isinstance(row.get("tones"), list) and len(row["tones"]) == len(_RAG_FLOW_STAGES)
+            and row.get("Model Group") != "Loss"
         )
         for stage_index in range(len(_RAG_FLOW_STAGES) - 1)
     }
@@ -1096,11 +1229,16 @@ def _rag_flow_sankey_figure(
     selected_entity_annotations: list[dict[str, object]] = []
     if active_row is not None:
         tones = active_row["tones"]
+        is_loss_row = active_row.get("Model Group") == "Loss"
         y_positions = [
             tone_centers[tone] + (0.032 if stage_index % 2 == 0 else -0.032)
             for stage_index, tone in enumerate(tones)
         ]
-        for stage_index in range(len(_RAG_FLOW_STAGES) - 1):
+        # Loss has no real review/mitigation transitions to draw (see the
+        # stage_counts/transition_counts note above) -- its highlighted path
+        # is a single point at stage 0, not a line across all four stages.
+        marker_stage_indices = [0] if is_loss_row else list(range(len(_RAG_FLOW_STAGES)))
+        for stage_index in [] if is_loss_row else range(len(_RAG_FLOW_STAGES) - 1):
             x0 = stage_positions[stage_index]
             x1 = stage_positions[stage_index + 1]
             dx = x1 - x0
@@ -1128,6 +1266,11 @@ def _rag_flow_sankey_figure(
             ))
 
         wrapped_entity = _wrap_rag_flow_label(active_entity, 15 if compact else 20)
+        annotation_stages = (
+            ((0, "right", -20, "right"),)
+            if is_loss_row
+            else ((0, "right", -20, "right"), (len(_RAG_FLOW_STAGES) - 1, "left", 13, "left"))
+        )
         selected_entity_annotations = [
             dict(
                 x=stage_positions[stage_index],
@@ -1142,23 +1285,20 @@ def _rag_flow_sankey_figure(
                 align=align,
                 font=dict(size=11 if compact else 12, color=text_color, family="Arial, sans-serif"),
             )
-            for stage_index, xanchor, xshift, align in (
-                (0, "right", -20, "right"),
-                (len(_RAG_FLOW_STAGES) - 1, "left", 13, "left"),
-            )
+            for stage_index, xanchor, xshift, align in annotation_stages
         ]
         fig.add_trace(go.Scatter(
-            x=stage_positions,
-            y=y_positions,
+            x=[stage_positions[index] for index in marker_stage_indices],
+            y=[y_positions[index] for index in marker_stage_indices],
             mode="markers",
             marker=dict(
                 size=17 if compact else 19,
-                color=[marker_colors[tone] for tone in tones],
+                color=[marker_colors[tones[index]] for index in marker_stage_indices],
                 line=dict(width=0),
             ),
             customdata=[
-                ["rag-entity", active_entity, _RAG_FLOW_STAGES[index][1], tone]
-                for index, tone in enumerate(tones)
+                ["rag-entity", active_entity, _RAG_FLOW_STAGES[index][1], tones[index]]
+                for index in marker_stage_indices
             ],
             hovertemplate="<b>%{customdata[1]}</b><br>%{customdata[2]}: %{customdata[3]}<extra></extra>",
             showlegend=False,
@@ -1182,17 +1322,6 @@ def _rag_flow_sankey_figure(
         margin=margin,
         font=dict(size=12, color=text_color),
         annotations=[
-            dict(
-                x=stage_positions[index],
-                y=stage_label_y,
-                xref="x",
-                yref="paper",
-                text=label,
-                showarrow=False,
-                font=dict(size=stage_font_size, color=muted_color),
-            )
-            for index, (_, label) in enumerate(_RAG_FLOW_STAGES)
-        ] + [
             dict(
                 x=tone_label_x,
                 y=(_RAG_FLOW_BAND_RANGES[tone][0] + _RAG_FLOW_BAND_RANGES[tone][1]) / 2,
@@ -1241,7 +1370,7 @@ def _rag_flow_sankey_figure(
                 x0=stage_positions[index],
                 x1=stage_positions[index],
                 y0=0.03,
-                y1=0.93,
+                y1=0.90,
                 line=dict(color=palette["divider"], width=1),
                 layer="below",
             )
@@ -1257,10 +1386,70 @@ def _rag_flow_sankey_figure(
             visible=False,
             fixedrange=True,
         ),
-        yaxis=dict(range=[0.0, 1.0], visible=False, fixedrange=True),
+        yaxis=dict(range=[0.0, 0.905], visible=False, fixedrange=True),
     )
     _apply_transparent_background(fig)
     return fig
+
+
+def _rag_flow_column_flex_weights(compact: bool) -> tuple[float, list[float], float]:
+    """Flex weights (left spacer, one per stage, right spacer) so an HTML
+    header row lines up with this chart's own stage_positions/label-room
+    layout above, without hard-coding the current coordinates twice."""
+    stage_positions = [0.24, 1.12, 2.0, 2.88] if compact else [0.18, 1.08, 1.98, 2.88]
+    left_label_room = 0.66 if compact else 0.72
+    right_label_room = 0.42 if compact else 0.48
+    gaps = [stage_positions[index + 1] - stage_positions[index] for index in range(len(stage_positions) - 1)]
+    column_widths = [
+        (gaps[index - 1] if index > 0 else gaps[0]) / 2 + (gaps[index] if index < len(gaps) else gaps[-1]) / 2
+        for index in range(len(stage_positions))
+    ]
+    spacer_left = max(0.0, left_label_room - column_widths[0] / 2)
+    spacer_right = max(0.0, right_label_room - column_widths[-1] / 2)
+    return spacer_left, column_widths, spacer_right
+
+
+def _rag_flow_column_headers(compact: bool = False) -> html.Div:
+    """HTML column headers for the RAG Migration Journey Sankey chart, styled
+    and behaved identically to the Model RAG Heatmap's own column headers
+    (``_heatmap_column_headers``): real, keyboard-focusable cells whose full
+    definitions appear on hover/focus via CSS, positioned above the chart so
+    its own xaxis no longer needs to render stage labels itself. Flex weights
+    are derived from the chart's stage_positions so the cells line up with
+    the Sankey columns underneath."""
+    spacer_left, column_widths, spacer_right = _rag_flow_column_flex_weights(compact)
+    cells = [
+        html.Div(
+            className="overview-heatmap-column-header-cell",
+            tabIndex=0,
+            style={"flex": column_widths[index]},
+            children=[
+                html.Span(stage_label, className="overview-heatmap-column-header-title"),
+                html.Div(
+                    className="overview-heatmap-column-tooltip",
+                    children=[
+                        html.Strong(stage_label),
+                        html.Span(_RAG_FLOW_STAGE_DEFINITIONS[index]),
+                    ],
+                ),
+            ],
+        )
+        for index, (_, stage_label) in enumerate(_RAG_FLOW_STAGES)
+    ]
+    # Horizontal padding mirrors the Sankey figure's own left/right margin
+    # (see the `margin` dict in _rag_flow_sankey_figure) so the flex-based
+    # spacer/column widths -- computed in data-coordinate space -- line up
+    # with the chart's actual plot area in pixel space underneath.
+    padding = "0 26px 0 50px" if compact else "0 30px 0 60px"
+    return html.Div(
+        className="overview-rag-flow-column-headers",
+        style={"padding": padding},
+        children=(
+            [html.Div(className="overview-rag-flow-column-spacer", style={"flex": spacer_left})]
+            + cells
+            + [html.Div(className="overview-rag-flow-column-spacer", style={"flex": spacer_right})]
+        ),
+    )
 
 
 def _rag_heatmap_figure(rows: list[dict], theme: str, columns: list[str] = RAG_COLUMNS) -> go.Figure:
@@ -1291,7 +1480,12 @@ def _rag_heatmap_figure(rows: list[dict], theme: str, columns: list[str] = RAG_C
             z_row.append(heatmap_z.get(rag, 0))
             text_row.append(_wrap_metric_text(metric) if has_metric else "")
             metric_hover = f"<br>Metric: {metric}" if has_metric else ""
-            custom_row.append([row["Model Group"], row["Model"], _heatmap_display_label(column), display_rag(rag), row.get("Monitoring Period", ""), metric_hover])
+            # MEV Range is the one column whose result depends on which
+            # Scenario was in effect (see augment_rows_with_post_subjective) --
+            # surfaced here so hovering it shows which scenario produced the
+            # RAG/metric shown, instead of leaving that silently invisible.
+            scenario_hover = f"<br>Scenario: {row.get('MEV Range Scenario')}" if column == "MEV Range RAG" and row.get("MEV Range Scenario") else ""
+            custom_row.append([row["Model Group"], row["Model"], _heatmap_display_label(column), display_rag(rag), row.get("Monitoring Period", ""), metric_hover, scenario_hover])
         z_values.append(z_row)
         text_values.append(text_row)
         customdata.append(custom_row)
@@ -1323,7 +1517,7 @@ def _rag_heatmap_figure(rows: list[dict], theme: str, columns: list[str] = RAG_C
         showscale=False,
         hovertemplate=(
             "%{customdata[0]} — %{customdata[1]}<br>%{customdata[2]}: %{customdata[3]}"
-            "%{customdata[5]}"
+            "%{customdata[5]}%{customdata[6]}"
             "<br>As of %{customdata[4]}<extra></extra>"
         ),
     ))
@@ -1382,13 +1576,20 @@ def _rag_trend_heatmap_figure(rows: list[dict], rag_column: str, visible_periods
     """Every model's RAG for ``rag_column``, one row per model and one column
     per quarter -- same read as the 1.2 heatmap, just with time on the x-axis
     instead of test dimensions."""
+    all_periods = available_periods(rows)
+    periods = [p for p in all_periods if visible_periods is None or p in set(visible_periods)]
+    period_set = set(periods)
+    # A model whose own history starts after (or ends before) the visible
+    # period window -- e.g. capping to an early Monitoring Point when this
+    # model's earliest quarter is later -- would otherwise still show up as a
+    # row with every cell "N/A". That's pure clutter, not information, so
+    # only keep models with at least one row inside the visible window.
+    models_in_window = {(row["Model Group"], row["Model"]) for row in rows if row["Monitoring Period"] in period_set}
     model_keys = sorted(
-        {(row["Model Group"], row["Model"]) for row in rows},
+        models_in_window,
         key=lambda key: (MODEL_GROUPS.index(key[0]) if key[0] in MODEL_GROUPS else 99, key[1]),
     )
     height = _rag_trend_heatmap_height(model_keys)
-    all_periods = available_periods(rows)
-    periods = [p for p in all_periods if visible_periods is None or p in set(visible_periods)]
     if not model_keys or not periods:
         return _empty_figure("No RAG trend data is available for the selected filters.", height=height, theme=theme)
 
@@ -1463,7 +1664,9 @@ def _segment_heatmap_figure(rows: list[dict], theme: str, columns: list[str] = R
             z_row.append(heatmap_z.get(rag, 0))
             text_row.append(_wrap_metric_text(metric) if has_metric else "")
             metric_hover = f"<br>Metric: {metric}" if has_metric else ""
-            custom_row.append([row["Model Group"], row["Segment"], _heatmap_display_label(column), display_rag(rag), row.get("Monitoring Period", ""), metric_hover, row.get("Model", "")])
+            # See the matching comment in _rag_heatmap_figure.
+            scenario_hover = f"<br>Scenario: {row.get('MEV Range Scenario')}" if column == "MEV Range RAG" and row.get("MEV Range Scenario") else ""
+            custom_row.append([row["Model Group"], row["Segment"], _heatmap_display_label(column), display_rag(rag), row.get("Monitoring Period", ""), metric_hover, row.get("Model", ""), scenario_hover])
         z_values.append(z_row)
         text_values.append(text_row)
         customdata.append(custom_row)
@@ -1489,7 +1692,7 @@ def _segment_heatmap_figure(rows: list[dict], theme: str, columns: list[str] = R
         showscale=False,
         hovertemplate=(
             "%{customdata[0]} — %{customdata[6]} — %{customdata[1]}<br>%{customdata[2]}: %{customdata[3]}"
-            "%{customdata[5]}"
+            "%{customdata[5]}%{customdata[7]}"
             "<br>As of %{customdata[4]}<extra></extra>"
         ),
     ))
@@ -1517,13 +1720,22 @@ def _segment_trend_heatmap_figure(rows: list[dict], rag_column: str, visible_per
     Segment) -- more than one model within a group can cover the same
     segment, so the model name disambiguates which model's data a row shows.
     """
+    all_periods = available_periods(rows)
+    periods = [p for p in all_periods if visible_periods is None or p in set(visible_periods)]
+    period_set = set(periods)
+    # See the matching comment in _rag_trend_heatmap_figure: drop rows with no
+    # data at all inside the visible period window rather than showing an
+    # all-"N/A" row.
+    segments_in_window = {
+        (row["Model Group"], row.get("Model", ""), row["Segment"])
+        for row in rows
+        if row["Monitoring Period"] in period_set
+    }
     segment_keys = sorted(
-        {(row["Model Group"], row.get("Model", ""), row["Segment"]) for row in rows},
+        segments_in_window,
         key=lambda key: (MODEL_GROUPS.index(key[0]) if key[0] in MODEL_GROUPS else 99, key[1], key[2]),
     )
     height = _segment_trend_heatmap_height(segment_keys)
-    all_periods = available_periods(rows)
-    periods = [p for p in all_periods if visible_periods is None or p in set(visible_periods)]
     if not segment_keys or not periods:
         return _empty_figure("No RAG trend data is available for the selected filters.", height=height, theme=theme)
 
@@ -1577,7 +1789,10 @@ def _segment_trend_heatmap_figure(rows: list[dict], rag_column: str, visible_per
 # ---------------------------------------------------------------------------
 
 
-def _build_summary_section(current_rows: list[dict], findings: list[dict], monitoring_point: str, theme: str) -> html.Section:
+def _build_summary_section(
+    current_rows: list[dict], findings: list[dict], monitoring_point: str, theme: str,
+    chapter1_exclusions: list[dict] | None = None,
+) -> html.Section:
     summary = overview_summary(current_rows)
 
     return html.Section(
@@ -1591,7 +1806,7 @@ def _build_summary_section(current_rows: list[dict], findings: list[dict], monit
                 "Red" if summary["red"] else ("Amber" if summary["amber"] else "Green"),
                 {"show_rag": False},
             ),
-            _final_post_mitigation_distribution_card(current_rows),
+            _final_post_mitigation_distribution_card(current_rows, exclusions=chapter1_exclusions),
             _rag_flow_summary_card(current_rows, theme),
         ],
     )
@@ -1967,11 +2182,20 @@ def _esc_tier_chip(tier: str, count: int) -> html.Span:
     )
 
 
-def _governance_driver_chip(driver: str, driver_rags: dict[str, str]) -> html.Span:
+def _governance_driver_chip(driver: str, driver_rags: dict[str, str], label: str | None = None) -> html.Span:
     return html.Span(
-        driver,
+        label or driver,
         className=f"overview-governance-driver-chip overview-governance-driver-chip-{pd_tone_class(driver_rags.get(driver, 'Red'))}",
     )
+
+
+def _driver_display_label(metric: str, record: dict) -> str:
+    """MEV Range's RAG depends on which Scenario it was computed under (see
+    augment_rows_with_post_subjective) -- appended here so the driver chip/
+    watch-row line names it instead of leaving that silently invisible."""
+    if metric == "MEV Range RAG" and record.get("MEV Range Scenario"):
+        return f"{metric} ({record['MEV Range Scenario']})"
+    return metric
 
 
 def _esc_review_flow_strip(record: dict) -> html.Div:
@@ -2107,7 +2331,32 @@ def _esc_flow_summary_dots(record: dict) -> html.Span:
     return html.Span(items, className="overview-esc-row-flow", role="img", **{"aria-label": aria})
 
 
-def _esc_row(record: dict) -> html.Details:
+def _esc_tab_href(record: dict, reporting_cycle: str, entity_key: str) -> str:
+    """Deep-link to the entity's own Performance tab: the target tab reads
+    these query params (see ``parse_deep_link_params``) to pre-populate its
+    top filters and render this exact scope immediately, instead of landing
+    on the getting-started prompt and requiring an extra "Apply filters" click."""
+    params = {"cycle": reporting_cycle, "monitoring_point": record["Monitoring Period"]}
+    if entity_key == "Segment":
+        # A segment name can be shared across more than one model (see
+        # escalation_next_steps' own (Model Group, Model, entity) grouping),
+        # so the record's Model must come along too -- segment-only would
+        # fall back to a pooled "home model" for the segment, which may not
+        # be the specific model this card is actually about.
+        params["segment"] = record["Entity"]
+        params["model"] = record["Model"]
+    else:
+        params["model"] = record["Model"]
+    # The scenario MEV Range was actually computed under for this entity (see
+    # augment_rows_with_post_subjective) -- carried along so the target tab's
+    # own Scenario filter (and thus its own MEV Range section) matches what
+    # this card showed, instead of silently reverting to the tab's default.
+    if record.get("MEV Range Scenario"):
+        params["scenario"] = record["MEV Range Scenario"]
+    return f"{record['Tab Path']}?{urlencode(params)}"
+
+
+def _esc_row(record: dict, reporting_cycle: str, entity_key: str) -> html.Details:
     """One escalating entity as a native collapsible row: the summary shows the
     identity, severity, and a glanceable review-flow readout; expanding reveals
     the full review-flow pipeline, drivers, playbook next steps, the reviewer's
@@ -2138,7 +2387,10 @@ def _esc_row(record: dict) -> html.Details:
                 className="overview-esc-card-drivers",
                 children=[
                     html.Span("Driven by", className="overview-esc-card-drivers-label"),
-                    *[_governance_driver_chip(metric, driver_rags) for metric, _rag in record["Drivers"]],
+                    *[
+                        _governance_driver_chip(metric, driver_rags, _driver_display_label(metric, record))
+                        for metric, _rag in record["Drivers"]
+                    ],
                 ],
             )
         )
@@ -2157,6 +2409,16 @@ def _esc_row(record: dict) -> html.Details:
                 className="overview-esc-card-note",
             )
         )
+    if record.get("Compensating Controls"):
+        body_children.append(
+            html.Div(
+                className="overview-esc-card-commentary",
+                children=[
+                    html.Span("Compensating controls", className="overview-esc-card-commentary-label"),
+                    html.Blockquote(record["Compensating Controls"], className="overview-esc-card-commentary-text"),
+                ],
+            )
+        )
     if record["Commentary"]:
         body_children.append(
             html.Div(
@@ -2168,7 +2430,11 @@ def _esc_row(record: dict) -> html.Details:
             )
         )
     body_children.append(
-        html.A(f"Open {record['Model Group']} Performance →", href=record["Tab Path"], className="overview-esc-card-link")
+        html.A(
+            f"Open {record['Model Group']} Performance →",
+            href=_esc_tab_href(record, reporting_cycle, entity_key),
+            className="overview-esc-card-link",
+        )
     )
 
     return html.Details(
@@ -2177,9 +2443,14 @@ def _esc_row(record: dict) -> html.Details:
     )
 
 
-def _esc_watch_row(record: dict) -> html.Div:
-    """Compact watch-list row: the worst stage (or finding) and its one-line
-    playbook action -- enough to document without a full escalation card."""
+def _esc_watch_row(record: dict, reporting_cycle: str, entity_key: str):
+    """One watch-list entity.
+
+    A compact, scannable one-liner (worst stage/finding + its one-line playbook
+    action) when the reviewer hasn't recorded anything extra; a collapsible card
+    -- like the escalation rows -- when there ARE compensating controls or a
+    sign-off note to show, so that detail is available on demand without
+    cluttering the list."""
     selections = record["Selections"]
     if selections:
         worst = max(selections, key=lambda selection: _ESC_RAG_RANK.get(selection["rag"], -1))
@@ -2188,25 +2459,72 @@ def _esc_watch_row(record: dict) -> html.Div:
         line = (worst.get("action") or {}).get("required_action") or "No playbook action matches this stage yet."
     elif record["Drivers"]:
         metric, rag = record["Drivers"][0]
-        context = f"{metric} · {rag}"
-        line = f"{rag} finding on {metric} — review on the tab."
+        display_label = _driver_display_label(metric, record)
+        context = f"{display_label} · {rag}"
+        line = f"{rag} finding on {display_label} — review on the tab."
     else:
         rag = record["Overall RAG"]
         context = f"Overall RAG · {rag}"
         line = "Review on the tab."
-    return html.Div(
-        className="overview-esc-watch-row",
+
+    href = _esc_tab_href(record, reporting_cycle, entity_key)
+    compensating = record.get("Compensating Controls")
+    commentary = record["Commentary"]
+    summary_content = [
+        pd_rag_dot(rag),
+        html.Strong(record["Entity Label"], className="overview-esc-watch-name"),
+        html.Span(context, className="overview-esc-watch-context"),
+        html.Span(line, className="overview-esc-watch-action"),
+    ]
+
+    if not compensating and not commentary:
+        # Nothing extra to expand -- keep the flat, scannable one-liner.
+        return html.Div(
+            className="overview-esc-watch-row",
+            children=[*summary_content, html.A("Open tab →", href=href, className="overview-esc-watch-link")],
+        )
+
+    # Has reviewer detail -- collapsible card, mirroring the escalation rows:
+    # the one-liner stays as the summary, the compensating controls / sign-off
+    # (and the tab link) move into an expandable body.
+    body = []
+    if compensating:
+        body.append(
+            html.Div(
+                className="overview-esc-card-commentary",
+                children=[
+                    html.Span("Compensating controls", className="overview-esc-card-commentary-label"),
+                    html.Blockquote(compensating, className="overview-esc-card-commentary-text"),
+                ],
+            )
+        )
+    if commentary:
+        body.append(
+            html.Div(
+                className="overview-esc-card-commentary",
+                children=[
+                    html.Span("Reviewer sign-off", className="overview-esc-card-commentary-label"),
+                    html.Blockquote(commentary, className="overview-esc-card-commentary-text"),
+                ],
+            )
+        )
+    body.append(html.A("Open tab →", href=href, className="overview-esc-watch-link"))
+    return html.Details(
+        className="overview-esc-watch-card",
         children=[
-            pd_rag_dot(rag),
-            html.Strong(record["Entity Label"], className="overview-esc-watch-name"),
-            html.Span(context, className="overview-esc-watch-context"),
-            html.Span(line, className="overview-esc-watch-action"),
-            html.A("Open tab →", href=record["Tab Path"], className="overview-esc-watch-link"),
+            html.Summary(
+                className="overview-esc-watch-summary",
+                children=[
+                    html.Span("▸", className="overview-esc-watch-chevron", **{"aria-hidden": "true"}),
+                    *summary_content,
+                ],
+            ),
+            html.Div(body, className="overview-esc-watch-body"),
         ],
     )
 
 
-def _governance_next_steps_board(esc: dict, entity_noun: str) -> html.Div:
+def _governance_next_steps_board(esc: dict, entity_noun: str, reporting_cycle: str, entity_key: str) -> html.Div:
     posture_title, tone = _esc_posture(esc, entity_noun)
     tiers, counts = esc["tiers"], esc["counts"]
     children = [
@@ -2250,7 +2568,7 @@ def _governance_next_steps_board(esc: dict, entity_noun: str) -> html.Div:
                             ),
                         ],
                     ),
-                    *[_esc_row(record) for record in tiers["escalate"]],
+                    *[_esc_row(record, reporting_cycle, entity_key) for record in tiers["escalate"]],
                 ],
             )
         )
@@ -2260,7 +2578,7 @@ def _governance_next_steps_board(esc: dict, entity_noun: str) -> html.Div:
                 className="overview-esc-watch",
                 children=[
                     html.Div("Watch list — action to document, no escalation", className="overview-esc-strip-title"),
-                    *[_esc_watch_row(record) for record in tiers["watch"]],
+                    *[_esc_watch_row(record, reporting_cycle, entity_key) for record in tiers["watch"]],
                 ],
             )
         )
@@ -2279,6 +2597,7 @@ def _governance_next_steps_board(esc: dict, entity_noun: str) -> html.Div:
 
 def _build_governance_section(
     current_rows: list[dict], scoped_rows: list[dict], findings: list[dict], monitoring_actions: list[dict],
+    reporting_cycle: str,
 ) -> html.Section:
     esc = escalation_next_steps(current_rows, scoped_rows, findings, monitoring_actions, entity_key="Model")
     return html.Section(
@@ -2293,13 +2612,14 @@ def _build_governance_section(
                 "N/A",
                 {"show_rag": False},
             ),
-            _governance_next_steps_board(esc, "model"),
+            _governance_next_steps_board(esc, "model", reporting_cycle, "Model"),
         ],
     )
 
 
 def _build_segment_governance_section(
     current_rows: list[dict], scoped_rows: list[dict], findings: list[dict], monitoring_actions: list[dict],
+    reporting_cycle: str,
 ) -> html.Section:
     esc = escalation_next_steps(current_rows, scoped_rows, findings, monitoring_actions, entity_key="Segment")
     return html.Section(
@@ -2314,7 +2634,7 @@ def _build_segment_governance_section(
                 "N/A",
                 {"show_rag": False},
             ),
-            _governance_next_steps_board(esc, "segment"),
+            _governance_next_steps_board(esc, "segment", reporting_cycle, "Segment"),
         ],
     )
 
@@ -2342,7 +2662,7 @@ def render_overview_content(
     theme = normalize_theme_value(theme_value)
     range_store = range_store or {}
 
-    scoped_rows = build_overview_rows(data, reporting_cycle)
+    scoped_rows, chapter1_exclusions = build_overview_rows(data, reporting_cycle)
     segment_scoped_rows = build_overview_segment_rows(data, reporting_cycle)
     # Post Subjective Review is cycle-level (same verdict on every quarter row
     # for an entity, per augment_rows_with_post_subjective's own docstring), so
@@ -2357,12 +2677,14 @@ def render_overview_content(
     if segment_model_group and segment_model_group != "All":
         scoped_rows = [row for row in scoped_rows if row["Model Group"] == segment_model_group]
         segment_scoped_rows = [row for row in segment_scoped_rows if row["Model Group"] == segment_model_group]
+        chapter1_exclusions = [row for row in chapter1_exclusions if row["Model Group"] == segment_model_group]
     # Model filter (top filter bar) -- narrows to the checked models only;
     # unset (None) means "not wired up yet" and keeps every model.
     if selected_models is not None:
         selected_model_set = set(selected_models)
         scoped_rows = [row for row in scoped_rows if row["Model"] in selected_model_set]
         segment_scoped_rows = [row for row in segment_scoped_rows if row["Model"] in selected_model_set]
+        chapter1_exclusions = [row for row in chapter1_exclusions if row["Model"] in selected_model_set]
     current_rows = resolve_current_rows(scoped_rows, monitoring_point or "All")
     current_segment_rows = resolve_current_segment_rows(segment_scoped_rows, monitoring_point or "All")
     # The Models chapter now reflects only named model rows for PD, plus each
@@ -2387,10 +2709,10 @@ def render_overview_content(
         options={"note": f"Model use case / cycle {reporting_cycle} · Monitoring point {monitoring_point or 'All'} · Model group {segment_model_group or 'All'} · Segment: All"},
     )
     chapter_1_sections = [
-        _build_summary_section(current_rows, findings, monitoring_point or "All", theme),
+        _build_summary_section(current_rows, findings, monitoring_point or "All", theme, chapter1_exclusions),
         _build_heatmap_section(current_rows, theme, monitoring_point or "All"),
         _build_trend_section(scoped_rows, rag_trend_metric, range_store, theme, monitoring_point or "All"),
-        _build_governance_section(current_rows, scoped_rows, findings, data.get("monitoring_actions") or []),
+        _build_governance_section(current_rows, scoped_rows, findings, data.get("monitoring_actions") or [], reporting_cycle),
     ]
 
     chapter_2 = build_pd_chapter_heading(
@@ -2409,6 +2731,7 @@ def render_overview_content(
         _build_segment_trend_section(segment_scoped_rows, segment_rag_trend_metric, range_store, theme, monitoring_point or "All"),
         _build_segment_governance_section(
             current_segment_rows, segment_scoped_rows, segment_findings, data.get("monitoring_actions") or [],
+            reporting_cycle,
         ),
     ]
 
@@ -2555,8 +2878,14 @@ def build_overview_apply_prompt() -> html.Section:
 # ---------------------------------------------------------------------------
 
 
-def build_layout() -> list:
-    """No-arg entry point for the page registry."""
+def build_layout(search: str = "") -> list:
+    """Entry point for the page registry.
+
+    ``search`` (the page's ``dcc.Location`` query string) is accepted for a
+    uniform call signature across every page's ``build_layout`` -- see
+    ``shell.py``'s router -- but unused here: Overview is the *source* of
+    deep links (its escalation cards), never their target.
+    """
     from ...data_access import PD_PERFORMANCE_DATA
     return page_layout(PD_PERFORMANCE_DATA)
 
@@ -2566,8 +2895,8 @@ def page_layout(data: dict) -> list:
     from .....shared.repositories.filters_config import load_filter_config
     cfg = load_filter_config()
     reporting_cycle_options = [{"label": c["label"], "value": c["value"]} for c in cfg["reporting_cycles"]]
-    default_cycle = reporting_cycle_options[0]["value"] if reporting_cycle_options else "CCAR 2026"
-    cycle_quarters = shared_filters.REPORTING_CYCLE_QUARTERS.get(default_cycle, [])
+    default_cycle = reporting_cycle_options[0]["value"]
+    cycle_quarters = shared_filters.ALL_REPORTING_CYCLE_QUARTERS.get(default_cycle, [])
     monitoring_point_options = [{"label": q, "value": q} for q in cycle_quarters]
     default_monitoring_point = shared_filters.resolve_monitoring_point_value(cycle_quarters, None)
     model_options = overview_model_options(data)

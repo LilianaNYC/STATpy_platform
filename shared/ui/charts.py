@@ -551,26 +551,30 @@ def build_pd_default_rate_trend_figure(performance_trend, monitoring_thresholds,
     ratio_grid_width = 0.8
     trend_line_color = _monitoring_trend_line_color(theme)
 
+    reporting_cycles = [row.get("reporting_cycle") or "—" for row in trend]
+    ratio_customdata = [[rag, cycle] for rag, cycle in zip(ratio_rags, reporting_cycles)]
     fig = _make_dual_panel_figure()
     fig.add_trace(go.Scatter(
         x=quarters, y=[row["observed_default_rate"] for row in trend],
         mode="lines+markers", name="Actual Default Rate",
         line=dict(color="#dc2626", width=2.5), marker=dict(size=6),
-        hovertemplate="%{x}<br>Actual Default Rate: %{y:.2%}<extra></extra>",
+        customdata=reporting_cycles,
+        hovertemplate="%{x}<br>Actual Default Rate: %{y:.2%}<br>Reporting Cycle: %{customdata}<extra></extra>",
     ), row=1, col=1)
     fig.add_trace(go.Scatter(
         x=quarters, y=[row["predicted_default_rate"] for row in trend],
         mode="lines+markers", name="Predicted Default Rate",
         line=dict(color="#2563eb", width=2.5, dash="dash"), marker=dict(size=6),
-        hovertemplate="%{x}<br>Predicted Default Rate: %{y:.2%}<extra></extra>",
+        customdata=reporting_cycles,
+        hovertemplate="%{x}<br>Predicted Default Rate: %{y:.2%}<br>Reporting Cycle: %{customdata}<extra></extra>",
     ), row=1, col=1)
     fig.add_trace(go.Scatter(
         x=quarters, y=ratios,
         mode="lines+markers", name="A/E Ratio", showlegend=False,
         line=dict(color=trend_line_color, width=2.5),
         marker=dict(size=8, color=[pd_rag_color(rag) for rag in ratio_rags], line=dict(color="#fff", width=1)),
-        customdata=ratio_rags,
-        hovertemplate="%{x}<br>A/E Ratio: %{y:.3f}<br>RAG: %{customdata}<extra></extra>",
+        customdata=ratio_customdata,
+        hovertemplate="%{x}<br>A/E Ratio: %{y:.3f}<br>RAG: %{customdata[0]}<br>Reporting Cycle: %{customdata[1]}<extra></extra>",
     ), row=1, col=2)
 
     shapes = [{**shape, "xref": "x2 domain", "yref": "y2"} for shape in ratio_bands["shapes"]]
@@ -651,7 +655,12 @@ def build_pd_calibration_rag_trend_figure(rag_trend, monitoring_quarter, range_v
 
     quarters = [row["quarter"] for row in trend]
     customdata = [
-        [row["rag"], _format_metric_value(row["weighted_average"], 2), "—" if row["rounded_score"] is None or not is_finite_number(row["rounded_score"]) else f"{row['rounded_score']}"]
+        [
+            row["rag"],
+            _format_metric_value(row["weighted_average"], 2),
+            "—" if row["rounded_score"] is None or not is_finite_number(row["rounded_score"]) else f"{row['rounded_score']}",
+            row.get("reporting_cycle") or "—",
+        ]
         for row in trend
     ]
     return _rag_dot_figure(
@@ -659,7 +668,7 @@ def build_pd_calibration_rag_trend_figure(rag_trend, monitoring_quarter, range_v
         [row["rag_score"] for row in trend],
         [row["rag"] for row in trend],
         customdata,
-        "%{x}<br>Calibration Conservatism RAG (ECL PIT): %{customdata[0]}<br>Weighted score: %{customdata[1]}<br>Rounded score: %{customdata[2]}<extra></extra>",
+        "%{x}<br>Calibration Conservatism RAG (ECL PIT): %{customdata[0]}<br>Weighted score: %{customdata[1]}<br>Rounded score: %{customdata[2]}<br>Reporting Cycle: %{customdata[3]}<extra></extra>",
         monitoring_quarter,
         "Calibration Conservatism Score",
     )
@@ -681,6 +690,7 @@ def build_pd_discrimination_rag_trend_figure(rag_trend, monitoring_quarter, rang
             row.get("delta_accuracy_rag") or "N/A",
             f"{row['default_count_1y']}" if is_finite_number(row.get("default_count_1y")) else "—",
             "Yes" if row.get("low_default_override") else "No",
+            row.get("reporting_cycle") or "—",
         ]
         for row in trend
     ]
@@ -691,7 +701,7 @@ def build_pd_discrimination_rag_trend_figure(rag_trend, monitoring_quarter, rang
         customdata,
         "%{x}<br>Discriminatory Power RAG: %{customdata[0]}<br>Accuracy Ratio 1 year: %{customdata[1]} (%{customdata[2]})<br>"
         "Delta Accuracy Ratio 1 year: %{customdata[3]} (%{customdata[4]})<br>Default 1 year count: %{customdata[5]}<br>"
-        "Low-default override: %{customdata[6]}<extra></extra>",
+        "Low-default override: %{customdata[6]}<br>Reporting Cycle: %{customdata[7]}<extra></extra>",
         monitoring_quarter,
         "Discriminatory Power Score",
     )
@@ -712,6 +722,7 @@ def build_pd_balance_sheet_calibration_rag_trend_figure(rag_trend, monitoring_qu
             row.get("confidence_rag") or "N/A",
             "—" if row["notching_difference"] is None or not is_finite_number(row["notching_difference"]) else f"{round(row['notching_difference'])}",
             row.get("notching_rag") or "N/A",
+            row.get("reporting_cycle") or "—",
         ]
         for row in trend
     ]
@@ -721,7 +732,8 @@ def build_pd_balance_sheet_calibration_rag_trend_figure(rag_trend, monitoring_qu
         [row["rag"] for row in trend],
         customdata,
         "%{x}<br>Calibration Conservatism RAG (ECL PIT): %{customdata[0]}<br>RAG Assignment: %{customdata[1]}<br>"
-        "Confidence Interval: %{customdata[2]} (%{customdata[3]})<br>Notching Test: %{customdata[4]} (%{customdata[5]})<extra></extra>",
+        "Confidence Interval: %{customdata[2]} (%{customdata[3]})<br>Notching Test: %{customdata[4]} (%{customdata[5]})<br>"
+        "Reporting Cycle: %{customdata[6]}<extra></extra>",
         monitoring_quarter,
         "Calibration Conservatism Score",
     )
@@ -760,6 +772,7 @@ def build_lgd_calibration_rag_trend_figure(rag_trend, monitoring_quarter, range_
             row.get("rmse_rag") or "N/A",
             "—" if row.get("weighted_average") is None or not is_finite_number(row.get("weighted_average")) else f"{row['weighted_average']:.2f}",
             "—" if row.get("rounded_score") is None or not is_finite_number(row.get("rounded_score")) else f"{row['rounded_score']}",
+            row.get("reporting_cycle") or "—",
         ]
         for row in trend
     ]
@@ -771,7 +784,8 @@ def build_lgd_calibration_rag_trend_figure(rag_trend, monitoring_quarter, range_
         "%{x}<br>Calibration Conservatism RAG: %{customdata[0]}<br>"
         "Mean Error 1 year: %{customdata[1]} (%{customdata[2]})<br>"
         "RMSE 1 year: %{customdata[3]} (%{customdata[4]})<br>"
-        "Weighted score: %{customdata[5]}<br>Rounded score: %{customdata[6]}<extra></extra>",
+        "Weighted score: %{customdata[5]}<br>Rounded score: %{customdata[6]}<br>"
+        "Reporting Cycle: %{customdata[7]}<extra></extra>",
         monitoring_quarter,
         "Calibration Conservatism Score",
     )
@@ -793,6 +807,7 @@ def build_lgd_discrimination_rag_trend_figure(rag_trend, monitoring_quarter, ran
             row.get("kendall_tau_rag") or "N/A",
             "—" if row.get("weighted_average") is None or not is_finite_number(row.get("weighted_average")) else f"{row['weighted_average']:.2f}",
             "—" if row.get("rounded_score") is None or not is_finite_number(row.get("rounded_score")) else f"{row['rounded_score']}",
+            row.get("reporting_cycle") or "—",
         ]
         for row in trend
     ]
@@ -803,7 +818,8 @@ def build_lgd_discrimination_rag_trend_figure(rag_trend, monitoring_quarter, ran
         customdata,
         "%{x}<br>Discriminatory Power RAG: %{customdata[0]}<br>"
         "Kendall's Tau 1 year: %{customdata[1]} (%{customdata[2]})<br>"
-        "Weighted score: %{customdata[3]}<br>Rounded score: %{customdata[4]}<extra></extra>",
+        "Weighted score: %{customdata[3]}<br>Rounded score: %{customdata[4]}<br>"
+        "Reporting Cycle: %{customdata[5]}<extra></extra>",
         monitoring_quarter,
         "Discriminatory Power Score",
     )
@@ -853,6 +869,7 @@ def build_lgd_metric_trend_figure(metric_rows, monitoring_thresholds, metric: st
     display_name = "Mean Error" if metric == "ME" else metric
     hover_value_format = "%{y:.0%}" if metric in {"ME", "RMSE"} else "%{y:.3f}"
     tick_format = ".0%" if metric in {"ME", "RMSE"} else ".3f"
+    customdata = [[rag, row.get("reporting_cycle") or "—"] for rag, row in zip(rags, rows)]
     fig = go.Figure(go.Scatter(
         x=quarters,
         y=values,
@@ -861,8 +878,8 @@ def build_lgd_metric_trend_figure(metric_rows, monitoring_thresholds, metric: st
         connectgaps=False,
         line=dict(color=_monitoring_trend_line_color(theme), width=2.5),
         marker=dict(size=8, color=[pd_rag_color(rag) for rag in rags], line=dict(color="#fff", width=1)),
-        customdata=rags,
-        hovertemplate=f"%{{x}}<br>{display_name}: {hover_value_format}<br>RAG: %{{customdata}}<extra></extra>",
+        customdata=customdata,
+        hovertemplate=f"%{{x}}<br>{display_name}: {hover_value_format}<br>RAG: %{{customdata[0]}}<br>Reporting Cycle: %{{customdata[1]}}<extra></extra>",
     ))
     fig.update_layout(
         height=308,
@@ -900,6 +917,7 @@ def build_ead_metric_trend_figure(metric_rows, monitoring_thresholds, metric: st
     display_name = "Mean Error" if metric == "ME" else metric
     hover_value_format = "%{y:.0%}" if metric in {"ME", "RMSE"} else "%{y:.3f}"
     tick_format = ".0%" if metric in {"ME", "RMSE"} else ".3f"
+    customdata = [[rag, row.get("reporting_cycle") or "—"] for rag, row in zip(rags, rows)]
     fig = go.Figure(go.Scatter(
         x=quarters,
         y=values,
@@ -908,8 +926,8 @@ def build_ead_metric_trend_figure(metric_rows, monitoring_thresholds, metric: st
         connectgaps=False,
         line=dict(color=_monitoring_trend_line_color(theme), width=2.5),
         marker=dict(size=8, color=[pd_rag_color(rag) for rag in rags], line=dict(color="#fff", width=1)),
-        customdata=rags,
-        hovertemplate=f"%{{x}}<br>{display_name}: {hover_value_format}<br>RAG: %{{customdata}}<extra></extra>",
+        customdata=customdata,
+        hovertemplate=f"%{{x}}<br>{display_name}: {hover_value_format}<br>RAG: %{{customdata[0]}}<br>Reporting Cycle: %{{customdata[1]}}<extra></extra>",
     ))
     fig.update_layout(
         height=308,
@@ -963,6 +981,7 @@ def build_loss_metric_trend_figure(
     if monitoring_point in quarters:
         shapes.append(_vertical_marker(monitoring_point))
 
+    customdata = [[rag, row.get("reporting_cycle") or "—"] for rag, row in zip(rags, scoped_rows)]
     fig = go.Figure(go.Scatter(
         x=quarters,
         y=values,
@@ -971,8 +990,8 @@ def build_loss_metric_trend_figure(
         connectgaps=False,
         line=dict(color=_monitoring_trend_line_color(theme), width=2.5),
         marker=dict(size=8, color=[pd_rag_color(rag) for rag in rags], line=dict(color="#fff", width=1)),
-        customdata=rags,
-        hovertemplate=f"%{{x}}<br>{value_label} %: " + "%{y:.0%}<br>RAG: %{customdata}<extra></extra>",
+        customdata=customdata,
+        hovertemplate=f"%{{x}}<br>{value_label} %: " + "%{y:.0%}<br>RAG: %{customdata[0]}<br>Reporting Cycle: %{customdata[1]}<extra></extra>",
     ))
     fig.update_layout(
         height=height,
@@ -1010,26 +1029,30 @@ def build_pd_notching_trend_figure(performance_trend, monitoring_thresholds, ran
     notching_grid_width = 0.8
     trend_line_color = _monitoring_trend_line_color(theme)
 
+    reporting_cycles = [row.get("reporting_cycle") or "—" for row in trend]
+    difference_customdata = [[rag, cycle] for rag, cycle in zip(difference_rags, reporting_cycles)]
     fig = _make_dual_panel_figure()
     fig.add_trace(go.Scatter(
         x=quarters, y=[row["actual_notch"] for row in trend],
         mode="lines+markers", name="Actual Notch",
         line=dict(color="#dc2626", width=2.5), marker=dict(size=6),
-        hovertemplate="%{x}<br>Actual Notch: %{y:.0f}<extra></extra>",
+        customdata=reporting_cycles,
+        hovertemplate="%{x}<br>Actual Notch: %{y:.0f}<br>Reporting Cycle: %{customdata}<extra></extra>",
     ), row=1, col=1)
     fig.add_trace(go.Scatter(
         x=quarters, y=[row["predicted_notch"] for row in trend],
         mode="lines+markers", name="Predicted Notch",
         line=dict(color="#2563eb", width=2.5, dash="dash"), marker=dict(size=6),
-        hovertemplate="%{x}<br>Predicted Notch: %{y:.0f}<extra></extra>",
+        customdata=reporting_cycles,
+        hovertemplate="%{x}<br>Predicted Notch: %{y:.0f}<br>Reporting Cycle: %{customdata}<extra></extra>",
     ), row=1, col=1)
     fig.add_trace(go.Scatter(
         x=quarters, y=differences,
         mode="lines+markers", name="Notching Difference", showlegend=False,
         line=dict(color=trend_line_color, width=2.5),
         marker=dict(size=8, color=[pd_rag_color(rag) for rag in difference_rags], line=dict(color="#fff", width=1)),
-        customdata=difference_rags,
-        hovertemplate="%{x}<br>Notching Difference: %{y:.0f}<br>RAG: %{customdata}<extra></extra>",
+        customdata=difference_customdata,
+        hovertemplate="%{x}<br>Notching Difference: %{y:.0f}<br>RAG: %{customdata[0]}<br>Reporting Cycle: %{customdata[1]}<extra></extra>",
     ), row=1, col=2)
 
     shapes = [{**shape, "xref": "x2 domain", "yref": "y2"} for shape in difference_bands["shapes"]]
@@ -1107,13 +1130,14 @@ def build_pd_confidence_interval_trend_figure(performance_trend, monitoring_thre
     if snapshot_quarter in quarters:
         shapes.append(_vertical_marker(snapshot_quarter))
 
+    customdata = [[rag, row.get("reporting_cycle") or "—"] for rag, row in zip(confidence_rags, trend)]
     fig = go.Figure(go.Scatter(
         x=quarters, y=confidence_values,
         mode="lines+markers", name="Confidence Interval Test",
         line=dict(color=trend_line_color, width=2.5),
         marker=dict(size=8, color=[pd_rag_color(rag) for rag in confidence_rags], line=dict(color="#fff", width=1)),
-        customdata=confidence_rags,
-        hovertemplate="%{x}<br>Confidence Interval Test: %{y:.1%}<br>RAG: %{customdata}<extra></extra>",
+        customdata=customdata,
+        hovertemplate="%{x}<br>Confidence Interval Test: %{y:.1%}<br>RAG: %{customdata[0]}<br>Reporting Cycle: %{customdata[1]}<extra></extra>",
     ))
     fig.update_layout(
         height=340,
@@ -1148,13 +1172,14 @@ def build_pd_psi_trend_figure(performance_trend, monitoring_thresholds, snapshot
     if snapshot_quarter in quarters:
         shapes.append(_vertical_marker(snapshot_quarter))
 
+    customdata = [[rag, row.get("reporting_cycle") or "—"] for rag, row in zip(psi_rags, trend)]
     fig = go.Figure(go.Scatter(
         x=quarters, y=psi_values,
         mode="lines+markers", name="Population Stability Index",
         line=dict(color=trend_line_color, width=2.5),
         marker=dict(size=8, color=[pd_rag_color(rag) for rag in psi_rags], line=dict(color="#fff", width=1)),
-        customdata=psi_rags,
-        hovertemplate="%{x}<br>PSI: %{y:.3f}<br>RAG: %{customdata}<extra></extra>",
+        customdata=customdata,
+        hovertemplate="%{x}<br>PSI: %{y:.3f}<br>RAG: %{customdata[0]}<br>Reporting Cycle: %{customdata[1]}<extra></extra>",
     ))
     fig.update_layout(
         height=340,
@@ -1256,8 +1281,8 @@ def build_pd_transition_combined_figure(rows, range_value=None, monitoring_thres
     return fig
 
 
-def build_pd_sensitivity_combined_figure(rows, threshold: float | None, range_value=None, *, theme: str = "light") -> go.Figure:
-    """Sensitivity: projected PD paths (left) + relative shock impact bars (right).
+def build_pd_sensitivity_combined_figure(rows, threshold: float | None, range_value=None, *, theme: str = "light", metric_label: str = "PD") -> go.Figure:
+    """Sensitivity: projected metric paths (left) + relative shock impact bars (right).
 
     Both panels share the same quarter offsets and can be windowed with the
     range controls. The impact bars keep their RAG colouring (within / above the
@@ -1350,7 +1375,7 @@ def build_pd_sensitivity_combined_figure(rows, threshold: float | None, range_va
     # Draw the impact panel's grid above the bars (so it isn't overdrawn) but keep
     # the same palette grid colour as the projected-PD panel / the PD tab.
     fig.update_xaxes(**axis_kw, layer="above traces", row=1, col=2)
-    fig.update_yaxes(title_text="Projected PD", tickformat=".1%", gridcolor=palette["grid_color"], zeroline=False, rangemode="tozero", row=1, col=1)
+    fig.update_yaxes(title_text=f"Projected {metric_label}", tickformat=".1%", gridcolor=palette["grid_color"], zeroline=False, rangemode="tozero", row=1, col=1)
     fig.update_yaxes(title_text="Relative Shock Impact", tickformat=".0%", gridcolor=palette["grid_color"], zeroline=False, rangemode="tozero", layer="above traces", row=1, col=2)
 
     fig.update_layout(
@@ -1365,8 +1390,8 @@ def build_pd_sensitivity_combined_figure(rows, threshold: float | None, range_va
     return fig
 
 
-def build_pd_scenario_projection_figure(rows, *, theme: str = "light") -> go.Figure:
-    """Projected PD paths for every available scenario variant."""
+def build_pd_scenario_projection_figure(rows, *, theme: str = "light", metric_label: str = "PD") -> go.Figure:
+    """Projected metric paths for every available scenario variant."""
     normalized_theme = _normalize_saas_theme(theme)
     palette = _saas_theme_palette(normalized_theme)
     scenario_color_map = SAAS_DARK_SCENARIO_COLOR_MAP if normalized_theme == "dark" else SAAS_SCENARIO_COLOR_MAP
@@ -1437,7 +1462,7 @@ def build_pd_scenario_projection_figure(rows, *, theme: str = "light") -> go.Fig
             automargin=True,
         ),
         yaxis=dict(
-            title="Projected PD",
+            title=f"Projected {metric_label}",
             tickformat=".1%",
             range=[0, y_max],
             gridcolor=palette["grid_color"],
@@ -1451,8 +1476,8 @@ def build_pd_scenario_projection_figure(rows, *, theme: str = "light") -> go.Fig
     return fig
 
 
-def build_pd_scenario_rank_figure(rows, *, theme: str = "light") -> go.Figure:
-    """Scenario rank matrix where rank 1 is the highest projected PD."""
+def build_pd_scenario_rank_figure(rows, *, theme: str = "light", metric_label: str = "PD") -> go.Figure:
+    """Scenario rank matrix where rank 1 is the highest projected metric value."""
     palette = _saas_theme_palette(_normalize_saas_theme(theme))
     scoped_rows = [row for row in (rows or []) if is_finite_number(_proj(row)) and row.get("scenario_variant")]
     if not scoped_rows:
@@ -1522,8 +1547,8 @@ def build_pd_scenario_rank_figure(rows, *, theme: str = "light") -> go.Figure:
         hovertemplate=(
             "%{customdata[0]}<br>"
             "Scenario: %{customdata[1]}<br>"
-            "Projected PD: %{customdata[2]:.2%}<br>"
-            "Rank: %{customdata[3]} (highest = highest PD)<extra></extra>"
+            f"Projected {metric_label}: %{{customdata[2]:.2%}}<br>"
+            f"Rank: %{{customdata[3]}} (highest = highest {metric_label})<extra></extra>"
         ),
     ))
     fig.update_layout(
@@ -1542,59 +1567,6 @@ def build_pd_scenario_rank_figure(rows, *, theme: str = "light") -> go.Figure:
     )
     _apply_transparent_background(fig)
     return fig
-
-
-# ---------------------------------------------------------------------------
-# 1.3 Discriminatory Power - Other Metrics Trend (drawPdDiscriminationTrend)
-# ---------------------------------------------------------------------------
-
-_DISCRIMINATION_TREND_METRICS = [
-    {"key": "gini_coefficient", "name": "Gini Coefficient", "color": "#7c3aed", "dash": "dash"},
-    {"key": "ks_statistic", "name": "KS Statistic", "color": "#d97706", "dash": "dot"},
-    {"key": "kendall_tau", "name": "Kendall's Tau", "color": "#0891b2", "dash": "dashdot"},
-]
-
-
-def build_pd_discrimination_trend_figures(performance_trend, monitoring_thresholds, snapshot_quarter, range_value=None, *, theme: str = "light") -> dict[str, go.Figure]:
-    periods = filter_pd_periods_by_range(range_value, [row["quarter"] for row in performance_trend])
-    trend = [row for row in performance_trend if row["quarter"] in periods]
-    if not trend:
-        message = _empty_figure("No portfolio periods are available for the selected snapshot date.", height=296)
-        return {metric["key"]: message for metric in _DISCRIMINATION_TREND_METRICS}
-
-    quarters = [row["quarter"] for row in trend]
-    thresholds = get_pd_thresholds(monitoring_thresholds)
-    figures: dict[str, go.Figure] = {}
-    trend_line_color = _monitoring_trend_line_color(theme)
-    for metric in _DISCRIMINATION_TREND_METRICS:
-        values = [row[metric["key"]] for row in trend]
-        rags = [calculate_pd_metric_rag(thresholds, metric["name"], value) for value in values]
-        threshold = next((row for row in thresholds if row.get("metric") == metric["name"]), {})
-        bands = build_pd_threshold_bands(threshold, values)
-        shapes = list(bands["shapes"])
-        if snapshot_quarter in quarters:
-            shapes.append(_vertical_marker(snapshot_quarter))
-
-        fig = go.Figure(go.Scatter(
-            x=quarters, y=values,
-            mode="lines+markers", name=metric["name"], connectgaps=False,
-            line=dict(color=trend_line_color, width=2.5, dash=metric["dash"]),
-            marker=dict(size=8, color=[pd_rag_color(rag) for rag in rags], line=dict(color="#fff", width=1)),
-            customdata=rags,
-            hovertemplate=f"%{{x}}<br>{metric['name']}: %{{y:.3f}}<br>RAG: %{{customdata}}<extra></extra>",
-        ))
-        fig.update_layout(
-            height=296,
-            margin=dict(t=18, r=20, b=42, l=52),
-            hovermode="x unified",
-            showlegend=False,
-            shapes=shapes,
-            xaxis=build_pd_time_series_xaxis(quarters, {"title": "Quarter", "gridcolor": GRID_COLOR}, density="compact"),
-            yaxis=dict(title=metric["name"], range=bands["axis_range"], gridcolor=GRID_COLOR, zeroline=False),
-        )
-        _apply_transparent_background(fig)
-        figures[metric["key"]] = fig
-    return figures
 
 
 # ---------------------------------------------------------------------------
@@ -1624,26 +1596,30 @@ def build_pd_go_live_accuracy_trend_figure(performance_trend, monitoring_thresho
     delta_grid_width = 0.8
     trend_line_color = _monitoring_trend_line_color(theme)
 
+    reporting_cycles = [row.get("reporting_cycle") or "—" for row in trend]
+    delta_customdata = [[rag, cycle] for rag, cycle in zip(delta_rags, reporting_cycles)]
     fig = _make_dual_panel_figure()
     fig.add_trace(go.Scatter(
         x=quarters, y=[row["accuracy_ratio"] for row in trend],
         mode="lines+markers", name="Accuracy Ratio",
         line=dict(color="#2563eb", width=2.5), marker=dict(size=6),
-        hovertemplate="%{x}<br>Accuracy Ratio: %{y:.3f}<extra></extra>",
+        customdata=reporting_cycles,
+        hovertemplate="%{x}<br>Accuracy Ratio: %{y:.3f}<br>Reporting Cycle: %{customdata}<extra></extra>",
     ), row=1, col=1)
     fig.add_trace(go.Scatter(
         x=quarters, y=[row["go_live_accuracy_ratio"] for row in trend],
         mode="lines", name="Go Live Accuracy Ratio",
         line=dict(color="#0f766e", width=2, dash="dash"),
-        hovertemplate=f"%{{x}}<br>Go Live Accuracy Ratio: %{{y:.3f}}<br>Go-live quarter: {go_live_quarter}<extra></extra>",
+        customdata=reporting_cycles,
+        hovertemplate=f"%{{x}}<br>Go Live Accuracy Ratio: %{{y:.3f}}<br>Go-live quarter: {go_live_quarter}<br>Reporting Cycle: %{{customdata}}<extra></extra>",
     ), row=1, col=1)
     fig.add_trace(go.Scatter(
         x=quarters, y=delta_values,
         mode="lines+markers", name="Delta Accuracy Ratio", showlegend=False,
         line=dict(color=trend_line_color, width=2.5),
         marker=dict(size=8, color=[pd_rag_color(rag) for rag in delta_rags], line=dict(color="#fff", width=1)),
-        customdata=delta_rags,
-        hovertemplate="%{x}<br>Delta Accuracy Ratio: %{y:.3f}<br>RAG: %{customdata}<extra></extra>",
+        customdata=delta_customdata,
+        hovertemplate="%{x}<br>Delta Accuracy Ratio: %{y:.3f}<br>RAG: %{customdata[0]}<br>Reporting Cycle: %{customdata[1]}<extra></extra>",
     ), row=1, col=2)
 
     shapes = [{**shape, "xref": "x2 domain", "yref": "y2"} for shape in delta_bands["shapes"]]

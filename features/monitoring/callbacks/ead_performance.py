@@ -17,6 +17,7 @@ from ..domain.ead import (
     resolve_ead_segment,
 )
 from ....shared.registration import already_registered
+from ....shared.repositories.filters_config import cycle_family
 from ....shared.theme import APP_THEME_ID
 from ..data_access import PD_PERFORMANCE_DATA
 from ..services import data_service
@@ -26,6 +27,29 @@ _RANGE_PRESET_COUNTS = {"last-4": 4, "last-8": 8, "last-12": 12}
 
 def _dropdown_options(values: list[str]) -> list[dict[str, str]]:
     return [{"label": value, "value": value} for value in values]
+
+
+def _merge_same_family_ead_cycle_data(observations_by_cycle: dict, reporting_cycle: str) -> dict:
+    """Pool ``ead_observations_by_cycle`` across every cycle in the same
+    family as ``reporting_cycle`` -- see the equivalent
+    ``_merge_same_family_lgd_cycle_data`` in ``lgd_performance.py``.
+    """
+    family = cycle_family(reporting_cycle)
+    quarters: set[str] = set()
+    metrics_store: dict[tuple[str, str], list[dict]] = {}
+    quarter_cycle_map: dict[str, str] = {}
+    for cycle, cycle_data in (observations_by_cycle or {}).items():
+        if cycle_family(cycle) != family:
+            continue
+        cycle_quarters = cycle_data.get("quarters") or []
+        quarters.update(cycle_quarters)
+        for key, rows in (cycle_data.get("metrics_store") or {}).items():
+            metrics_store.setdefault(key, []).extend(dict(row, reporting_cycle=cycle) for row in rows)
+        for quarter in cycle_quarters:
+            quarter_cycle_map[quarter] = cycle
+    for rows in metrics_store.values():
+        rows.sort(key=lambda row: row.get("Monitoring Period") or "")
+    return {"quarters": sorted(quarters), "metrics_store": metrics_store, "quarter_cycle_map": quarter_cycle_map}
 
 
 def _resolve_ead_scope(data: dict, applied: dict | None) -> tuple[str | None, str | None, str, str]:
@@ -38,7 +62,7 @@ def _resolve_ead_scope(data: dict, applied: dict | None) -> tuple[str | None, st
     """
     from ....shared.repositories.filters_config import load_filter_config
     cfg = load_filter_config()
-    default_cycle = cfg["reporting_cycles"][0]["value"] if cfg["reporting_cycles"] else "CCAR 2026"
+    default_cycle = cfg["reporting_cycles"][0]["value"]
 
     applied = applied or {}
     reporting_cycle = applied.get("reporting_cycle") or default_cycle
@@ -84,6 +108,18 @@ def register_callbacks(app) -> None:
     ead_model_segment_cycles = data.get("ead_model_segment_cycles") or {}
     ead_segment_models = data.get("ead_segment_models") or {}
     mev_scenarios_by_cycle = data.get("mev_scenarios_by_cycle") or {}
+    # A model's own quarters for a cycle, pooled across its segments -- see
+    # the equivalent pd_model_cycle_quarters note in pd_performance.py.
+    ead_model_cycle_quarters: dict[tuple[str, str], set[str]] = {}
+    # The same, further scoped to (model, segment, cycle) -- once a real
+    # segment is picked, its own quarters take precedence over the
+    # model-wide pool above (segments can have different footprints).
+    ead_model_segment_cycle_quarters: dict[tuple[str, str, str], set[str]] = {}
+    for cycle, cycle_data in (data.get("ead_observations_by_cycle") or {}).items():
+        for (model, segment), rows in (cycle_data.get("metrics_store") or {}).items():
+            quarters = {row["Monitoring Period"] for row in rows if row.get("Monitoring Period")}
+            ead_model_cycle_quarters.setdefault((model, cycle), set()).update(quarters)
+            ead_model_segment_cycle_quarters.setdefault((model, segment, cycle), set()).update(quarters)
 
     from ....shared.repositories.filters_config import load_filter_config as _load_filter_config
     _cfg = _load_filter_config()
@@ -129,9 +165,11 @@ def register_callbacks(app) -> None:
 
     def _install_ead_store(reporting_cycle):
         from ..domain.ead import set_ead_metrics
-        cycle_data = (data.get("ead_observations_by_cycle") or {}).get(reporting_cycle)
+        observations_by_cycle = data.get("ead_observations_by_cycle") or {}
+        cycle_data = observations_by_cycle.get(reporting_cycle)
         if cycle_data:
-            set_ead_metrics(cycle_data.get("metrics_store"), cycle_data.get("quarters"))
+            merged = _merge_same_family_ead_cycle_data(observations_by_cycle, reporting_cycle)
+            set_ead_metrics(merged["metrics_store"], merged["quarters"], merged["quarter_cycle_map"])
         else:
             set_ead_metrics(None, [])
         return cycle_data
@@ -274,10 +312,20 @@ def register_callbacks(app) -> None:
         Output(layout.MONITORING_POINT_DROPDOWN_ID, "options"),
         Output(layout.MONITORING_POINT_DROPDOWN_ID, "value"),
         Input(layout.REPORTING_CYCLE_ID, "value"),
+        Input(layout.MODEL_DROPDOWN_ID, "value"),
+        Input(layout.SEGMENT_DROPDOWN_ID, "value"),
         Input(layout.MONITORING_POINT_DROPDOWN_ID, "value"),
     )
-    def sync_ead_monitoring_point_dropdown(reporting_cycle, selected_monitoring_point):
-        options = controls.REPORTING_CYCLE_QUARTERS.get(reporting_cycle, [])
+    def sync_ead_monitoring_point_dropdown(reporting_cycle, selected_model, selected_segment, selected_monitoring_point):
+        if selected_model:
+            model_quarters = None
+            if selected_segment:
+                model_quarters = ead_model_segment_cycle_quarters.get((selected_model, selected_segment, reporting_cycle))
+            if not model_quarters:
+                model_quarters = ead_model_cycle_quarters.get((selected_model, reporting_cycle))
+            options = sorted(model_quarters)[-controls.MONITORING_POINT_WINDOW:] if model_quarters else []
+        else:
+            options = controls.EAD_REPORTING_CYCLE_QUARTERS.get(reporting_cycle, [])
         value = filter_shell.resolve_monitoring_point_value(options, selected_monitoring_point)
         return _dropdown_options(options), value
 
@@ -310,6 +358,7 @@ def register_callbacks(app) -> None:
     @app.callback(
         Output(layout.APPLIED_FILTERS_STORE_ID, "data"),
         Output(layout.CONCLUSIONS_NOTES_STORE_ID, "data", allow_duplicate=True),
+        Output(layout.COMPENSATING_CONTROLS_STORE_ID, "data", allow_duplicate=True),
         Output(layout.EAD_REVIEW_FLOW_PENDING_STORE_ID, "data", allow_duplicate=True),
         Output(layout.EAD_REVIEW_FLOW_STATUS_STORE_ID, "data", allow_duplicate=True),
         Input(layout.APPLY_FILTERS_ID, "n_clicks"),
@@ -323,18 +372,18 @@ def register_callbacks(app) -> None:
     def apply_ead_filters(_n_clicks, reporting_cycle, scenario, selected_model, selected_segment, selected_monitoring_point):
         """Snapshot the current top filters so the content renders only on Apply.
 
-        Also discards the scope-specific review-flow state (unsaved reviewer sign-off draft, staged RAG
-        picks, last save-status message) -- see ``apply_pd_filters`` for why.
+        Also discards the scope-specific review-flow state (unsaved reviewer sign-off draft, unsaved
+        compensating-controls draft, staged RAG picks, last save-status message) -- see ``apply_pd_filters``.
         """
         if not _n_clicks or not selected_model:
-            return no_update, no_update, no_update, no_update
+            return no_update, no_update, no_update, no_update, no_update
         return {
             "reporting_cycle": reporting_cycle,
             "scenario": scenario,
             "model": selected_model,
             "segment": selected_segment,
             "monitoring_point": selected_monitoring_point,
-        }, "", {}, ""
+        }, "", "", {}, ""
 
     # -----------------------------------------------------------------
     # Master re-render: applied store + range store -> ead-dashboard-content
@@ -347,20 +396,24 @@ def register_callbacks(app) -> None:
         Input(layout.EAD_REVIEW_FLOW_PENDING_STORE_ID, "data"),
         Input(APP_THEME_ID, "value"),
         State(layout.CONCLUSIONS_NOTES_STORE_ID, "data"),
+        State(layout.COMPENSATING_CONTROLS_STORE_ID, "data"),
         State(layout.EAD_REVIEW_FLOW_STATUS_STORE_ID, "data"),
-        prevent_initial_call=True,
+        # Not prevent_initial_call: see the matching comment in
+        # callbacks/lgd_performance.py's render_lgd_content -- a deep-linked
+        # APPLIED_FILTERS_STORE_ID is baked into this page's initial layout,
+        # and needs this callback's first ("initial call") batch to fire.
     )
     def render_ead_content(
         applied, range_store, scenario_ranking_store, review_flow_pending_edits, theme_value,
-        conclusions_notes, review_flow_save_status,
+        conclusions_notes, compensating_controls, review_flow_save_status,
     ):
         if not applied:
             return layout.build_ead_apply_prompt()
 
         from ....shared.repositories.filters_config import load_filter_config
         cfg = load_filter_config()
-        default_cycle = cfg["reporting_cycles"][0]["value"] if cfg["reporting_cycles"] else "CCAR 2026"
-        default_scenario = cfg["scenarios"][0]["value"] if cfg["scenarios"] else "intsevere"
+        default_cycle = cfg["reporting_cycles"][0]["value"]
+        default_scenario = cfg["scenarios"][0]["value"]
 
         reporting_cycle = applied.get("reporting_cycle") or default_cycle
         scenario = applied.get("scenario") or default_scenario
@@ -378,6 +431,7 @@ def register_callbacks(app) -> None:
             scenario_ranking_store=scenario_ranking_store or {},
             theme_value=theme_value,
             conclusions_notes=conclusions_notes or "",
+            compensating_controls=compensating_controls or "",
             review_flow_pending_edits=review_flow_pending_edits or {},
             review_flow_save_status=review_flow_save_status or "",
         )
@@ -391,6 +445,17 @@ def register_callbacks(app) -> None:
         prevent_initial_call=True,
     )
     def save_ead_conclusions_notes(value):
+        return value or ""
+
+    # -----------------------------------------------------------------
+    # Compensating-controls textarea -> ead-compensating-controls-store
+    # -----------------------------------------------------------------
+    @app.callback(
+        Output(layout.COMPENSATING_CONTROLS_STORE_ID, "data"),
+        Input(layout.COMPENSATING_CONTROLS_ID, "value"),
+        prevent_initial_call=True,
+    )
+    def save_ead_compensating_controls(value):
         return value or ""
 
     # -----------------------------------------------------------------
@@ -432,9 +497,10 @@ def register_callbacks(app) -> None:
         State(layout.EAD_REVIEW_FLOW_PENDING_STORE_ID, "data"),
         State(layout.APPLIED_FILTERS_STORE_ID, "data"),
         State(layout.CONCLUSIONS_NOTES_STORE_ID, "data"),
+        State(layout.COMPENSATING_CONTROLS_STORE_ID, "data"),
         prevent_initial_call=True,
     )
-    def save_ead_review_flow_rag_changes(n_clicks, pending, applied, conclusions_notes):
+    def save_ead_review_flow_rag_changes(n_clicks, pending, applied, conclusions_notes, compensating_controls):
         # Same dynamic-mount quirk as the picker above: the Save button only exists once there's a
         # pending edit or commentary change, so it "just appeared" at least once and could fire
         # without a real click.
@@ -457,6 +523,15 @@ def register_callbacks(app) -> None:
             if ok:
                 saved_fields.append(field)
 
+        saved_compensating = layout.ead_compensating_controls(selected_model, selected_segment, monitoring_point)
+        if (compensating_controls or "") != (saved_compensating or ""):
+            ok = data_service.save_ead_review_flow_rag(
+                data, reporting_cycle, model, segment, monitoring_point,
+                layout.COMPENSATING_CONTROLS_COLUMN, compensating_controls or "",
+            )
+            if ok:
+                saved_fields.append("compensating_controls")
+
         saved_commentary = layout.ead_reviewer_commentary(selected_model, selected_segment, monitoring_point)
         if (conclusions_notes or "") != (saved_commentary or ""):
             ok = data_service.save_ead_review_flow_rag(
@@ -470,6 +545,14 @@ def register_callbacks(app) -> None:
             return no_update, (
                 "Could not save -- no matching rows were found in the portfolio file for the current scope."
             )
+
+        # Also persist the Scenario filter value in effect for this save --
+        # see the matching comment in save_pd_review_flow_rag_changes. Not
+        # counted in saved_fields/the status message.
+        from ....shared.repositories.filters_config import load_filter_config
+        default_scenario = load_filter_config()["scenarios"][0]["value"]
+        scenario = (applied or {}).get("scenario") or default_scenario
+        data_service.save_ead_review_flow_rag(data, reporting_cycle, model, segment, monitoring_point, "scenario", scenario)
 
         from datetime import datetime
         timestamp = datetime.now().strftime("%H:%M:%S")
@@ -485,17 +568,20 @@ def register_callbacks(app) -> None:
     @app.callback(
         Output(layout.EAD_REVIEW_FLOW_SAVE_BAR_ID, "children"),
         Input(layout.CONCLUSIONS_NOTES_ID, "value"),
+        Input(layout.COMPENSATING_CONTROLS_ID, "value"),
         Input(layout.EAD_REVIEW_FLOW_PENDING_STORE_ID, "data"),
         State(layout.APPLIED_FILTERS_STORE_ID, "data"),
         State(layout.EAD_REVIEW_FLOW_STATUS_STORE_ID, "data"),
         prevent_initial_call=True,
     )
-    def sync_ead_review_flow_save_bar(conclusions_notes, pending, applied, save_status):
+    def sync_ead_review_flow_save_bar(conclusions_notes, compensating_controls, pending, applied, save_status):
         selected_model, selected_segment, monitoring_point, _reporting_cycle = _resolve_ead_scope(data, applied)
         review_flow_rags = layout.ead_review_flow_rags(selected_model, selected_segment, monitoring_point)
         saved_commentary = layout.ead_reviewer_commentary(selected_model, selected_segment, monitoring_point)
+        saved_compensating = layout.ead_compensating_controls(selected_model, selected_segment, monitoring_point)
         commentary_changed = (conclusions_notes or "") != (saved_commentary or "")
+        compensating_changed = (compensating_controls or "") != (saved_compensating or "")
         save_bar = layout.build_ead_review_flow_save_bar(
-            pending or {}, review_flow_rags, save_status, commentary_changed,
+            pending or {}, review_flow_rags, save_status, commentary_changed, compensating_changed,
         )
         return [save_bar] if save_bar is not None else []

@@ -122,22 +122,23 @@ def test_apply_ead_filters_clears_the_reviewer_signoff_draft(monkeypatch):
     cb.register_callbacks(StubApp())
 
     apply_fn = captured["apply_ead_filters"]
-    applied, notes, pending, save_status = apply_fn(
+    applied, notes, compensating, pending, save_status = apply_fn(
         1, "CCAR 2026", "intsevere", "EAD Model A", "All", "2026Q3",
     )
     assert applied["monitoring_point"] == "2026Q3"
     assert notes == "", "an Apply click must discard the unsaved sign-off draft"
+    assert compensating == "", "an Apply click must discard the unsaved compensating-controls draft"
     assert pending == {}, "an Apply click must discard staged review-flow RAG picks"
     assert save_status == "", "an Apply click must discard the stale save-status message"
 
     # Spurious fire (router re-insert, n_clicks=0) must touch no store.
     assert apply_fn(0, "CCAR 2026", "intsevere", "EAD Model A", "All", "2026Q3") == (
-        no_update, no_update, no_update, no_update,
+        no_update, no_update, no_update, no_update, no_update,
     )
 
     # Apply requires a Model even on a real click -- Segment alone isn't enough.
     assert apply_fn(1, "CCAR 2026", "intsevere", "", "Defensive", "2026Q3") == (
-        no_update, no_update, no_update, no_update,
+        no_update, no_update, no_update, no_update, no_update,
     )
 
 

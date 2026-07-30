@@ -544,37 +544,87 @@ def build_loss_apply_prompt() -> html.Section:
 # ---------------------------------------------------------------------------
 
 
-def build_layout() -> list:
-    """No-arg entry point for the page registry."""
+def build_layout(search: str = "") -> list:
+    """Entry point for the page registry.
+
+    ``search`` is the page's ``dcc.Location`` query string (e.g. a deep link
+    from an Overview escalation card); see ``shared.deep_link``.
+    """
     from ...data_access import PD_PERFORMANCE_DATA
-    return page_layout(PD_PERFORMANCE_DATA)
+    from .....shared.deep_link import parse_deep_link_params
+    return page_layout(PD_PERFORMANCE_DATA, initial=parse_deep_link_params(search))
 
 
-def page_layout(data: dict) -> list:
-    """Build the Loss page with top controls and live content."""
+def page_layout(data: dict, initial: dict | None = None) -> list:
+    """Build the Loss page with top controls and live content.
+
+    ``initial`` pre-selects the top filters (and, since this page's stores
+    are rebuilt fresh on every navigation, ``APPLIED_FILTERS_STORE_ID`` itself)
+    from a deep link -- see ``page_layout`` in ``lgd_performance.py`` for why
+    this needs no extra callback, unlike PD.
+    """
     from .....shared.repositories.filters_config import load_filter_config, model_names, segment_values
-    from ...domain.loss import set_loss_metrics
+    from ...domain.loss import resolve_loss_segment, set_loss_metrics
+    initial = initial or {}
     cfg = load_filter_config()
     model_options = model_names("loss")
-    segment_options = ["All", *segment_values()]
+    segment_values_list = segment_values()
+    segment_options = ["All", *segment_values_list]
     reporting_cycle_options = [{"label": c["label"], "value": c["value"]} for c in cfg["reporting_cycles"]]
     scenario_options = [{"label": s["label"], "value": s["value"]} for s in cfg["scenarios"]]
-    default_cycle = reporting_cycle_options[0]["value"] if reporting_cycle_options else "CCAR 2026"
-    default_scenario = scenario_options[0]["value"] if scenario_options else "intsevere"
-    cycle_data = (data.get("loss_observations_by_cycle") or {}).get(default_cycle)
+    default_cycle = reporting_cycle_options[0]["value"]
+    default_scenario = scenario_options[0]["value"]
+    # Cosmetic only: Loss's own Apply flow (apply_loss_filters) never reads
+    # scenario into APPLIED_FILTERS_STORE_ID (Loss has no MEV Range/sensitivity
+    # section that depends on it), so this only pre-selects the dropdown to
+    # match a deep link -- it isn't threaded into applied_filters_data below.
+    selected_scenario = initial.get("scenario") if initial.get("scenario") in {s["value"] for s in scenario_options} else default_scenario
+    selected_cycle = initial.get("cycle") if initial.get("cycle") in {c["value"] for c in reporting_cycle_options} else default_cycle
+    cycle_data = (data.get("loss_observations_by_cycle") or {}).get(selected_cycle)
     if cycle_data:
         set_loss_metrics(cycle_data.get("metrics_store"), cycle_data.get("quarters"))
     else:
         set_loss_metrics(None, [])
-    cycle_quarters = shared_filters.REPORTING_CYCLE_QUARTERS.get(default_cycle, [])
+    cycle_quarters = shared_filters.LOSS_REPORTING_CYCLE_QUARTERS.get(selected_cycle, [])
     monitoring_options = cycle_quarters if cycle_quarters else get_loss_monitoring_point_options(data, None, "All")
-    default_monitoring_point = shared_filters.resolve_monitoring_point_value(monitoring_options, None)
+    selected_monitoring_point = (
+        initial.get("monitoring_point")
+        if initial.get("monitoring_point") in set(monitoring_options)
+        else shared_filters.resolve_monitoring_point_value(monitoring_options, None)
+    )
+    selected_model = (
+        initial.get("model", "")
+        if initial.get("model") in model_options or initial.get("model") == "all"
+        else ""
+    )
+    if selected_model:
+        # A model-scoped deep link with no explicit segment resolves the same
+        # way sync_loss_segment_dropdown does: "All" if this model actually
+        # has an aggregate row for this cycle, else its lone real segment --
+        # so a single-segment model with no "All" row (e.g. PD Corp Model's
+        # Loss equivalent) renders with that segment pre-selected instead of
+        # blank.
+        selected_segment = resolve_loss_segment(data, selected_model, initial.get("segment", ""))
+    else:
+        selected_segment = initial.get("segment", "") if initial.get("segment") in segment_values_list else ""
 
-    model_select_options = [{"label": "All models", "value": "all"}] + [{"label": name, "value": name} for name in model_options]
+    model_select_options = (
+        [{"label": "Select model", "value": ""}, {"label": "All models", "value": "all"}]
+        + [{"label": name, "value": name} for name in model_options]
+    )
+
+    applied_filters_data = None
+    if selected_model or selected_segment:
+        applied_filters_data = {
+            "reporting_cycle": selected_cycle,
+            "model": selected_model,
+            "segment": selected_segment,
+            "monitoring_point": selected_monitoring_point,
+        }
 
     return [
         dcc.Store(id=RANGE_STORE_ID, data={}),
-        dcc.Store(id=APPLIED_FILTERS_STORE_ID),
+        dcc.Store(id=APPLIED_FILTERS_STORE_ID, data=applied_filters_data),
         html.Div(
             className="top-bar",
             children=[
@@ -626,7 +676,7 @@ def page_layout(data: dict) -> list:
                                         menu_id=MODEL_MENU_ID,
                                         filter_key=MODEL_FILTER_KEY,
                                         options=model_select_options,
-                                        value="all",
+                                        value=selected_model,
                                     ),
                                 ),
                                 _build_filter(
@@ -637,7 +687,7 @@ def page_layout(data: dict) -> list:
                                         menu_id=SEGMENT_MENU_ID,
                                         filter_key=SEGMENT_FILTER_KEY,
                                         options=_dropdown_options(segment_options),
-                                        value="All",
+                                        value=selected_segment,
                                     ),
                                 ),
                             ],
@@ -653,7 +703,7 @@ def page_layout(data: dict) -> list:
                                         menu_id=REPORTING_CYCLE_MENU_ID,
                                         filter_key=REPORTING_CYCLE_FILTER_KEY,
                                         options=reporting_cycle_options,
-                                        value=default_cycle,
+                                        value=selected_cycle,
                                     ),
                                 ),
                                 _build_filter(
@@ -664,7 +714,7 @@ def page_layout(data: dict) -> list:
                                         menu_id=MONITORING_POINT_MENU_ID,
                                         filter_key=MONITORING_POINT_FILTER_KEY,
                                         options=[{"label": q, "value": q} for q in monitoring_options],
-                                        value=default_monitoring_point,
+                                        value=selected_monitoring_point,
                                     ),
                                 ),
                                 _build_filter(
@@ -675,7 +725,7 @@ def page_layout(data: dict) -> list:
                                         menu_id=SCENARIO_MENU_ID,
                                         filter_key=SCENARIO_FILTER_KEY,
                                         options=scenario_options,
-                                        value=default_scenario,
+                                        value=selected_scenario,
                                     ),
                                 ),
                                 _build_loss_apply_button(),

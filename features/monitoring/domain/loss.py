@@ -78,6 +78,24 @@ def resolve_loss_model(data: dict, selected_model: str | None) -> str:
 
 
 def get_loss_segments_for_model(data: dict, selected_model: str | None) -> list[str]:
+    """Segments available for the Segment dropdown, narrowed to Loss's one
+    model's real segments (``data["loss_model_segments"]``, built by
+    ``loader.py::_build_model_segment_map_from_sheet`` -- mirrors the PD/LGD/
+    EAD tabs' Model->Segment narrowing). Loss always resolves to a single
+    model (see ``resolve_loss_model``), so this doesn't vary with
+    ``selected_model`` today, but stays sourced from the real per-model map
+    rather than the global segment list in case that ever changes.
+    """
+    model_segments = (data.get("loss_model_segments") or {}).get(LOSS_MODEL_LABEL)
+    if model_segments is not None:
+        # Omit "All" when Loss's model has no literal (model, "All") row in
+        # the currently-installed cycle's store -- picking it would resolve
+        # to a missing store key and every metric on the tab would go blank
+        # (mirrors the PD Performance tab's pd_models_with_all_by_cycle
+        # check).
+        has_all = bool((_LOSS_STORE or {}).get((LOSS_MODEL_LABEL, "All")))
+        return (["All"] if has_all else []) + list(model_segments)
+
     from ....shared.repositories.filters_config import segment_values
     segments = segment_values()
     if segments:
@@ -92,7 +110,9 @@ def get_loss_segments_for_model(data: dict, selected_model: str | None) -> list[
 
 def resolve_loss_segment(data: dict, selected_model: str | None, selected_segment: str | None) -> str:
     segments = get_loss_segments_for_model(data, selected_model)
-    return selected_segment if selected_segment in segments else "All"
+    if selected_segment in segments:
+        return selected_segment
+    return "All" if "All" in segments else (segments[0] if segments else "All")
 
 
 def filter_loss_portfolio(data: dict, selected_model: str | None, selected_segment: str | None = "All") -> pl.DataFrame:
@@ -235,6 +255,13 @@ def build_loss_period_summary(
 ) -> dict[str, Any]:
     metric_rows = loss_metrics_by_period(data, selected_model, selected_segment)
     monitoring_point = resolve_loss_monitoring_point(data, selected_model, selected_segment, selected_monitoring_point)
+    # Trend charts (built from metric_rows below) show history "up to the
+    # monitoring point" -- cap here since the installed store can now span
+    # multiple same-family cycles (see _merge_same_family_loss_cycle_data),
+    # including a later cycle's future quarters relative to whichever
+    # monitoring point is selected.
+    if monitoring_point:
+        metric_rows = [row for row in metric_rows if row.get("Monitoring Period") and str(row["Monitoring Period"]) <= monitoring_point]
     current_index = next((index for index, row in enumerate(metric_rows) if row["Monitoring Period"] == monitoring_point), -1)
     current = metric_rows[current_index] if current_index >= 0 else {}
     previous = metric_rows[current_index - 1] if current_index > 0 else {}

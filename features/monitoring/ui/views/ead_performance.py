@@ -105,6 +105,8 @@ SCENARIO_RANKING_STORE_ID = "ead-scenario-ranking-store"
 SCENARIO_RANKING_FILTER_ID = "ead-scenario-ranking-filter"
 CONCLUSIONS_NOTES_ID = "ead-conclusions-notes-input"
 CONCLUSIONS_NOTES_STORE_ID = "ead-conclusions-notes-store"
+COMPENSATING_CONTROLS_ID = "ead-compensating-controls-input"
+COMPENSATING_CONTROLS_STORE_ID = "ead-compensating-controls-store"
 EAD_REVIEW_FLOW_OPTION_ID = "ead-review-flow-option"
 EAD_REVIEW_FLOW_PENDING_STORE_ID = "ead-review-flow-pending-store"
 EAD_REVIEW_FLOW_STATUS_STORE_ID = "ead-review-flow-status-store"
@@ -125,6 +127,9 @@ EAD_REVIEW_FLOW_FIELD_LABELS = {
 # The reviewer sign-off commentary lives in the same portfolio-file mechanism (self-healing column,
 # written via the same generic write path) but isn't a RAG, so it's kept out of EAD_REVIEW_FLOW_COLUMNS.
 REVIEWER_COMMENTARY_COLUMN = "reviewer_commentary"
+# The reviewer's compensating-controls justification for the Post Mitigation RAG -- same free-text,
+# same self-healing portfolio-file mechanism as the sign-off commentary above.
+COMPENSATING_CONTROLS_COLUMN = "compensating_controls"
 
 _RAG_RANK = {"N/A": -1, "Green": 0, "Amber": 1, "Red": 2}
 _RAG_HEX = {"green": "#16a34a", "amber": "#d97706", "red": "#dc2626", "neutral": "#94a3b8"}
@@ -424,15 +429,16 @@ def _build_ead_mev_range_section(
     monitoring_point: str | None,
     range_store: dict,
     theme_value: str | None = None,
-    reporting_cycle: str = "CCAR 2026",
-    scenario: str = "intsevere",
+    *,
+    reporting_cycle: str,
+    scenario: str,
 ) -> html.Section:
     catalog = data.get("mev_catalog") or {}
     mev_mnemonic_map = data.get("mev_mnemonic_map") or {}
     mev_description_map = data.get("mev_description_map") or {}
     selected_models = get_mev_selected_models_simple(catalog, selected_model, selected_segment, model_type="EAD")
 
-    available_mev_names = get_pd_mev_available_names_for_models(catalog, selected_models)
+    available_mev_names = get_pd_mev_available_names_for_models(catalog, selected_models, selected_segment)
     mev_periods = get_pd_mev_visible_periods(catalog, selected_models, available_mev_names)
 
     model_panels = []
@@ -1131,6 +1137,12 @@ def ead_reviewer_commentary(selected_model, selected_segment, quarter: str) -> s
     return str(row.get(REVIEWER_COMMENTARY_COLUMN, "") or "").strip()
 
 
+def ead_compensating_controls(selected_model, selected_segment, quarter: str) -> str:
+    """The compensating-controls note saved for this scope, or "" if none has been saved yet."""
+    row = ead_metrics_row_for_quarter(selected_model, selected_segment, quarter)
+    return str(row.get(COMPENSATING_CONTROLS_COLUMN, "") or "").strip()
+
+
 def _build_ead_rag_lifecycle_metric_list(chapter_2_summaries: list[dict]) -> html.Div:
     """Every Chapter 2 finding with its own RAG -- no single aggregated dot.
 
@@ -1239,6 +1251,7 @@ def build_ead_review_flow_save_bar(
     current_values: dict,
     save_status: str | None,
     commentary_changed: bool = False,
+    compensating_changed: bool = False,
 ) -> html.Div | None:
     """Diff summary + Save button for staged RAG edits and/or reviewer commentary, plus the last save status."""
     changed = {
@@ -1246,7 +1259,7 @@ def build_ead_review_flow_save_bar(
         if value in ("Green", "Amber", "Red") and value != current_values.get(field)
     }
     children = []
-    if changed or commentary_changed:
+    if changed or commentary_changed or compensating_changed:
         items = [
             html.Li([
                 html.Strong(EAD_REVIEW_FLOW_FIELD_LABELS.get(field, field)),
@@ -1254,6 +1267,8 @@ def build_ead_review_flow_save_bar(
             ])
             for field, value in changed.items()
         ]
+        if compensating_changed:
+            items.append(html.Li([html.Strong("Compensating controls"), ": will be updated"]))
         if commentary_changed:
             items.append(html.Li([html.Strong("Reviewer sign-off commentary"), ": will be updated"]))
         children.extend([
@@ -1465,7 +1480,7 @@ def _build_ead_required_actions_panel(
                 children=[_build_ead_action_card(selection, pending_fields) for selection in selections],
             ),
             html.Div(
-                "Source: statpy_monitoring_thresholds.xlsx · monitoring_actions. Each action keys off the review-flow RAG named in "
+                "Source: monitoring_rules.xlsx · monitoring_actions. Each action keys off the review-flow RAG named in "
                 "its Trigger column; two consecutive Red Post Mitigation quarters escalate to the persistent-breach "
                 "protocol.",
                 className="pd-test-footnote",
@@ -1485,6 +1500,8 @@ def _build_ead_conclusions_verdict_section(
     saved_commentary: str = "",
     monitoring_actions: list[dict] | None = None,
     previous_post_mitigation_rag: str = "",
+    compensating_controls: str | None = None,
+    saved_compensating: str = "",
 ) -> html.Section:
     lifecycle_diagram = _build_ead_rag_lifecycle_diagram(
         chapter_1_rag, chapter_2_summaries,
@@ -1503,21 +1520,40 @@ def _build_ead_conclusions_verdict_section(
         monitoring_actions or [], effective_rags, previous_post_mitigation_rag, pending_fields,
     )
     commentary_changed = (conclusions_notes or "") != (saved_commentary or "")
+    compensating_changed = (compensating_controls or "") != (saved_compensating or "")
     save_bar = build_ead_review_flow_save_bar(
-        pending_edits or {}, review_flow_rags, review_flow_save_status, commentary_changed,
+        pending_edits or {}, review_flow_rags, review_flow_save_status, commentary_changed, compensating_changed,
     )
 
     reviewer_signoff = _build_ead_collapsible_card(
         "ead-conclusions-reviewer",
         "Reviewer sign-off",
-        "Record the reviewer's conclusions, caveats, or rationale for the Post Mitigation RAG shown above.",
+        "Record the compensating controls relied on and the reviewer's conclusions for the Post Mitigation RAG shown above.",
         [
             _build_ead_conclusions_signoff_chip(review_flow_rags["post_mitigation"]),
-            dcc.Textarea(
-                id=CONCLUSIONS_NOTES_ID,
-                value=conclusions_notes or "",
-                placeholder="Record conclusions, caveats, or a sign-off note for this monitoring cycle...",
-                className="pd-conclusions-textarea",
+            html.Div(
+                className="pd-conclusions-field",
+                children=[
+                    html.Label("Compensating controls", htmlFor=COMPENSATING_CONTROLS_ID, className="pd-conclusions-field-label"),
+                    dcc.Textarea(
+                        id=COMPENSATING_CONTROLS_ID,
+                        value=compensating_controls or "",
+                        placeholder="Describe the compensating / mitigating controls relied on for the Post Mitigation RAG...",
+                        className="pd-conclusions-textarea",
+                    ),
+                ],
+            ),
+            html.Div(
+                className="pd-conclusions-field",
+                children=[
+                    html.Label("Reviewer sign-off note", htmlFor=CONCLUSIONS_NOTES_ID, className="pd-conclusions-field-label"),
+                    dcc.Textarea(
+                        id=CONCLUSIONS_NOTES_ID,
+                        value=conclusions_notes or "",
+                        placeholder="Record conclusions, caveats, or a sign-off note for this monitoring cycle...",
+                        className="pd-conclusions-textarea",
+                    ),
+                ],
             ),
             html.Div(
                 "Saved to portfolio.xlsx via the Save button above once edited.",
@@ -1556,11 +1592,13 @@ def render_ead_performance_content(
     selected_segment: str | None,
     selected_monitoring_point: str | None,
     range_store: dict | None = None,
-    reporting_cycle: str = "CCAR 2026",
-    scenario: str = "intsevere",
+    *,
+    reporting_cycle: str,
+    scenario: str,
     scenario_ranking_store: dict | None = None,
     theme_value: str | None = None,
     conclusions_notes: str | None = None,
+    compensating_controls: str | None = None,
     review_flow_pending_edits: dict | None = None,
     review_flow_save_status: str | None = None,
 ) -> list:
@@ -1908,6 +1946,7 @@ def render_ead_performance_content(
     )
     review_flow_rags = ead_review_flow_rags(selected_model, selected_segment, monitoring_point)
     saved_commentary = ead_reviewer_commentary(selected_model, selected_segment, monitoring_point)
+    saved_compensating = ead_compensating_controls(selected_model, selected_segment, monitoring_point)
     previous_monitoring_point = get_previous_ead_quarter(data, selected_model, selected_segment, monitoring_point)
     previous_review_flow_rags = ead_review_flow_rags(selected_model, selected_segment, previous_monitoring_point)
     section_3_1 = _build_ead_conclusions_verdict_section(
@@ -1918,6 +1957,8 @@ def render_ead_performance_content(
         saved_commentary=saved_commentary,
         monitoring_actions=data.get("monitoring_actions") or [],
         previous_post_mitigation_rag=previous_review_flow_rags["post_mitigation"],
+        compensating_controls=compensating_controls if compensating_controls else saved_compensating,
+        saved_compensating=saved_compensating,
     )
     chapter_3_body = html.Div(
         className="pd-chapter-body pd-chapter-body-conclusions",
@@ -1981,15 +2022,27 @@ def build_ead_apply_prompt() -> html.Section:
 # ---------------------------------------------------------------------------
 
 
-def page_layout() -> list:
-    """Build the EAD page with top controls and live content."""
+def page_layout(search: str = "") -> list:
+    """Build the EAD page with top controls and live content.
+
+    ``search`` is the page's ``dcc.Location`` query string (e.g. a deep link
+    from an Overview escalation card); see ``shared.deep_link``. This page's
+    stores are rebuilt fresh on every navigation, so baking the deep-linked
+    scope directly into their construction here (including
+    ``APPLIED_FILTERS_STORE_ID`` itself) is enough to render it immediately,
+    with no extra callback needed (contrast PD, whose stores live in the
+    shared app shell and so need a dedicated bootstrap callback instead).
+    """
     from .....shared.domain.mev_range import model_field_values
+    from .....shared.deep_link import parse_deep_link_params
     from .....shared.repositories.filters_config import load_filter_config, model_names, segment_values
-    from ...domain.ead import set_ead_metrics
+    from ...domain.ead import resolve_ead_segment, set_ead_metrics
+    initial = parse_deep_link_params(search)
     data = PD_PERFORMANCE_DATA
     cfg = load_filter_config()
     model_options = model_names("ead")
-    segment_options = ["All", *segment_values()]
+    segment_values_list = segment_values()
+    segment_options = ["All", *segment_values_list]
     mev_catalog = data.get("mev_catalog") or {}
     region_options = [{"label": "All", "value": "All"}] + [
         {"label": value, "value": value} for value in model_field_values(mev_catalog, "region", model_options)
@@ -1999,24 +2052,51 @@ def page_layout() -> list:
     ]
     reporting_cycle_options = [{"label": c["label"], "value": c["value"]} for c in cfg["reporting_cycles"]]
     scenario_options = [{"label": s["label"], "value": s["value"]} for s in cfg["scenarios"]]
-    default_cycle = reporting_cycle_options[0]["value"] if reporting_cycle_options else "CCAR 2026"
-    default_scenario = scenario_options[0]["value"] if scenario_options else "intsevere"
-    cycle_data = (data.get("ead_observations_by_cycle") or {}).get(default_cycle)
+    default_cycle = reporting_cycle_options[0]["value"]
+    default_scenario = scenario_options[0]["value"]
+    selected_scenario = initial.get("scenario") if initial.get("scenario") in {s["value"] for s in scenario_options} else default_scenario
+    selected_cycle = initial.get("cycle") if initial.get("cycle") in {c["value"] for c in reporting_cycle_options} else default_cycle
+    cycle_data = (data.get("ead_observations_by_cycle") or {}).get(selected_cycle)
     if cycle_data:
         set_ead_metrics(cycle_data.get("metrics_store"), cycle_data.get("quarters"))
     else:
         set_ead_metrics(None, [])
-    cycle_quarters = shared_filters.REPORTING_CYCLE_QUARTERS.get(default_cycle, [])
+    cycle_quarters = shared_filters.EAD_REPORTING_CYCLE_QUARTERS.get(selected_cycle, [])
     monitoring_options = cycle_quarters if cycle_quarters else get_ead_monitoring_point_options(data, None, "All")
-    default_monitoring_point = shared_filters.resolve_monitoring_point_value(monitoring_options, None)
+    selected_monitoring_point = (
+        initial.get("monitoring_point")
+        if initial.get("monitoring_point") in set(monitoring_options)
+        else shared_filters.resolve_monitoring_point_value(monitoring_options, None)
+    )
+    selected_model = initial.get("model", "") if initial.get("model") in model_options else ""
+    if selected_model:
+        # A model-scoped deep link with no explicit segment resolves the same
+        # way sync_ead_segment_dropdown does: "All" if this model actually has
+        # an aggregate row for this cycle, else its lone real segment -- so a
+        # single-segment model with no "All" row (e.g. PD Corp Model's EAD
+        # equivalent) renders with that segment pre-selected instead of blank.
+        selected_segment = resolve_ead_segment(data, selected_model, initial.get("segment", ""))
+    else:
+        selected_segment = initial.get("segment", "") if initial.get("segment") in segment_values_list else ""
 
     model_select_options = [{"label": "Select model", "value": ""}] + [{"label": name, "value": name} for name in model_options]
+
+    applied_filters_data = None
+    if selected_model or selected_segment:
+        applied_filters_data = {
+            "reporting_cycle": selected_cycle,
+            "scenario": selected_scenario,
+            "model": selected_model,
+            "segment": selected_segment,
+            "monitoring_point": selected_monitoring_point,
+        }
 
     return [
         dcc.Store(id=RANGE_STORE_ID, data={}),
         dcc.Store(id=SCENARIO_RANKING_STORE_ID, data={}),
-        dcc.Store(id=APPLIED_FILTERS_STORE_ID),
+        dcc.Store(id=APPLIED_FILTERS_STORE_ID, data=applied_filters_data),
         dcc.Store(id=CONCLUSIONS_NOTES_STORE_ID, storage_type="session", data=""),
+        dcc.Store(id=COMPENSATING_CONTROLS_STORE_ID, storage_type="session", data=""),
         dcc.Store(id=EAD_REVIEW_FLOW_PENDING_STORE_ID, data={}),
         dcc.Store(id=EAD_REVIEW_FLOW_STATUS_STORE_ID, data=""),
         html.Div(
@@ -2070,7 +2150,7 @@ def page_layout() -> list:
                                         menu_id=MODEL_MENU_ID,
                                         filter_key=MODEL_FILTER_KEY,
                                         options=model_select_options,
-                                        value="",
+                                        value=selected_model,
                                     ),
                                 ),
                                 _build_filter(
@@ -2081,7 +2161,7 @@ def page_layout() -> list:
                                         menu_id=SEGMENT_MENU_ID,
                                         filter_key=SEGMENT_FILTER_KEY,
                                         options=_dropdown_options(segment_options),
-                                        value="",
+                                        value=selected_segment,
                                     ),
                                 ),
                             ],
@@ -2097,7 +2177,7 @@ def page_layout() -> list:
                                         menu_id=REPORTING_CYCLE_MENU_ID,
                                         filter_key=REPORTING_CYCLE_FILTER_KEY,
                                         options=reporting_cycle_options,
-                                        value=default_cycle,
+                                        value=selected_cycle,
                                     ),
                                 ),
                                 _build_filter(
@@ -2108,7 +2188,7 @@ def page_layout() -> list:
                                         menu_id=MONITORING_POINT_MENU_ID,
                                         filter_key=MONITORING_POINT_FILTER_KEY,
                                         options=[{"label": q, "value": q} for q in monitoring_options],
-                                        value=default_monitoring_point,
+                                        value=selected_monitoring_point,
                                     ),
                                 ),
                                 _build_filter(
@@ -2119,7 +2199,7 @@ def page_layout() -> list:
                                         menu_id=SCENARIO_MENU_ID,
                                         filter_key=SCENARIO_FILTER_KEY,
                                         options=scenario_options,
-                                        value=default_scenario,
+                                        value=selected_scenario,
                                     ),
                                 ),
                                 _build_ead_apply_button(),

@@ -12,6 +12,7 @@ from ..domain.loss import (
     resolve_loss_segment,
 )
 from ....shared.registration import already_registered
+from ....shared.repositories.filters_config import cycle_family
 from ....shared.theme import APP_THEME_ID
 from ..data_access import PD_PERFORMANCE_DATA
 
@@ -20,6 +21,25 @@ _RANGE_PRESET_COUNTS = {"last-4": 4, "last-8": 8, "last-12": 12}
 
 def _dropdown_options(values: list[str]) -> list[dict[str, str]]:
     return [{"label": value, "value": value} for value in values]
+
+
+def _merge_same_family_loss_cycle_data(observations_by_cycle: dict, reporting_cycle: str) -> dict:
+    """Pool ``loss_observations_by_cycle`` across every cycle in the same
+    family as ``reporting_cycle`` -- see the equivalent
+    ``_merge_same_family_lgd_cycle_data`` in ``lgd_performance.py``.
+    """
+    family = cycle_family(reporting_cycle)
+    quarters: set[str] = set()
+    metrics_store: dict[tuple[str, str], list[dict]] = {}
+    for cycle, cycle_data in (observations_by_cycle or {}).items():
+        if cycle_family(cycle) != family:
+            continue
+        quarters.update(cycle_data.get("quarters") or [])
+        for key, rows in (cycle_data.get("metrics_store") or {}).items():
+            metrics_store.setdefault(key, []).extend(dict(row, reporting_cycle=cycle) for row in rows)
+    for rows in metrics_store.values():
+        rows.sort(key=lambda row: row.get("Monitoring Period") or "")
+    return {"quarters": sorted(quarters), "metrics_store": metrics_store}
 
 
 def register_callbacks(app) -> None:
@@ -84,9 +104,11 @@ def register_callbacks(app) -> None:
 
     def _install_loss_store(reporting_cycle):
         from ..domain.loss import set_loss_metrics
-        cycle_data = (data.get("loss_observations_by_cycle") or {}).get(reporting_cycle)
+        observations_by_cycle = data.get("loss_observations_by_cycle") or {}
+        cycle_data = observations_by_cycle.get(reporting_cycle)
         if cycle_data:
-            set_loss_metrics(cycle_data.get("metrics_store"), cycle_data.get("quarters"))
+            merged = _merge_same_family_loss_cycle_data(observations_by_cycle, reporting_cycle)
+            set_loss_metrics(merged["metrics_store"], merged["quarters"])
         else:
             set_loss_metrics(None, [])
         return cycle_data
@@ -156,6 +178,12 @@ def register_callbacks(app) -> None:
 
         return range_store
 
+    # Segment is never disabled/blocked by Model. With no model chosen, its
+    # options still show every real segment plus a "Select segment"
+    # placeholder (mirroring Model's own "Select model" placeholder); with a
+    # model chosen, options/value resolve via get_loss_segments_for_model /
+    # resolve_loss_segment as before -- matches LGD/EAD's
+    # sync_lgd_segment_dropdown / sync_ead_segment_dropdown.
     @app.callback(
         Output(layout.SEGMENT_DROPDOWN_ID, "options"),
         Output(layout.SEGMENT_DROPDOWN_ID, "value"),
@@ -163,9 +191,15 @@ def register_callbacks(app) -> None:
         Input(layout.SEGMENT_DROPDOWN_ID, "value"),
     )
     def sync_loss_segment_dropdown(selected_model, selected_segment):
+        has_model = bool(selected_model)
         segments = get_loss_segments_for_model(data, selected_model)
-        value = resolve_loss_segment(data, selected_model, selected_segment)
-        return _dropdown_options(segments), value
+        options = _dropdown_options(segments)
+        if has_model:
+            value = resolve_loss_segment(data, selected_model, selected_segment)
+        else:
+            options = [{"label": "Select segment", "value": ""}] + options
+            value = selected_segment if selected_segment in segments else ""
+        return options, value
 
     @app.callback(
         Output(layout.MONITORING_POINT_DROPDOWN_ID, "options"),
@@ -174,7 +208,7 @@ def register_callbacks(app) -> None:
         Input(layout.MONITORING_POINT_DROPDOWN_ID, "value"),
     )
     def sync_loss_monitoring_point_dropdown(reporting_cycle, selected_monitoring_point):
-        options = controls.REPORTING_CYCLE_QUARTERS.get(reporting_cycle, [])
+        options = controls.LOSS_REPORTING_CYCLE_QUARTERS.get(reporting_cycle, [])
         value = filter_shell.resolve_monitoring_point_value(options, selected_monitoring_point)
         return _dropdown_options(options), value
 
@@ -208,7 +242,10 @@ def register_callbacks(app) -> None:
         Input(layout.APPLIED_FILTERS_STORE_ID, "data"),
         Input(layout.RANGE_STORE_ID, "data"),
         Input(APP_THEME_ID, "value"),
-        prevent_initial_call=True,
+        # Not prevent_initial_call: see the matching comment in
+        # callbacks/lgd_performance.py's render_lgd_content -- a deep-linked
+        # APPLIED_FILTERS_STORE_ID is baked into this page's initial layout,
+        # and needs this callback's first ("initial call") batch to fire.
     )
     def render_loss_content(applied, range_store, theme_value):
         if not applied:
@@ -216,7 +253,7 @@ def register_callbacks(app) -> None:
 
         from ....shared.repositories.filters_config import load_filter_config
         cfg = load_filter_config()
-        default_cycle = cfg["reporting_cycles"][0]["value"] if cfg["reporting_cycles"] else "CCAR 2026"
+        default_cycle = cfg["reporting_cycles"][0]["value"]
 
         reporting_cycle = applied.get("reporting_cycle") or default_cycle
         _install_loss_store(reporting_cycle)

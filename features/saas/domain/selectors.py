@@ -74,13 +74,6 @@ def model_descriptive_label(model_name: str) -> str:
     return descriptive_map.get(model_name) or model_name
 
 
-def models_in_group(parent_label: str) -> list[str]:
-    """Child Model Names under a parent Descriptive Name, or a singleton for a
-    model that is its own parent. Reads the canonical parent->children structure
-    built once in :func:`loader.load_saas_mev_workbook_data`."""
-    return list(SAAS_PAGE_DATA.get("descriptive_groups", {}).get(parent_label, []))
-
-
 def normalize_multi_values(value) -> list[str]:
     if isinstance(value, str):
         return [value] if value else []

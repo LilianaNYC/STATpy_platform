@@ -29,13 +29,24 @@ LGD_MODEL_LABEL = "LGD Model A"
 
 _LGD_STORE: dict | None = None
 _LGD_QUARTERS: list[str] = []
+_LGD_QUARTER_CYCLE_MAP: dict[str, str] = {}
 
 
-def set_lgd_metrics(store: dict | None, quarters: list[str] | None = None) -> None:
-    """Install (or clear) the precomputed LGD metrics store and its quarters."""
-    global _LGD_STORE, _LGD_QUARTERS
+def set_lgd_metrics(store: dict | None, quarters: list[str] | None = None, quarter_cycle_map: dict[str, str] | None = None) -> None:
+    """Install (or clear) the precomputed LGD metrics store and its quarters.
+
+    ``quarter_cycle_map`` -- which reporting cycle each quarter came from --
+    lets trend charts label points once the installed store spans multiple
+    same-family cycles (see ``_merge_same_family_lgd_cycle_data``).
+    """
+    global _LGD_STORE, _LGD_QUARTERS, _LGD_QUARTER_CYCLE_MAP
     _LGD_STORE = store
     _LGD_QUARTERS = list(quarters or [])
+    _LGD_QUARTER_CYCLE_MAP = dict(quarter_cycle_map or {})
+
+
+def get_lgd_quarter_cycle_map() -> dict[str, str]:
+    return dict(_LGD_QUARTER_CYCLE_MAP)
 
 
 def _lgd_store_key(selected_model, selected_segment) -> tuple[str, str]:
@@ -163,11 +174,25 @@ def resolve_lgd_models(data: dict, selected_model: str | list[str] | tuple[str, 
 def get_lgd_segments_for_model(data: dict, selected_model: str | list[str] | tuple[str, ...] | set[str] | None) -> list[str]:
     """Segments available for the Segment dropdown.
 
-    Segments are a global list (shared across models), not derived from
-    ``selected_model`` -- kept as a parameter for signature parity with
-    :func:`resolve_lgd_segment`. Available regardless of whether a model is
-    selected, so Segment can be browsed/chosen before Model.
+    With exactly one real model selected, narrows to that model's own real
+    segments (``data["lgd_model_segments"]``, built by
+    ``loader.py::_build_model_segment_map_from_sheet`` -- mirrors the PD
+    Performance tab's Model->Segment narrowing). With no model selected (or
+    more than one), falls back to every real segment across all LGD models,
+    so Segment can still be browsed/chosen before Model.
     """
+    models = resolve_lgd_models(data, selected_model)
+    if len(models) == 1:
+        model_segments = (data.get("lgd_model_segments") or {}).get(models[0])
+        if model_segments is not None:
+            # Omit "All" when this model has no literal (model, "All") row in
+            # the currently-installed cycle's store -- picking it would
+            # resolve to a missing store key and every metric on the tab
+            # would go blank (mirrors the PD Performance tab's
+            # pd_models_with_all_by_cycle check).
+            has_all = bool((_LGD_STORE or {}).get((models[0], "All")))
+            return (["All"] if has_all else []) + list(model_segments)
+
     from ....shared.repositories.filters_config import segment_values
     segments = segment_values()
     if segments:
@@ -187,7 +212,9 @@ def resolve_lgd_segment(
     selected_segment: str | None,
 ) -> str:
     segments = get_lgd_segments_for_model(data, selected_model)
-    return selected_segment if selected_segment in segments else "All"
+    if selected_segment in segments:
+        return selected_segment
+    return "All" if "All" in segments else (segments[0] if segments else "All")
 
 
 def filter_lgd_portfolio(
@@ -348,6 +375,14 @@ def build_lgd_period_summary(
 ) -> dict[str, Any]:
     metric_rows = lgd_metrics_by_period(data, selected_model, selected_segment)
     monitoring_point = resolve_lgd_monitoring_point(data, selected_model, selected_segment, selected_monitoring_point)
+    # Trend charts (built from metric_rows below) show history "up to the
+    # monitoring point" -- cap here rather than trusting the store to only
+    # ever hold quarters <= monitoring_point, since the installed store can
+    # now span multiple same-family cycles (see
+    # _merge_same_family_lgd_cycle_data), including a later cycle's future
+    # quarters relative to whichever monitoring point is selected.
+    if monitoring_point:
+        metric_rows = [row for row in metric_rows if row.get("Monitoring Period") and str(row["Monitoring Period"]) <= monitoring_point]
     current_index = next((index for index, row in enumerate(metric_rows) if row["Monitoring Period"] == monitoring_point), -1)
     current = metric_rows[current_index] if current_index >= 0 else {}
     previous = metric_rows[current_index - 1] if current_index > 0 else {}
@@ -377,6 +412,7 @@ def build_lgd_period_summary(
         "previous_performance_rag": previous_performance_rag,
     }
 def build_lgd_calibration_rag_trend(data: dict, metric_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    quarter_cycle_map = get_lgd_quarter_cycle_map()
     rows: list[dict[str, Any]] = []
     for row in metric_rows:
         me_rag = lgd_metric_rag(data, "ME", row.get("ME"))
@@ -389,6 +425,7 @@ def build_lgd_calibration_rag_trend(data: dict, metric_rows: list[dict[str, Any]
         rows.append(
             {
                 "quarter": row["Monitoring Period"],
+                "reporting_cycle": quarter_cycle_map.get(row["Monitoring Period"], ""),
                 "rag": rag,
                 "rag_score": pd_rag_score(rag),
                 "weighted_average": weighted_average,
@@ -403,6 +440,7 @@ def build_lgd_calibration_rag_trend(data: dict, metric_rows: list[dict[str, Any]
 
 
 def build_lgd_discrimination_rag_trend(data: dict, metric_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    quarter_cycle_map = get_lgd_quarter_cycle_map()
     rows: list[dict[str, Any]] = []
     for row in metric_rows:
         tau_rag = lgd_metric_rag(data, "Kendall's Tau", row.get("Kendall's Tau"))
@@ -410,6 +448,7 @@ def build_lgd_discrimination_rag_trend(data: dict, metric_rows: list[dict[str, A
         rows.append(
             {
                 "quarter": row["Monitoring Period"],
+                "reporting_cycle": quarter_cycle_map.get(row["Monitoring Period"], ""),
                 "rag": tau_rag,
                 "rag_score": score,
                 "weighted_average": score,
