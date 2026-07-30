@@ -1281,8 +1281,8 @@ def build_pd_transition_combined_figure(rows, range_value=None, monitoring_thres
     return fig
 
 
-def build_pd_sensitivity_combined_figure(rows, threshold: float | None, range_value=None, *, theme: str = "light") -> go.Figure:
-    """Sensitivity: projected PD paths (left) + relative shock impact bars (right).
+def build_pd_sensitivity_combined_figure(rows, threshold: float | None, range_value=None, *, theme: str = "light", metric_label: str = "PD") -> go.Figure:
+    """Sensitivity: projected metric paths (left) + relative shock impact bars (right).
 
     Both panels share the same quarter offsets and can be windowed with the
     range controls. The impact bars keep their RAG colouring (within / above the
@@ -1375,7 +1375,7 @@ def build_pd_sensitivity_combined_figure(rows, threshold: float | None, range_va
     # Draw the impact panel's grid above the bars (so it isn't overdrawn) but keep
     # the same palette grid colour as the projected-PD panel / the PD tab.
     fig.update_xaxes(**axis_kw, layer="above traces", row=1, col=2)
-    fig.update_yaxes(title_text="Projected PD", tickformat=".1%", gridcolor=palette["grid_color"], zeroline=False, rangemode="tozero", row=1, col=1)
+    fig.update_yaxes(title_text=f"Projected {metric_label}", tickformat=".1%", gridcolor=palette["grid_color"], zeroline=False, rangemode="tozero", row=1, col=1)
     fig.update_yaxes(title_text="Relative Shock Impact", tickformat=".0%", gridcolor=palette["grid_color"], zeroline=False, rangemode="tozero", layer="above traces", row=1, col=2)
 
     fig.update_layout(
@@ -1390,8 +1390,8 @@ def build_pd_sensitivity_combined_figure(rows, threshold: float | None, range_va
     return fig
 
 
-def build_pd_scenario_projection_figure(rows, *, theme: str = "light") -> go.Figure:
-    """Projected PD paths for every available scenario variant."""
+def build_pd_scenario_projection_figure(rows, *, theme: str = "light", metric_label: str = "PD") -> go.Figure:
+    """Projected metric paths for every available scenario variant."""
     normalized_theme = _normalize_saas_theme(theme)
     palette = _saas_theme_palette(normalized_theme)
     scenario_color_map = SAAS_DARK_SCENARIO_COLOR_MAP if normalized_theme == "dark" else SAAS_SCENARIO_COLOR_MAP
@@ -1462,7 +1462,7 @@ def build_pd_scenario_projection_figure(rows, *, theme: str = "light") -> go.Fig
             automargin=True,
         ),
         yaxis=dict(
-            title="Projected PD",
+            title=f"Projected {metric_label}",
             tickformat=".1%",
             range=[0, y_max],
             gridcolor=palette["grid_color"],
@@ -1476,8 +1476,8 @@ def build_pd_scenario_projection_figure(rows, *, theme: str = "light") -> go.Fig
     return fig
 
 
-def build_pd_scenario_rank_figure(rows, *, theme: str = "light") -> go.Figure:
-    """Scenario rank matrix where rank 1 is the highest projected PD."""
+def build_pd_scenario_rank_figure(rows, *, theme: str = "light", metric_label: str = "PD") -> go.Figure:
+    """Scenario rank matrix where rank 1 is the highest projected metric value."""
     palette = _saas_theme_palette(_normalize_saas_theme(theme))
     scoped_rows = [row for row in (rows or []) if is_finite_number(_proj(row)) and row.get("scenario_variant")]
     if not scoped_rows:
@@ -1547,8 +1547,8 @@ def build_pd_scenario_rank_figure(rows, *, theme: str = "light") -> go.Figure:
         hovertemplate=(
             "%{customdata[0]}<br>"
             "Scenario: %{customdata[1]}<br>"
-            "Projected PD: %{customdata[2]:.2%}<br>"
-            "Rank: %{customdata[3]} (highest = highest PD)<extra></extra>"
+            f"Projected {metric_label}: %{{customdata[2]:.2%}}<br>"
+            f"Rank: %{{customdata[3]}} (highest = highest {metric_label})<extra></extra>"
         ),
     ))
     fig.update_layout(

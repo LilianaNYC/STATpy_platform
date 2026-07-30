@@ -774,14 +774,14 @@ def build_scenario_ranking_section(
                         className="section-card pd-default-rate-trend-section pd-sensitivity-chart-card",
                         children=[
                             build_chart_header(f"Projected {cfg.label} by Scenario", f"{_entity_label(model, segment)} projected {cfg.label} paths for selected scenarios."),
-                            dcc.Graph(id=f"{cfg.prefix}-scenario-projection-chart", figure=build_pd_scenario_projection_figure(rows, theme=theme), config=_GRAPH_CONFIG, className="pd-default-rate-trend-chart pd-default-rate-trend-chart-medium"),
+                            dcc.Graph(id=f"{cfg.prefix}-scenario-projection-chart", figure=build_pd_scenario_projection_figure(rows, theme=theme, metric_label=cfg.label), config=_GRAPH_CONFIG, className="pd-default-rate-trend-chart pd-default-rate-trend-chart-medium"),
                         ],
                     ),
                     html.Div(
                         className="section-card pd-default-rate-trend-section pd-sensitivity-chart-card",
                         children=[
                             build_chart_header("Scenario Rank Matrix", f"Rank 1 identifies the scenario with the highest projected {cfg.label} in each projection quarter."),
-                            dcc.Graph(id=f"{cfg.prefix}-scenario-rank-chart", figure=build_pd_scenario_rank_figure(rows, theme=theme), config=_GRAPH_CONFIG, className="pd-default-rate-trend-chart pd-default-rate-trend-chart-medium"),
+                            dcc.Graph(id=f"{cfg.prefix}-scenario-rank-chart", figure=build_pd_scenario_rank_figure(rows, theme=theme, metric_label=cfg.label), config=_GRAPH_CONFIG, className="pd-default-rate-trend-chart pd-default-rate-trend-chart-medium"),
                         ],
                     ),
                 ],
@@ -916,7 +916,7 @@ def build_sensitivity_section(
                     ),
                     dcc.Graph(
                         id=f"{cfg.prefix}-sensitivity-combined-chart",
-                        figure=build_pd_sensitivity_combined_figure(rows, threshold, range_value=None, theme=theme),
+                        figure=build_pd_sensitivity_combined_figure(rows, threshold, range_value=None, theme=theme, metric_label=cfg.label),
                         config=_GRAPH_CONFIG,
                         className="pd-default-rate-trend-chart",
                     ),
