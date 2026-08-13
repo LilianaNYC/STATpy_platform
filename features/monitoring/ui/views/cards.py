@@ -128,23 +128,27 @@ def build_pd_test_card(metric, current_values, previous_values, thresholds, cont
         snapshot_label, snapshot_value = _snapshot_meta(context)
         children.append(html.Div(f"{snapshot_label}: {snapshot_value}", className="pd-test-meta"))
     children.extend(_meta_rows(options.get("extra_meta_rows")))
-    # A suppressed metric has no value to compare period-over-period.
-    if not hide_metric:
-        children.append(
-            html.Div(
-                className="pd-performance-comparison",
-                children=[
-                    html.Div([
-                        html.Span(f"Previous ({context.get('previous_quarter') or 'No prior quarter'})"),
-                        html.Strong(format_pd_metric(previous_value, fmt)),
-                    ]),
-                    html.Div([
-                        html.Span("Change"),
-                        html.Strong(movement["text"], className=f"pd-change {movement['css']}"),
-                    ]),
-                ],
-            )
+    # Every card carries the period-over-period footer, fallback or not, so a
+    # row of cards stays comparable. Change is N/A under a fallback though: it
+    # would otherwise be measured against a current value the card deliberately
+    # does not show. Previous stands on its own and stays as measured.
+    if hide_metric:
+        movement = {"text": "N/A", "css": "pd-change-neutral"}
+    children.append(
+        html.Div(
+            className="pd-performance-comparison",
+            children=[
+                html.Div([
+                    html.Span(f"Previous ({context.get('previous_quarter') or 'No prior quarter'})"),
+                    html.Strong(format_pd_metric(previous_value, fmt)),
+                ]),
+                html.Div([
+                    html.Span("Change"),
+                    html.Strong(movement["text"], className=f"pd-change {movement['css']}"),
+                ]),
+            ],
         )
+    )
 
     return html.Article(
         className=f"pd-test-card pd-test-{pd_tone_class(rag)} {options.get('extra_class', '')}".strip(),
