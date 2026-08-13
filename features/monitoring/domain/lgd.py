@@ -12,7 +12,13 @@ from typing import Any
 import polars as pl
 
 from ....shared.domain import constants as config
-from ....shared.domain.calculations import calculate_pd_metric_rag, get_worst_pd_rag, pd_rag_score
+from ....shared.domain.calculations import (
+    apply_metric_fallback_rag,
+    calculate_pd_metric_rag,
+    get_worst_pd_rag,
+    pd_rag_score,
+    resolve_metric_fallback,
+)
 
 LGD_METRICS = ["ME", "RMSE", "Kendall's Tau"]
 LGD_CALIBRATION_METRICS = ["ME", "RMSE"]
@@ -144,6 +150,22 @@ def _kendall_tau(x_values: list[float], y_values: list[float]) -> float | None:
 
 def get_lgd_thresholds(data: dict) -> list[dict[str, Any]]:
     return list((data.get("monitoring_thresholds") or {}).get("lgd_thresholds") or [])
+
+
+def get_lgd_fallback_rules(data: dict) -> list[dict[str, Any]]:
+    """The workbook's RAG-Assignment fallback rules (low default count). The
+    sheet is shared across model types; ``resolve_metric_fallback`` picks out
+    the ``Model Type == "LGD"`` rows."""
+    return list((data.get("monitoring_thresholds") or {}).get("fallback_amber_rules") or [])
+
+
+def lgd_metric_fallback(data: dict, metric: str, row: dict[str, Any]) -> dict[str, str]:
+    """``build_pd_test_card`` options for ``metric``'s fallback on one metric row
+    (empty when Applicable) -- the LGD twin of PD's ``_fallback_options``."""
+    status, note = resolve_metric_fallback(get_lgd_fallback_rules(data), "LGD", metric, (row or {}).get("Defaults"))
+    if status == "applicable":
+        return {}
+    return {"fallback_status": status, "fallback_note": note}
 
 
 def get_lgd_model_options(data: dict) -> list[str]:
@@ -367,6 +389,17 @@ def lgd_metric_rag(data: dict, metric: str, value: Any) -> str:
     return calculate_pd_metric_rag(get_lgd_thresholds(data), metric, value)
 
 
+def lgd_metric_rag_for_row(data: dict, metric: str, row: dict[str, Any]) -> str:
+    """``metric``'s RAG on one metric row, with that row's own low-default
+    fallback applied -- forced to Amber when the rule fires, so the fallback
+    reaches the dimension RAGs and the RAG trends, not just the card."""
+    row = row or {}
+    return apply_metric_fallback_rag(
+        get_lgd_fallback_rules(data), "LGD", metric, row.get("Defaults"),
+        lgd_metric_rag(data, metric, row.get(metric)),
+    )
+
+
 def build_lgd_period_summary(
     data: dict,
     selected_model: str | None,
@@ -387,8 +420,12 @@ def build_lgd_period_summary(
     current = metric_rows[current_index] if current_index >= 0 else {}
     previous = metric_rows[current_index - 1] if current_index > 0 else {}
 
-    metric_rags = {metric: lgd_metric_rag(data, metric, current.get(metric)) for metric in LGD_METRICS}
-    previous_metric_rags = {metric: lgd_metric_rag(data, metric, previous.get(metric)) for metric in LGD_METRICS}
+    # Each period's RAGs carry that period's own low-default fallback, so the
+    # dimension RAGs below (worst-of the metric RAGs) inherit it the way the
+    # workbook's "Monitoring Dimension RAG" column intends.
+    metric_rags = {metric: lgd_metric_rag_for_row(data, metric, current) for metric in LGD_METRICS}
+    previous_metric_rags = {metric: lgd_metric_rag_for_row(data, metric, previous) for metric in LGD_METRICS}
+    metric_fallbacks = {metric: lgd_metric_fallback(data, metric, current) for metric in LGD_METRICS}
     calibration_rag = get_worst_pd_rag([metric_rags[metric] for metric in LGD_CALIBRATION_METRICS])
     previous_calibration_rag = get_worst_pd_rag([previous_metric_rags[metric] for metric in LGD_CALIBRATION_METRICS])
     discrimination_rag = get_worst_pd_rag([metric_rags[metric] for metric in LGD_DISCRIMINATION_METRICS])
@@ -404,6 +441,7 @@ def build_lgd_period_summary(
         "previous_monitoring_point": previous.get("Monitoring Period", ""),
         "metric_rags": metric_rags,
         "previous_metric_rags": previous_metric_rags,
+        "metric_fallbacks": metric_fallbacks,
         "calibration_rag": calibration_rag,
         "previous_calibration_rag": previous_calibration_rag,
         "discrimination_rag": discrimination_rag,
@@ -415,8 +453,8 @@ def build_lgd_calibration_rag_trend(data: dict, metric_rows: list[dict[str, Any]
     quarter_cycle_map = get_lgd_quarter_cycle_map()
     rows: list[dict[str, Any]] = []
     for row in metric_rows:
-        me_rag = lgd_metric_rag(data, "ME", row.get("ME"))
-        rmse_rag = lgd_metric_rag(data, "RMSE", row.get("RMSE"))
+        me_rag = lgd_metric_rag_for_row(data, "ME", row)
+        rmse_rag = lgd_metric_rag_for_row(data, "RMSE", row)
         rag = get_worst_pd_rag([me_rag, rmse_rag])
         scores = [pd_rag_score(metric_rag) for metric_rag in (me_rag, rmse_rag)]
         scores = [score for score in scores if score is not None]
@@ -443,7 +481,7 @@ def build_lgd_discrimination_rag_trend(data: dict, metric_rows: list[dict[str, A
     quarter_cycle_map = get_lgd_quarter_cycle_map()
     rows: list[dict[str, Any]] = []
     for row in metric_rows:
-        tau_rag = lgd_metric_rag(data, "Kendall's Tau", row.get("Kendall's Tau"))
+        tau_rag = lgd_metric_rag_for_row(data, "Kendall's Tau", row)
         score = pd_rag_score(tau_rag)
         rows.append(
             {

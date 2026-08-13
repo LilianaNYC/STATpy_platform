@@ -112,7 +112,7 @@ def load_monitoring_thresholds() -> dict[str, list[dict[str, Any]]]:
         # (Model Type, Component, Test), giving each test's behaviour by
         # default count (< 15 vs >= 15): "Applicable" / "Non-Applicable" /
         # "Fallback Amber". Loaded dynamically so the rules can change in the
-        # workbook without a code change (see resolve_pd_fallback_rule).
+        # workbook without a code change (see resolve_fallback_rule).
         ("fallback_amber_rules", "fallback_amber_rules"),
     ):
         try:

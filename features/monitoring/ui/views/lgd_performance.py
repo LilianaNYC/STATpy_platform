@@ -1585,6 +1585,9 @@ def render_lgd_performance_content(
     context = {
         "snapshot_quarter": summary["monitoring_point"] or "No monitoring point",
         "previous_quarter": summary["previous_monitoring_point"],
+        # Every LGD test on this page is 1 year, so its cards report the 1-year
+        # snapshot range ending at the monitoring point -- see cards._snapshot_meta.
+        "horizon_years": 1,
     }
 
     if not summary["current"]:
@@ -1599,6 +1602,10 @@ def render_lgd_performance_content(
             )
         ]
 
+    # Per-metric low-default fallback options (empty dicts when Applicable) --
+    # see lgd_metric_fallback; the same fallback is already baked into the RAGs
+    # this summary carries.
+    fallbacks = summary.get("metric_fallbacks") or {}
     calibration_cards = [
         build_pd_section_rag_card(
             "Calibration Conservatism RAG",
@@ -1613,7 +1620,7 @@ def render_lgd_performance_content(
             summary["previous"],
             thresholds,
             context,
-            {"format": "percent", "card_title": "RMSE 1 year"},
+            {"format": "percent", "card_title": "RMSE 1 year", **fallbacks.get("RMSE", {})},
         ),
         build_pd_test_card(
             "ME",
@@ -1621,7 +1628,7 @@ def render_lgd_performance_content(
             summary["previous"],
             thresholds,
             context,
-            {"format": "percent", "card_title": "Mean Error 1 year"},
+            {"format": "percent", "card_title": "Mean Error 1 year", **fallbacks.get("ME", {})},
         ),
     ]
     discrimination_cards = [
@@ -1638,7 +1645,7 @@ def render_lgd_performance_content(
             summary["previous"],
             thresholds,
             context,
-            {"format": "ratio", "card_title": "Kendall's Tau 1 year"},
+            {"format": "ratio", "card_title": "Kendall's Tau 1 year", **fallbacks.get("Kendall's Tau", {})},
         ),
         build_pd_section_rag_card(
             "Performance RAG",
