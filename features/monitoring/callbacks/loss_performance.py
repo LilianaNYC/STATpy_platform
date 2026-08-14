@@ -213,6 +213,20 @@ def register_callbacks(app) -> None:
         return _dropdown_options(options), value
 
     # -----------------------------------------------------------------
+    # Apply is gated on a Model being selected: Segment can be browsed/picked
+    # freely with no model chosen, but the dashboard itself always needs one
+    # explicit model to resolve data against -- see apply_pd_filters, and
+    # matches LGD/EAD's sync_lgd_apply_button_availability /
+    # sync_ead_apply_button_availability.
+    # -----------------------------------------------------------------
+    @app.callback(
+        Output(layout.APPLY_FILTERS_ID, "disabled"),
+        Input(layout.MODEL_DROPDOWN_ID, "value"),
+    )
+    def sync_loss_apply_button_availability(selected_model):
+        return not bool(selected_model)
+
+    # -----------------------------------------------------------------
     # Apply filters: snapshot current filter values into the applied store
     # -----------------------------------------------------------------
     @app.callback(
@@ -225,7 +239,9 @@ def register_callbacks(app) -> None:
         prevent_initial_call=True,
     )
     def apply_loss_filters(_n_clicks, reporting_cycle, selected_model, selected_segment, selected_monitoring_point):
-        if not _n_clicks:
+        # The button is disabled without a model, but a stale click event is
+        # still guarded here -- see apply_lgd_filters / apply_ead_filters.
+        if not _n_clicks or not selected_model:
             return no_update
         return {
             "reporting_cycle": reporting_cycle,

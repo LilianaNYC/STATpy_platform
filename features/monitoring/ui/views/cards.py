@@ -19,6 +19,7 @@ from .....shared.domain.calculations import (
     format_pd_metric,
     format_pd_rag_change,
     format_pd_test_change,
+    get_pd_quarter_years_back,
     pd_tone_class,
 )
 
@@ -36,6 +37,31 @@ def _info_chip(tooltip: str | None):
 
 def _meta_rows(rows):
     return [html.Div(f"{row['label']}: {row['value']}", className="pd-test-meta") for row in (rows or [])]
+
+
+def _snapshot_meta(context) -> tuple[str, str]:
+    """The card's snapshot line, as a ``(label, value)`` pair.
+
+    A horizon-scoped test does not measure a single quarter -- it measures the
+    1- or 2-year window *ending* at the monitoring point -- so it reports that
+    whole window: ``Snapshot range: 2024Q2 to 2025Q2`` for a 1 year test,
+    ``Snapshot range: 2023Q2 to 2025Q2`` for a 2 year one. The window length
+    comes from ``horizon_years`` in the context (see
+    ``get_pd_performance_context_for_horizon``, and the LGD/EAD/Loss contexts,
+    whose tests are all 1 year).
+
+    Cards whose context carries no ``horizon_years`` -- PSI, which compares the
+    current snapshot against a reference rather than over a horizon -- keep the
+    single-quarter ``Snapshot date``, as do contexts whose snapshot is not a
+    real ``YYYYQn`` quarter (e.g. the "No monitoring point" placeholder).
+    """
+    quarter = context.get("snapshot_quarter")
+    years = context.get("horizon_years")
+    if years:
+        start = get_pd_quarter_years_back(quarter, years)
+        if start:
+            return "Snapshot range", f"{start} to {quarter}"
+    return "Snapshot date", quarter
 
 
 def pd_rag_dot(rag: str) -> html.Span:
@@ -62,19 +88,18 @@ def build_pd_test_card(metric, current_values, previous_values, thresholds, cont
     threshold = next((row for row in thresholds if row.get("metric") == metric), {})
     movement = format_pd_test_change(value, previous_value, fmt, threshold)
 
-    # Chapter-1 RAG-Assignment fallback (low default count, see
-    # resolve_pd_fallback_rule): a "Fallback Amber" test's RAG is forced to Amber
-    # and a "Non-Applicable" test's RAG is N/A. In both cases the underlying
-    # metric is not a valid measurement, so its value (and period-over-period
-    # comparison) are suppressed -- only the RAG is shown -- and a short note
-    # explains why.
+    # RAG-Assignment fallback (low default count, see resolve_fallback_rule).
+    # Both outcomes show the card as Amber: "Fallback Amber" forces the test to
+    # Amber outright, and a "Non-Applicable" test is likewise flagged rather than
+    # greyed out to N/A -- what Non-Applicable changes is that the test drops out
+    # of its dimension's RAG, which happens upstream of this card. Either way the
+    # underlying metric is not a valid measurement, so its value (and
+    # period-over-period comparison) are suppressed and a note explains why.
     fallback_status = options.get("fallback_status")
     fallback_note = options.get("fallback_note")
     hide_metric = fallback_status in ("fallback_amber", "non_applicable")
-    if fallback_status == "fallback_amber":
+    if hide_metric:
         rag = "Amber"
-    elif fallback_status == "non_applicable":
-        rag = "N/A"
 
     title_row = [html.H4(options.get("card_title") or metric)]
     chip = _info_chip(options.get("tooltip"))
@@ -100,25 +125,30 @@ def build_pd_test_card(metric, current_values, previous_values, thresholds, cont
     if fallback_note:
         children.append(html.Div(fallback_note, className="pd-test-fallback-note"))
     if not options.get("hide_snapshot"):
-        children.append(html.Div(f"Snapshot date: {context['snapshot_quarter']}", className="pd-test-meta"))
+        snapshot_label, snapshot_value = _snapshot_meta(context)
+        children.append(html.Div(f"{snapshot_label}: {snapshot_value}", className="pd-test-meta"))
     children.extend(_meta_rows(options.get("extra_meta_rows")))
-    # A suppressed metric has no value to compare period-over-period.
-    if not hide_metric:
-        children.append(
-            html.Div(
-                className="pd-performance-comparison",
-                children=[
-                    html.Div([
-                        html.Span(f"Previous ({context.get('previous_quarter') or 'No prior quarter'})"),
-                        html.Strong(format_pd_metric(previous_value, fmt)),
-                    ]),
-                    html.Div([
-                        html.Span("Change"),
-                        html.Strong(movement["text"], className=f"pd-change {movement['css']}"),
-                    ]),
-                ],
-            )
+    # Every card carries the period-over-period footer, fallback or not, so a
+    # row of cards stays comparable. Change is N/A under a fallback though: it
+    # would otherwise be measured against a current value the card deliberately
+    # does not show. Previous stands on its own and stays as measured.
+    if hide_metric:
+        movement = {"text": "N/A", "css": "pd-change-neutral"}
+    children.append(
+        html.Div(
+            className="pd-performance-comparison",
+            children=[
+                html.Div([
+                    html.Span(f"Previous ({context.get('previous_quarter') or 'No prior quarter'})"),
+                    html.Strong(format_pd_metric(previous_value, fmt)),
+                ]),
+                html.Div([
+                    html.Span("Change"),
+                    html.Strong(movement["text"], className=f"pd-change {movement['css']}"),
+                ]),
+            ],
         )
+    )
 
     return html.Article(
         className=f"pd-test-card pd-test-{pd_tone_class(rag)} {options.get('extra_class', '')}".strip(),
@@ -129,8 +159,14 @@ def build_pd_test_card(metric, current_values, previous_values, thresholds, cont
 def build_pd_section_rag_card(title, current_rag, previous_rag, context, options=None):
     options = options or {}
     movement = format_pd_rag_change(current_rag, previous_rag)
-    meta_label = options.get("meta_label", "Snapshot date")
-    meta_value = options.get("meta_value", context.get("snapshot_quarter"))
+    meta_label = options.get("meta_label")
+    if meta_label:
+        # A caller that relabels this line (e.g. "Monitoring point") is naming a
+        # single quarter, not the test's observation window.
+        meta_value = options.get("meta_value", context.get("snapshot_quarter"))
+    else:
+        meta_label, default_meta_value = _snapshot_meta(context)
+        meta_value = options.get("meta_value", default_meta_value)
 
     title_row = [html.H4(options.get("card_title") or title)]
     chip = _info_chip(options.get("tooltip"))
@@ -190,7 +226,8 @@ def build_pd_ead_card(current_summary, previous_summary, context, options=None):
     previous_share_label = "—" if previous_share is None else f"{previous_share * 100:.1f}%"
     combined_label = "—" if combined_ead is None else format_pd_compact_amount(combined_ead)
 
-    current_label = options.get("current_label") or context.get("snapshot_quarter")
+    snapshot_label, snapshot_value = _snapshot_meta(context)
+    current_label = options.get("current_label") or snapshot_value
     previous_label = options.get("previous_label") or context.get("previous_quarter") or "No prior quarter"
 
     title_row = [html.H4(options.get("card_title") or "EAD")]
@@ -208,7 +245,7 @@ def build_pd_ead_card(current_summary, previous_summary, context, options=None):
         children=[
             html.Div(className="pd-test-card-heading", children=[html.Div(heading_left)]),
             html.Div(format_pd_compact_amount(current_summary.get("ead")), className="pd-test-value"),
-            html.Div(f"Snapshot date: {current_label}", className="pd-test-meta"),
+            html.Div(f"{snapshot_label}: {current_label}", className="pd-test-meta"),
             html.Div(f"% EAD: {share_label} of combined {combined_label}", className="pd-test-meta"),
             html.Div(
                 className="pd-performance-comparison",
@@ -398,7 +435,7 @@ def _notching_flow_options(source, href):
     """Flow-node options for a Notching Test node, flagging a not-calculated
     (Non-Applicable) metric. The value/RAG are already suppressed to
     ``None``/``"N/A"`` upstream so the node renders no number."""
-    note = source.get("notching_flow_note") or "Not calculated" if source.get("notching_non_applicable") else None
+    note = source.get("notching_flow_note") or "Fallback Amber applied" if source.get("notching_non_applicable") else None
     return _flow_note_options(note, href)
 
 

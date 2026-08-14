@@ -191,6 +191,15 @@ def get_previous_pd_quarter(quarter):
     return f"{year - 1}Q4" if quarter_number == 1 else f"{year}Q{quarter_number - 1}"
 
 
+def get_pd_quarter_years_back(quarter, years):
+    """The same calendar quarter ``years`` years earlier ("2025Q2", 1 ->
+    "2024Q2"). Returns "" for anything that is not a ``YYYYQn`` quarter (e.g.
+    the "No monitoring point" placeholder), so callers can fall back."""
+    match = _QUARTER_RE.match(quarter or "")
+    if not match:
+        return ""
+    return f"{int(match.group(1)) - int(years)}Q{match.group(2)}"
+
 
 # ---------------------------------------------------------------------------
 # Performance context (getPdPerformanceHorizonKey / getPdPerformanceContext*)
@@ -211,6 +220,9 @@ def get_pd_performance_context_for_horizon(performance_horizons, horizon_key, ct
     return {
         "monitoring_point": ctx.monitoring_point,
         "horizon_key": horizon_key,
+        # Length of the observation window the horizon's tests measure over --
+        # drives the cards' "Snapshot range" line (see cards._snapshot_meta).
+        "horizon_years": horizon_years,
         "input_label": "NCO PD 1 year" if horizon_key == "nco_1y" else "Time horizon PD",
         "horizon_label": horizon.get("label") or f"{horizon_years} year{'' if horizon_years == 1 else 's'}",
         "uses_nco_input": horizon_key == "nco_1y",
@@ -967,8 +979,8 @@ def _norm_fallback_text(value) -> str:
     return " ".join(str(value or "").split()).strip().lower()
 
 
-def resolve_pd_fallback_rule(fallback_rules, component: str, test: str, default_count) -> tuple[str, str]:
-    """Resolve the Chapter-1 RAG-Assignment fallback for a single PD test.
+def resolve_fallback_rule(fallback_rules, model_type: str, component: str, test: str, default_count) -> tuple[str, str]:
+    """Resolve the RAG-Assignment fallback for a single test.
 
     Reads the ``fallback_amber_rules`` workbook sheet (passed in as its list of
     row-dicts, loaded dynamically -- see ``load_monitoring_thresholds`` -- so the
@@ -980,10 +992,11 @@ def resolve_pd_fallback_rule(fallback_rules, component: str, test: str, default_
       * ``"non_applicable"`` -- the test is not calculated / excluded from its
         dimension RAG.
 
-    The rule is matched by ``(Model Type == "PD", Component, Test)`` and keyed on
-    the default count: fewer than 15 -> the ``"< 15 Defaults"`` column, otherwise
+    The rule is matched by ``(Model Type, Component, Test)`` and keyed on the
+    default count: fewer than 15 -> the ``"< 15 Defaults"`` column, otherwise
     ``">= 15 Defaults"``. Any unmatched test (or missing/non-finite default
-    count) is treated as ``"applicable"``.
+    count) is treated as ``"applicable"``. The sheet carries PD, LGD and EAD
+    rules; ``model_type`` selects which set applies.
     """
     if default_count is None or not math.isfinite(default_count):
         return "applicable", ""
@@ -993,20 +1006,56 @@ def resolve_pd_fallback_rule(fallback_rules, component: str, test: str, default_
     # e.g. "8 defaults (< 15)" -- surfaces how far the count is from the threshold.
     count = int(default_count)
     count_text = f"{count} default{'' if count == 1 else 's'} ({'<' if is_low else '≥'} {threshold})"
+    model_type_n = _norm_fallback_text(model_type)
     component_n, test_n = _norm_fallback_text(component), _norm_fallback_text(test)
     for row in fallback_rules or []:
         if (
-            _norm_fallback_text(row.get("Model Type")) == "pd"
+            _norm_fallback_text(row.get("Model Type")) == model_type_n
             and _norm_fallback_text(row.get("Component")) == component_n
             and _norm_fallback_text(row.get("Test")) == test_n
         ):
             action = _norm_fallback_text(row.get(bucket))
-            if action == "fallback amber":
-                return "fallback_amber", f"Fallback Amber applied — {count_text}"
-            if action == "non-applicable":
-                return "non_applicable", f"Not calculated — {count_text}"
+            # Both low-default outcomes carry the same note: it names the rule
+            # that fired, not that rule's effect on this particular test. What
+            # separates them is the RAG each one resolves to (Amber vs N/A),
+            # which the card and flow node already show alongside the note.
+            if action in ("fallback amber", "non-applicable"):
+                status = "fallback_amber" if action == "fallback amber" else "non_applicable"
+                return status, f"Fallback Amber applied — {count_text}"
             return "applicable", ""
     return "applicable", ""
+
+
+# LGD/EAD metric key -> the "Test" name its fallback rule is filed under in the
+# workbook. Both model types use the same three tests, each filed with Component
+# equal to the model type itself ("LGD" / "EAD"). The sheet's two remaining rows
+# per model type ("Change of discriminatory power over time", "12 months ... for
+# past quarters") are Applicable in both default buckets, so they are no-ops with
+# no card to attach to.
+_METRIC_FALLBACK_TESTS = {
+    "ME": "Mean Error 1 year",
+    "RMSE": "RMSE 1 year",
+    "Kendall's Tau": "Kendall's Tau 1 year",
+}
+
+
+def resolve_metric_fallback(fallback_rules, model_type: str, metric: str, default_count) -> tuple[str, str]:
+    """``(status, note)`` for one LGD/EAD metric card -- the model-type-keyed
+    equivalent of the PD call in ``_fallback_options``. Metrics with no rule of
+    their own (e.g. Population Stability Index) are always Applicable."""
+    test = _METRIC_FALLBACK_TESTS.get(metric)
+    if not test:
+        return "applicable", ""
+    return resolve_fallback_rule(fallback_rules, model_type, model_type, test, default_count)
+
+
+def apply_metric_fallback_rag(fallback_rules, model_type: str, metric: str, default_count, rag):
+    """A metric's RAG with its LGD/EAD fallback applied -- forced to Amber on a
+    low default count so the fallback flows into the dimension RAGs the same way
+    it does for PD (the workbook's "Monitoring Dimension RAG" column names the
+    dimension each test rolls into). Returns ``rag`` unchanged when Applicable."""
+    status, _ = resolve_metric_fallback(fallback_rules, model_type, metric, default_count)
+    return "Amber" if status in ("fallback_amber", "non_applicable") else rag
 
 
 def _apply_fallback_to_trend_metric(fallback_rules, test, default_count, rag, value):
@@ -1014,7 +1063,7 @@ def _apply_fallback_to_trend_metric(fallback_rules, test, default_count, rag, va
     PD``) to its ``(rag, value)`` pair -- forcing the RAG (Amber / N/A) and
     suppressing the value to ``None`` so no misleading number is plotted. Returns
     the pair unchanged when the test is Applicable."""
-    status, _ = resolve_pd_fallback_rule(fallback_rules, "ECL PIT PD", test, default_count)
+    status, _ = resolve_fallback_rule(fallback_rules, "PD", "ECL PIT PD", test, default_count)
     if status == "fallback_amber":
         return "Amber", None
     if status == "non_applicable":
@@ -1033,13 +1082,13 @@ def calibration_assignment_rag_with_fallback(
 ):
     """RAG Assignment for one calibration horizon, honoring the Non-Applicable
     Notching fallback. When the notching test resolves to ``"non_applicable"``
-    (low default count -- see :func:`resolve_pd_fallback_rule`) the Notching Test
+    (low default count -- see :func:`resolve_fallback_rule`) the Notching Test
     is excluded and the RAG Assignment reduces to the Confidence Interval Test
     RAG alone; otherwise the standard 2D (Confidence x Notching) lookup applies.
     With no fallback rule supplied this is exactly
     :func:`calculate_pd_calibration_assignment_rag`."""
     if fallback_rules and component and notching_test:
-        status, _ = resolve_pd_fallback_rule(fallback_rules, component, notching_test, default_count)
+        status, _ = resolve_fallback_rule(fallback_rules, "PD", component, notching_test, default_count)
         if status == "non_applicable":
             thresholds = get_pd_thresholds(monitoring_thresholds)
             return calculate_pd_metric_rag(thresholds, "Confidence Interval Test", confidence_interval)
@@ -1376,8 +1425,8 @@ def build_pd_balance_sheet_calibration_rag_trend(observations, rating_observatio
                 filter_pd_performance_observations_for_horizon(observations, quarter, "nco_1y", ctx), crr_scale,
             )["signed_difference"]
         default_count = calculate_pd_default_count_for_horizon(observations, quarter, "nco_1y", ctx)
-        notching_na = resolve_pd_fallback_rule(
-            fallback_rules, "Balance Sheet PD", "Notching Test 1 year", default_count,
+        notching_na = resolve_fallback_rule(
+            fallback_rules, "PD", "Balance Sheet PD", "Notching Test 1 year", default_count,
         )[0] == "non_applicable"
         assignment_rag = calibration_assignment_rag_with_fallback(
             values["Confidence Interval Test"], signed_difference, monitoring_thresholds,

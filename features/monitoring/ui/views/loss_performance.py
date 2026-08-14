@@ -192,6 +192,9 @@ def render_loss_performance_content(
     context = {
         "snapshot_quarter": summary["monitoring_point"] or "No monitoring point",
         "previous_quarter": summary["previous_monitoring_point"],
+        # Every Loss test on this page is 1 year, so its cards report the 1-year
+        # snapshot range ending at the monitoring point -- see cards._snapshot_meta.
+        "horizon_years": 1,
     }
 
     if not summary["current"]:

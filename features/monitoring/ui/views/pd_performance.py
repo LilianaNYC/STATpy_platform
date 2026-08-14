@@ -86,7 +86,7 @@ from .....shared.domain.calculations import (
     calibration_assignment_rag_with_fallback,
     calculate_pd_default_count_for_horizon,
     calculate_pd_discrimination_section_rag,
-    resolve_pd_fallback_rule,
+    resolve_fallback_rule,
     calculate_pd_ead_summaries,
     calculate_pd_metric_rag,
     calculate_pd_notching_components,
@@ -235,8 +235,8 @@ def _safe_text(value, fallback: str = "") -> str:
 def _fallback_options(fallback_rules, component: str, test: str, default_count) -> dict:
     """``build_pd_test_card`` options for a Chapter-1 test's fallback rule (empty
     when the test is Applicable). Driven by the dynamically-loaded rules -- see
-    ``resolve_pd_fallback_rule``."""
-    status, note = resolve_pd_fallback_rule(fallback_rules, component, test, default_count)
+    ``resolve_fallback_rule``."""
+    status, note = resolve_fallback_rule(fallback_rules, "PD", component, test, default_count)
     if status == "applicable":
         return {}
     return {"fallback_status": status, "fallback_note": note}
@@ -2655,7 +2655,7 @@ def render_pd_performance_content(
     performance_horizons = data["performance_horizons"]
     thresholds = get_pd_thresholds(monitoring_thresholds)
     # Chapter-1 RAG-Assignment fallback rules (low default count), loaded
-    # dynamically from the workbook -- see resolve_pd_fallback_rule.
+    # dynamically from the workbook -- see resolve_fallback_rule.
     fallback_rules = monitoring_thresholds.get("fallback_amber_rules") or []
     crr_scale = get_pd_crr_master_scale(monitoring_thresholds)
     # Which reporting cycle each quarter in ctx.quarters actually came from --
@@ -2912,7 +2912,8 @@ def render_pd_performance_content(
                 current_horizon_ead, previous_horizon_ead, horizon_context,
                 options={
                     "card_title": f"EAD {suffix}",
-                    "current_label": horizon_context["snapshot_quarter"],
+                    # No "current_label": the default is this horizon's snapshot
+                    # range, matching the sibling cards in the same row.
                     "previous_label": horizon_context["previous_quarter"] or "No prior quarter",
                 },
             ),
