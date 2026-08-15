@@ -1,16 +1,13 @@
 # STATpy Dashboards (multi-dashboard Dash app)
 
 A [Dash](https://dash.plotly.com/) app organised by **dashboard → layered
-feature**. Three dashboards are wired up today:
+feature**. Two dashboards are wired up today:
 
 - **Monitoring** – Wholesale Portfolio model monitoring (Overview, **PD**, LGD,
   EAD and Loss Performance). All pages are live and read precomputed metrics
   from the source workbook.
 - **SAAS** – a scenario / MEV workspace (MEV time series, projections, monitoring
   bands, Excel/report exports).
-- **DQ Wholesale** – a data-quality dashboard (completeness, schema, business
-  rules, drift, …). This is the reference implementation of the layered
-  architecture below.
 
 Routing and callback registration are **registry-driven**: each dashboard
 declares its pages, and the app shell / `app.py` read those registries, so
@@ -31,8 +28,7 @@ python -m STATpy_platform.app
 
 This starts a Dash dev server (default `http://127.0.0.1:8050`). The sidebar
 links navigate between the dashboards' pages: `/` (PD Performance), `/overview`,
-`/lgd-performance`, `/ead-performance`, `/loss-performance`, `/saas`, and the DQ
-pages under `/dq-*`.
+`/lgd-performance`, `/ead-performance`, `/loss-performance` and `/saas`.
 
 The active environment is selected with `STATPY_ENV` (`dev` by default; see
 `config/environments.py`), and the bundled data directory can be overridden with
@@ -51,9 +47,8 @@ repo-level `tests/`.
 
 ## Architecture
 
-Every feature follows the same **layered** structure (the `dq_module` is the
-reference). Each layer has one responsibility and only depends on the layers
-beneath it:
+Every feature follows the same **layered** structure. Each layer has one
+responsibility and only depends on the layers beneath it:
 
 | Layer            | Responsibility | Must **not** contain |
 |------------------|----------------|----------------------|
@@ -133,7 +128,6 @@ STATpy_platform/
       domain/             #   selectors / records / metrics
       repositories/       #   loader.py (reads dummy_mev_data.xlsx)
       tests/
-    dq_module/            # reference layered feature (ui/callbacks/services/domain/repositories/tests)
 
   tests/                  # repo-level app/registry/shell + shared-domain tests
   assets/                 # styles.css, js/ subnav scripts, fonts/ (auto-loaded by Dash)

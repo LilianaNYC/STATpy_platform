@@ -68,8 +68,15 @@ def register_single_select_callbacks(
             return _MENU_CLASS
         return f"{_MENU_CLASS} open"
 
+    # ``value`` is allow_duplicate because each tab's own sync_*_dropdown
+    # callback also writes it when a parent filter rebuilds the option list.
+    # That one is the canonical writer -- it has to fire on the initial call to
+    # populate the list at all -- so this click handler is the duplicate. Same
+    # split SAAS already uses in _register_single_select_callbacks; without the
+    # flag the renderer reports "Output ... is already in use" for every custom
+    # dropdown on the four monitoring tabs.
     @app.callback(
-        Output(value_id, "value"),
+        Output(value_id, "value", allow_duplicate=True),
         Output(menu_id, "className", allow_duplicate=True),
         Input({"type": controls.SINGLE_SELECT_OPTION_ID, "filter": filter_key, "value": ALL}, "n_clicks"),
         prevent_initial_call=True,
