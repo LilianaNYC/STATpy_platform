@@ -114,7 +114,7 @@ def register_callbacks(app) -> None:
         Output(layout.MONITORING_POINT_ID, "value"),
         Input(layout.REPORTING_CYCLE_ID, "value"),
         Input(layout.OVERVIEW_MODEL_ID, "value"),
-        Input(layout.MONITORING_POINT_ID, "value"),
+        State(layout.MONITORING_POINT_ID, "value"),
     )
     def sync_overview_monitoring_point_dropdown(reporting_cycle, selected_models, selected_monitoring_point):
         quarters: set[str] = set()
@@ -348,9 +348,24 @@ def register_callbacks(app) -> None:
     # Both responsive graph variants share one selection store so a resize
     # never loses the user's current focus.
     # -----------------------------------------------------------------
+    # Applying filters clears the current RAG-journey focus: the selected
+    # model/segment belongs to the old scope. This is deliberately its own
+    # callback rather than another branch of update_rag_flow_selection below.
+    # That one's Inputs are the flow graphs and buttons, which live inside the
+    # callback-rendered ``overview-content``; driving it from the applied-filters
+    # store -- which lives outside that container -- meant it fired at the moment
+    # the graphs did not exist yet, so the renderer failed to gather its Inputs
+    # and the reset silently never ran.
+    @app.callback(
+        Output(layout.RAG_FLOW_SELECTION_STORE_ID, "data", allow_duplicate=True),
+        Input(layout.APPLIED_FILTERS_STORE_ID, "data"),
+        prevent_initial_call=True,
+    )
+    def reset_rag_flow_selection_on_apply(_applied):
+        return {"model": None, "segment": None}
+
     @app.callback(
         Output(layout.RAG_FLOW_SELECTION_STORE_ID, "data"),
-        Input(layout.APPLIED_FILTERS_STORE_ID, "data"),
         Input(layout.RAG_FLOW_MODEL_DESKTOP_ID, "clickData"),
         Input(layout.RAG_FLOW_MODEL_COMPACT_ID, "clickData"),
         Input(layout.RAG_FLOW_SEGMENT_DESKTOP_ID, "clickData"),
@@ -381,7 +396,6 @@ def register_callbacks(app) -> None:
         prevent_initial_call=True,
     )
     def update_rag_flow_selection(
-        _applied,
         model_desktop_click,
         model_compact_click,
         segment_desktop_click,
@@ -394,9 +408,6 @@ def register_callbacks(app) -> None:
         triggered = ctx.triggered_id
         if not triggered:
             return no_update
-
-        if triggered == layout.APPLIED_FILTERS_STORE_ID:
-            return {"model": None, "segment": None}
 
         store = dict(selection_store or {"model": None, "segment": None})
         graph_clicks = {
