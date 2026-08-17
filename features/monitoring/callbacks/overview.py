@@ -114,7 +114,7 @@ def register_callbacks(app) -> None:
         Output(layout.MONITORING_POINT_ID, "value"),
         Input(layout.REPORTING_CYCLE_ID, "value"),
         Input(layout.OVERVIEW_MODEL_ID, "value"),
-        Input(layout.MONITORING_POINT_ID, "value"),
+        State(layout.MONITORING_POINT_ID, "value"),
     )
     def sync_overview_monitoring_point_dropdown(reporting_cycle, selected_models, selected_monitoring_point):
         quarters: set[str] = set()

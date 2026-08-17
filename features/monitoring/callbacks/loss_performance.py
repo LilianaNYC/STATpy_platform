@@ -188,7 +188,7 @@ def register_callbacks(app) -> None:
         Output(layout.SEGMENT_DROPDOWN_ID, "options"),
         Output(layout.SEGMENT_DROPDOWN_ID, "value"),
         Input(layout.MODEL_DROPDOWN_ID, "value"),
-        Input(layout.SEGMENT_DROPDOWN_ID, "value"),
+        State(layout.SEGMENT_DROPDOWN_ID, "value"),
     )
     def sync_loss_segment_dropdown(selected_model, selected_segment):
         has_model = bool(selected_model)
@@ -205,7 +205,7 @@ def register_callbacks(app) -> None:
         Output(layout.MONITORING_POINT_DROPDOWN_ID, "options"),
         Output(layout.MONITORING_POINT_DROPDOWN_ID, "value"),
         Input(layout.REPORTING_CYCLE_ID, "value"),
-        Input(layout.MONITORING_POINT_DROPDOWN_ID, "value"),
+        State(layout.MONITORING_POINT_DROPDOWN_ID, "value"),
     )
     def sync_loss_monitoring_point_dropdown(reporting_cycle, selected_monitoring_point):
         options = controls.LOSS_REPORTING_CYCLE_QUARTERS.get(reporting_cycle, [])

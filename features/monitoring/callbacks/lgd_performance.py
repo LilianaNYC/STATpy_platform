@@ -246,7 +246,7 @@ def register_callbacks(app) -> None:
         Output(layout.SEGMENT_DROPDOWN_ID, "options"),
         Output(layout.SEGMENT_DROPDOWN_ID, "value"),
         Input(layout.MODEL_DROPDOWN_ID, "value"),
-        Input(layout.SEGMENT_DROPDOWN_ID, "value"),
+        State(layout.SEGMENT_DROPDOWN_ID, "value"),
     )
     def sync_lgd_segment_dropdown(selected_model, selected_segment):
         has_model = bool(resolve_lgd_models(data, selected_model))
@@ -319,7 +319,7 @@ def register_callbacks(app) -> None:
         Input(layout.REPORTING_CYCLE_ID, "value"),
         Input(layout.MODEL_DROPDOWN_ID, "value"),
         Input(layout.SEGMENT_DROPDOWN_ID, "value"),
-        Input(layout.MONITORING_POINT_DROPDOWN_ID, "value"),
+        State(layout.MONITORING_POINT_DROPDOWN_ID, "value"),
     )
     def sync_lgd_monitoring_point_dropdown(reporting_cycle, selected_model, selected_segment, selected_monitoring_point):
         if selected_model:
