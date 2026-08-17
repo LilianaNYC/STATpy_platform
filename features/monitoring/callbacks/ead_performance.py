@@ -146,15 +146,42 @@ def register_callbacks(app) -> None:
         value = current_portfolio if current_portfolio in portfolios or current_portfolio == "All" else "All"
         return options, value
 
+    # Segment narrows Model, and sync_ead_segment_dropdown below narrows Segment
+    # from Model -- a deliberate two-way cascade, but reading SEGMENT_DROPDOWN_ID's
+    # *value* here closed a dependency cycle (Model -> Segment -> Model) that Dash
+    # reports as "Dependency Cycle Found". Listening to the Segment option
+    # *buttons* breaks it: a user picking a segment still re-narrows Model, while
+    # Segment being rewritten programmatically no longer feeds back.
+    #
+    # The picked segment comes from the triggering button's own id, not from
+    # SEGMENT_DROPDOWN_ID's State: select_single_select_option writes that value in
+    # the same round trip, so the State still holds the previous segment here.
     @app.callback(
         Output(layout.MODEL_DROPDOWN_ID, "options"),
         Output(layout.MODEL_DROPDOWN_ID, "value"),
         Input(layout.REGION_ID, "value"),
         Input(layout.PORTFOLIO_ID, "value"),
-        Input(layout.SEGMENT_DROPDOWN_ID, "value"),
+        Input(
+            {
+                "type": controls.SINGLE_SELECT_OPTION_ID,
+                "filter": layout.SEGMENT_FILTER_KEY,
+                "value": ALL,
+            },
+            "n_clicks",
+        ),
+        State(layout.SEGMENT_DROPDOWN_ID, "value"),
         State(layout.MODEL_DROPDOWN_ID, "value"),
     )
-    def sync_ead_region_portfolio_to_model_options(region, portfolio, segment, current_model):
+    def sync_ead_region_portfolio_to_model_options(region, portfolio, segment_clicks, segment, current_model):
+        triggered = ctx.triggered_id
+        if isinstance(triggered, dict) and triggered.get("type") == controls.SINGLE_SELECT_OPTION_ID:
+            # Option buttons are re-created whenever the Segment menu is rebuilt,
+            # and that remount fires this pattern-matching Input with every
+            # n_clicks still 0 -- see select_single_select_option. Only a real
+            # click carries a new segment.
+            if not any(segment_clicks or []):
+                return no_update, no_update
+            segment = triggered.get("value")
         matches = models_matching(mev_catalog, "EAD", region, portfolio, ead_model_options)
         if segment and segment not in ("All", ""):
             segment_models = set(ead_segment_models.get(segment, []))

@@ -57,6 +57,10 @@ MODELS_ID = "pd-models"
 MODELS_TOGGLE_ID = "pd-models-toggle"
 MODELS_MENU_ID = "pd-models-menu"
 SINGLE_SELECT_OPTION_ID = "pd-single-select-option"
+#: ``filter`` key on the Segment dropdown's option buttons. Named here because
+#: sync_pd_filters_to_model_options listens to those buttons' clicks rather than
+#: to PORTFOLIO_SEGMENT_ID's value -- see the comment on that callback.
+PORTFOLIO_SEGMENT_FILTER_KEY = "portfolio-segment"
 
 REGION_ID = "pd-region"
 REGION_TOGGLE_ID = "pd-region-toggle"
@@ -310,7 +314,7 @@ def build_global_filters(data: dict, extra_controls=None, initial: dict | None =
                         value_id=PORTFOLIO_SEGMENT_ID,
                         toggle_id=PORTFOLIO_SEGMENT_TOGGLE_ID,
                         menu_id=PORTFOLIO_SEGMENT_MENU_ID,
-                        filter_key="portfolio-segment",
+                        filter_key=PORTFOLIO_SEGMENT_FILTER_KEY,
                         options=segment_options,
                         value=initial_segment,
                     ),

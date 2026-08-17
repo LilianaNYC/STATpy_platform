@@ -183,15 +183,45 @@ def register_callbacks(app) -> None:
         value = current_portfolio if current_portfolio in portfolios or current_portfolio == "All" else "All"
         return options, value
 
+    # Segment narrows Models, and sync_pd_model_to_segment_options below narrows
+    # Segment from Models -- a deliberate two-way cascade, but reading
+    # PORTFOLIO_SEGMENT_ID's *value* here closed a dependency cycle
+    # (Model -> Segment -> Model) that Dash reports as "Dependency Cycle Found".
+    #
+    # Listening to the Segment option *buttons* instead breaks it: a user picking
+    # a segment still re-narrows Models, while Segment being rewritten
+    # programmatically -- which is the half that closed the loop -- no longer
+    # feeds back.
+    #
+    # The picked segment comes from the triggering button's own id, not from
+    # PORTFOLIO_SEGMENT_ID's State: select_single_select_option writes that value
+    # in the same round trip, so the State still holds the *previous* segment here.
     @app.callback(
         Output(controls.MODELS_ID, "options"),
         Output(controls.MODELS_ID, "value"),
         Input(controls.REGION_ID, "value"),
         Input(controls.PORTFOLIO_ID, "value"),
-        Input(controls.PORTFOLIO_SEGMENT_ID, "value"),
+        Input(
+            {
+                "type": controls.SINGLE_SELECT_OPTION_ID,
+                "filter": controls.PORTFOLIO_SEGMENT_FILTER_KEY,
+                "value": ALL,
+            },
+            "n_clicks",
+        ),
+        State(controls.PORTFOLIO_SEGMENT_ID, "value"),
         State(controls.MODELS_ID, "value"),
     )
-    def sync_pd_filters_to_model_options(region, portfolio, segment, current_model):
+    def sync_pd_filters_to_model_options(region, portfolio, segment_clicks, segment, current_model):
+        triggered = ctx.triggered_id
+        if isinstance(triggered, dict) and triggered.get("type") == controls.SINGLE_SELECT_OPTION_ID:
+            # Option buttons are re-created whenever the Segment menu is rebuilt,
+            # and that remount fires this pattern-matching Input with every
+            # n_clicks still 0 -- see select_single_select_option. Only a real
+            # click carries a new segment.
+            if not any(segment_clicks or []):
+                return no_update, no_update
+            segment = triggered.get("value")
         matches = models_matching(mev_catalog, "PD", region, portfolio, data["model_names"])
         if segment and segment != "all":
             segment_models = set(pd_segment_models.get(segment, []))
