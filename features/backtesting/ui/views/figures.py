@@ -63,8 +63,11 @@ def build_forecast_actual_figure(view: dict, *, theme: str = "light"):
 
 def build_horizon_error_figure(view: dict, *, theme: str = "light"):
     """Error-by-horizon for one metric view."""
+    value_format, value_label = metric_value_format(view.get("metric", ""))
     return build_backtesting_horizon_error_figure(
         view.get("by_horizon") or [],
+        value_label=value_label,
+        value_format=value_format,
         theme=theme,
         empty_message="No scored horizons for the applied filters.",
     )

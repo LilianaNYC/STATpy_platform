@@ -198,6 +198,48 @@ def test_summary_strip_labels_row_and_exposure_coverage_separately():
     assert "Exposure coverage: 25% of available EAD was represented." in text
 
 
+def test_summary_strip_adds_mae_and_metric_aware_error_units():
+    rate = layout._build_summary_strip({
+        "metric": config.BACKTESTING_METRIC_PD,
+        "summary": {"count": 36, "bias": 0.00085, "mae": 0.0021,
+                    "mape": 0.07, "rmse": 0.0033, "hit_rate": 0.78, "rag": "Green"},
+    })
+    rate_text = " ".join(_text(list(_walk(rate))).split())
+    assert "Bias: +0.08%" in rate_text
+    assert "MAE: 0.21%" in rate_text
+    assert "percentage points" in rate_text
+
+    amount = layout._build_summary_strip({
+        "metric": config.BACKTESTING_METRIC_EAD,
+        "summary": {"count": 36, "bias": 1_501_304.5, "mae": 2_100_000,
+                    "mape": 0.013, "rmse": 6_595_416.2, "hit_rate": 0.94, "rag": "Green"},
+    })
+    amount_text = " ".join(_text(list(_walk(amount))).split())
+    assert "Bias: +$1.5m" in amount_text
+    assert "MAE: $2.1m" in amount_text
+    assert "RMSE: $6.6m" in amount_text
+
+
+@pytest.mark.parametrize(
+    ("reason", "copy"),
+    [
+        ("no_rows", "No rows match"),
+        ("no_comparable_actual", "no comparable realised actual"),
+        ("no_paired_coverage", "none has paired positive EAD coverage"),
+    ],
+)
+def test_applied_empty_metric_collapses_to_one_house_empty_card(reason, copy):
+    section = layout._build_metric_section(
+        "bt-test", "9.9", "Test metric", "Description",
+        view={"empty_reason": reason}, theme_value="light",
+    )
+    nodes = list(_walk(section))
+    tokens = _class_tokens(nodes)
+    assert "pd-mev-empty-state" in tokens
+    assert "chart-box" not in tokens
+    assert copy in _text(nodes)
+
+
 def test_applied_scope_renders_charts_in_every_metric_section():
     applied = {
         "region": "all", "portfolio": "all", "model_group": "all",

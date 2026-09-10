@@ -62,6 +62,7 @@ from . import aggregation, vintages
 
 __all__ = [
     "DEFAULT_HIT_RATE_TOLERANCE",
+    "backtest_error_rag",
     "comparable_population_key_columns",
     "build_actual_lookup",
     "build_error_records",
@@ -73,12 +74,38 @@ __all__ = [
 
 # Within +/-10% of the realised value counts as a hit unless a caller says
 # otherwise. Expressed as a fraction, matching ``percentage_error``.
-DEFAULT_HIT_RATE_TOLERANCE = 0.10
+DEFAULT_HIT_RATE_TOLERANCE = config.BACKTESTING_HIT_TOLERANCE
 
 # Columns on an aggregated frame (see :mod:`.aggregation`).
 _TARGET = aggregation.TARGET_QUARTER_COLUMN
 _VINTAGE = aggregation.VINTAGE_QUARTER_COLUMN
 _HORIZON = aggregation.HORIZON_COLUMN
+
+
+def backtest_error_rag(
+    percentage_error,
+    *,
+    count: int | None = None,
+    coverage: float | None = None,
+) -> str:
+    """Classify absolute percentage error under the governed backtest policy.
+
+    ``count`` and ``coverage`` are optional because a single chart point still
+    needs a magnitude band. Summary-level callers pass them so an insufficient
+    sample or coverage returns ``N/A`` rather than an overconfident colour.
+    """
+    if not is_finite_number(percentage_error):
+        return "N/A"
+    if count is not None and count < config.BACKTESTING_RAG_MIN_COUNT:
+        return "N/A"
+    if coverage is not None and coverage < config.BACKTESTING_RAG_MIN_COVERAGE:
+        return "N/A"
+    magnitude = abs(float(percentage_error))
+    if magnitude <= config.BACKTESTING_RAG_GREEN_MAX_MAPE:
+        return "Green"
+    if magnitude <= config.BACKTESTING_RAG_AMBER_MAX_MAPE:
+        return "Amber"
+    return "Red"
 
 
 def _actual_key(row, key_columns: list[str]) -> tuple:
@@ -261,6 +288,7 @@ def build_error_records(
             "exposure": float(row["exposure"]) if is_finite_number(row.get("exposure")) else None,
             "facility_count": row.get("facility_count"),
         }
+        record["rag"] = backtest_error_rag(record["percentage_error"])
         records.append(record)
 
     records.sort(
@@ -313,6 +341,7 @@ def summarize_errors(
     records,
     *,
     tolerance: float = DEFAULT_HIT_RATE_TOLERANCE,
+    coverage: float | None = None,
 ) -> dict:
     """Summary statistics over a set of error records.
 
@@ -339,21 +368,29 @@ def summarize_errors(
             "mape": None,
             "mape_count": 0,
             "hit_rate": None,
+            "percentage_bias": None,
+            "rag": "N/A",
+            "bias_rag": "N/A",
         }
 
     absolute = [abs(value) for value in errors]
+    mape = (sum(abs(value) for value in percentages) / len(percentages)) if percentages else None
+    percentage_bias = (sum(percentages) / len(percentages)) if percentages else None
     return {
         "count": count,
         "bias": sum(errors) / count,
         "mae": sum(absolute) / count,
         "rmse": math.sqrt(sum(value * value for value in errors) / count),
-        "mape": (sum(abs(value) for value in percentages) / len(percentages)) if percentages else None,
+        "mape": mape,
         "mape_count": len(percentages),
         "hit_rate": (
             sum(1 for value in percentages if abs(value) <= tolerance) / len(percentages)
             if percentages
             else None
         ),
+        "percentage_bias": percentage_bias,
+        "rag": backtest_error_rag(mape, count=len(percentages), coverage=coverage),
+        "bias_rag": backtest_error_rag(percentage_bias),
     }
 
 

@@ -308,6 +308,7 @@ def build_metric_view(metric: str, applied: dict | None) -> dict:
             if scores_accuracy
             else "Context only — non-Base scenarios are not scored for accuracy or RAG."
         ),
+        "empty_reason": "no_rows",
     }
 
     frame = _frame(metric)
@@ -339,7 +340,17 @@ def build_metric_view(metric: str, applied: dict | None) -> dict:
         group_columns=_ANALYSIS_GROUP_COLUMNS,
     )
     if aggregated.empty:
-        return {**empty, "coverage": coverage, "row_count": len(scoped)}
+        reason = (
+            "no_paired_coverage"
+            if aggregation.is_exposure_weighted(metric) and len(scoped)
+            else "no_rows"
+        )
+        return {
+            **empty,
+            "coverage": coverage,
+            "row_count": len(scoped),
+            "empty_reason": reason,
+        }
 
     # The selected scenario still drives the raw vintage context. Accuracy is
     # stricter: only Base is scoreable, and a snapshot selection narrows the
@@ -378,18 +389,26 @@ def build_metric_view(metric: str, applied: dict | None) -> dict:
         if scores_accuracy
         else []
     )
+    unscored = (
+        errors.unmatched_forecast_count(aggregated, actuals=actuals_aggregated)
+        if scores_accuracy
+        else 0
+    )
+    rag_coverage = coverage.get("exposure_coverage")
+    if rag_coverage is None:
+        rag_coverage = coverage.get("row_coverage")
+    summary = errors.summarize_errors(records, coverage=rag_coverage)
+    empty_reason = None
+    if scores_accuracy and not records:
+        empty_reason = "no_comparable_actual"
     return {
         "metric": metric,
         "vintage_series": _vintage_series(scoped, metric, ead_frame, context_scenario),
         "records": records,
         "by_horizon": errors.summarize_by(records, ["horizon"]),
-        "summary": errors.summarize_errors(records),
+        "summary": summary,
         "coverage": coverage,
-        "unscored": (
-            errors.unmatched_forecast_count(aggregated, actuals=actuals_aggregated)
-            if scores_accuracy
-            else 0
-        ),
+        "unscored": unscored,
         "row_count": len(scoped),
         "scoring_status": "scored" if scores_accuracy else "context_only",
         "scoring_note": (
@@ -397,6 +416,7 @@ def build_metric_view(metric: str, applied: dict | None) -> dict:
             if scores_accuracy
             else "Context only — non-Base scenarios are not scored for accuracy or RAG."
         ),
+        "empty_reason": empty_reason,
     }
 
 

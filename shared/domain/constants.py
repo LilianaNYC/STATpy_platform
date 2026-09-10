@@ -177,6 +177,16 @@ BACKTESTING_ANCHOR_QUARTER = 0
 # the conservatism buffer rather than model accuracy.
 BACKTESTING_BASE_SCENARIO = "Base"
 
+# Governed backtesting accuracy policy. Values are fractions: 0.10 means 10%.
+# The coverage floor follows Q22 in docs/backtesting_plan.md; the count floor is
+# the minimum sample used before a summary-level accuracy RAG is considered
+# decision-useful. Individual points still receive a magnitude classification.
+BACKTESTING_RAG_GREEN_MAX_MAPE = 0.10
+BACKTESTING_RAG_AMBER_MAX_MAPE = 0.25
+BACKTESTING_HIT_TOLERANCE = 0.10
+BACKTESTING_RAG_MIN_COUNT = 30
+BACKTESTING_RAG_MIN_COVERAGE = 0.95
+
 # Model-attribute keys the backtesting catalogue exposes per model.
 BACKTESTING_MODEL_ATTRIBUTES = ("region", "portfolio", "model_group", "segments", "label")
 

@@ -500,20 +500,62 @@ def _format_stat(value, fmt: str) -> str:
         return "—"
 
 
+def _format_compact_currency(value, *, signed: bool = False) -> str:
+    if value is None:
+        return "—"
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "—"
+    magnitude = abs(number)
+    scale, suffix = (
+        (1_000_000_000.0, "bn") if magnitude >= 1_000_000_000
+        else (1_000_000.0, "m") if magnitude >= 1_000_000
+        else (1_000.0, "k") if magnitude >= 1_000
+        else (1.0, "")
+    )
+    sign = "+" if signed and number > 0 else "-" if number < 0 else ""
+    return f"{sign}${magnitude / scale:,.1f}{suffix}"
+
+
+def _format_metric_error(metric: str, value, *, signed: bool = False) -> str:
+    if metric in config.BACKTESTING_EXPOSURE_WEIGHTED_METRICS:
+        return _format_stat(value, "+.2%" if signed else ".2%")
+    return _format_compact_currency(value, signed=signed)
+
+
 def _build_summary_strip(view: dict) -> html.Div:
     """Headline error statistics for a metric, in the platform's meta chrome."""
     summary = view.get("summary") or {}
+    metric = view.get("metric", "")
     items = [
         ("Scored forecasts", _format_stat(summary.get("count"), ",")),
-        ("Bias", _format_stat(summary.get("bias"), "+,.4f")),
+        ("Bias", _format_metric_error(metric, summary.get("bias"), signed=True)),
+        ("MAE", _format_metric_error(metric, summary.get("mae"))),
         ("MAPE", _format_stat(summary.get("mape"), ".1%")),
-        ("RMSE", _format_stat(summary.get("rmse"), ",.4f")),
+        ("RMSE", _format_metric_error(metric, summary.get("rmse"))),
         ("Hit rate (±10%)", _format_stat(summary.get("hit_rate"), ".0%")),
     ]
     children = [
         html.Span([html.Span(f"{label}: "), html.Strong(value)], className="bt-stat")
         for label, value in items
     ]
+
+    rag = summary.get("rag", "N/A")
+    children.append(html.Span([
+        html.Span("Accuracy RAG: "),
+        html.Strong(rag, style={"color": config.PD_RAG_COLOR.get(rag, config.PD_RAG_COLOR["N/A"])}),
+    ], className="bt-stat"))
+
+    if metric in config.BACKTESTING_EXPOSURE_WEIGHTED_METRICS:
+        children.append(html.Span(
+            "Bias, MAE and RMSE are rate differences shown in percentage points.",
+            className="bt-stat bt-stat-note",
+        ))
+
+    scoring_note = view.get("scoring_note")
+    if scoring_note:
+        children.append(html.Span(scoring_note, className="bt-stat bt-stat-note"))
 
     unscored = view.get("unscored") or 0
     if unscored:
@@ -708,6 +750,20 @@ def _build_metric_section(
             f"{title} — apply filters to score this metric",
             "Forecast-versus-actual charts render here once a scope is applied.",
         )]
+    elif view.get("empty_reason"):
+        reason = view["empty_reason"]
+        copy = {
+            "no_rows": "No rows match the applied filters.",
+            "no_comparable_actual": (
+                "Forecast rows match the applied filters, but no comparable realised "
+                "actual is available for scoring."
+            ),
+            "no_paired_coverage": (
+                "Forecast rows match the applied filters, but none has paired positive "
+                "EAD coverage for aggregation."
+            ),
+        }.get(reason, "No backtesting results are available for the applied filters.")
+        body = [build_empty_state(f"{title} — no results", copy)]
     else:
         body = _build_metric_charts(view, title, theme_value)
 

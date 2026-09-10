@@ -31,7 +31,13 @@ import statistics
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from ..domain.constants import PD_MEV_PALETTE, pd_rag_color
+from ..domain.constants import (
+    BACKTESTING_HIT_TOLERANCE,
+    BACKTESTING_RAG_AMBER_MAX_MAPE,
+    BACKTESTING_RAG_GREEN_MAX_MAPE,
+    PD_MEV_PALETTE,
+    pd_rag_color,
+)
 from ..domain.mev_range import (
     calculate_pd_mev_thresholds,
     get_pd_mev_scenario_quarter,
@@ -2521,25 +2527,20 @@ def build_saas_mev_time_series_figure(
 # markers, and a transparent background so the card's themed surface shows
 # through. Nothing here introduces a new palette or a new layout idiom.
 
-# Backtesting reuses the monitoring actual/predicted pairing so the two
-# dashboards read the same way: realised outcome solid, model output dashed.
-_BACKTEST_ACTUAL_COLOR = "#dc2626"
-_BACKTEST_FORECAST_COLOR = "#2563eb"
+def _backtest_series_colors(theme: str | None) -> tuple[str, str]:
+    """Theme-aware actual/forecast pairing from the existing SAAS palette."""
+    colors = (
+        SAAS_DARK_SCENARIO_COLOR_MAP
+        if _normalize_saas_theme(theme) == "dark"
+        else SAAS_SCENARIO_COLOR_MAP
+    )
+    return colors["intsevere"], colors["other"]
 
-# Absolute percentage error banding for the error markers. Mirrors how the
-# monitoring charts colour a metric by its RAG rather than by an arbitrary scale.
-_BACKTEST_RAG_BANDS = ((0.10, "Green"), (0.25, "Amber"))
 
-
-def backtest_error_rag(percentage_error) -> str:
-    """RAG for one percentage error, by absolute size."""
-    if not is_finite_number(percentage_error):
-        return "N/A"
-    magnitude = abs(percentage_error)
-    for limit, rag in _BACKTEST_RAG_BANDS:
-        if magnitude <= limit:
-            return rag
-    return "Red"
+def _backtest_vintage_palette(theme: str | None) -> list[str]:
+    if _normalize_saas_theme(theme) == "dark":
+        return list(SAAS_DARK_SCENARIO_COLOR_MAP.values()) + SAAS_DARK_SCENARIO_FALLBACK_COLORS
+    return PD_MEV_PALETTE
 
 
 def _backtest_axis_kwargs(palette: dict) -> dict:
@@ -2575,6 +2576,7 @@ def build_backtesting_forecast_actual_figure(
 
     palette = _saas_theme_palette(theme)
     trend_line_color = _monitoring_trend_line_color(theme)
+    actual_color, forecast_color = _backtest_series_colors(theme)
 
     quarters = sorted({record["quarter"] for record in records}, key=_pd_quarter_sort_key)
 
@@ -2590,7 +2592,7 @@ def build_backtesting_forecast_actual_figure(
         x=quarters,
         y=[actual_by_quarter.get(quarter) for quarter in quarters],
         mode="lines+markers", name=f"Actual {value_label}",
-        line=dict(color=_BACKTEST_ACTUAL_COLOR, width=2.5),
+        line=dict(color=actual_color, width=2.5),
         marker=dict(size=6, line=dict(color=palette["marker_fill"], width=1)),
         hovertemplate=f"%{{x}}<br>Actual {value_label}: %{{y:{value_format}}}<extra></extra>",
     ), row=1, col=1)
@@ -2610,7 +2612,7 @@ def build_backtesting_forecast_actual_figure(
             name=f"Forecast {value_label}",
             legendgroup="forecast",
             showlegend=index == 0,
-            line=dict(color=_BACKTEST_FORECAST_COLOR, width=1.6, dash="dash"),
+            line=dict(color=forecast_color, width=1.6, dash="dash"),
             marker=dict(size=5),
             opacity=0.72,
             customdata=[[vintage, row.get("horizon")] for row in rows],
@@ -2621,7 +2623,7 @@ def build_backtesting_forecast_actual_figure(
         ), row=1, col=1)
 
     percentage_errors = [record.get("percentage_error") for record in records]
-    rags = [backtest_error_rag(value) for value in percentage_errors]
+    rags = [record.get("rag", "N/A") for record in records]
     fig.add_trace(go.Scatter(
         x=[record["quarter"] for record in records],
         y=percentage_errors,
@@ -2641,10 +2643,18 @@ def build_backtesting_forecast_actual_figure(
         ),
     ), row=1, col=2)
 
-    shapes = [dict(
-        type="line", xref="x2 domain", x0=0, x1=1, yref="y2", y0=0, y1=0,
-        line=dict(color=palette["zero_line"], width=1),
-    )]
+    shapes = [
+        dict(
+            type="rect", xref="x2 domain", x0=0, x1=1, yref="y2",
+            y0=-BACKTESTING_HIT_TOLERANCE, y1=BACKTESTING_HIT_TOLERANCE,
+            fillcolor=pd_rag_color("Green"), opacity=0.08, line=dict(width=0),
+            layer="below",
+        ),
+        dict(
+            type="line", xref="x2 domain", x0=0, x1=1, yref="y2", y0=0, y1=0,
+            line=dict(color=palette["zero_line"], width=1),
+        ),
+    ]
     legend_shapes, legend_annotations = _dual_panel_legend(
         trend_line_color, "Error %", _DUAL_PANEL_SECONDARY_DOMAIN
     )
@@ -2677,6 +2687,8 @@ def build_backtesting_forecast_actual_figure(
 def build_backtesting_horizon_error_figure(
     summaries,
     *,
+    value_label: str = "Value",
+    value_format: str = ".2%",
     theme: str = "light",
     empty_message: str = "No scored horizons for the applied filters.",
 ) -> go.Figure:
@@ -2700,6 +2712,7 @@ def build_backtesting_horizon_error_figure(
 
     palette = _saas_theme_palette(theme)
     trend_line_color = _monitoring_trend_line_color(theme)
+    _, forecast_color = _backtest_series_colors(theme)
     rows = sorted(rows, key=lambda row: row["horizon"])
 
     horizons = [f"Q+{row['horizon']}" for row in rows]
@@ -2707,12 +2720,14 @@ def build_backtesting_horizon_error_figure(
     biases = [row.get("bias") for row in rows]
     counts = [row.get("count") for row in rows]
     hit_rates = [row.get("hit_rate") for row in rows]
+    percentage_biases = [row.get("percentage_bias") for row in rows]
+    bias_rags = [row.get("bias_rag", "N/A") for row in rows]
 
     fig = _make_dual_panel_figure()
     fig.add_trace(go.Scatter(
         x=horizons, y=mapes,
         mode="lines+markers", name="MAPE",
-        line=dict(color=_BACKTEST_FORECAST_COLOR, width=2.5),
+        line=dict(color=forecast_color, width=2.5),
         marker=dict(size=7, line=dict(color=palette["marker_fill"], width=1)),
         customdata=[[count, rate] for count, rate in zip(counts, hit_rates)],
         hovertemplate=(
@@ -2721,23 +2736,56 @@ def build_backtesting_horizon_error_figure(
         ),
     ), row=1, col=1)
 
+    direction_colors = (
+        SAAS_DARK_SCENARIO_FALLBACK_COLORS
+        if _normalize_saas_theme(theme) == "dark"
+        else SAAS_SCENARIO_FALLBACK_COLORS
+    )
     fig.add_trace(go.Scatter(
         x=horizons, y=biases,
         mode="lines+markers", name="Bias", showlegend=False,
         line=dict(color=trend_line_color, width=2.5),
         marker=dict(
             size=8,
-            color=[pd_rag_color("Green" if (value or 0) >= 0 else "Red") for value in biases],
-            line=dict(color=palette["marker_fill"], width=1),
+            color=[
+                direction_colors[0] if (value or 0) >= 0 else direction_colors[-1]
+                for value in percentage_biases
+            ],
+            symbol=[{"Green": "circle", "Amber": "diamond", "Red": "x"}.get(rag, "circle-open") for rag in bias_rags],
+            line=dict(color=[pd_rag_color(rag) for rag in bias_rags], width=2),
         ),
-        customdata=counts,
-        hovertemplate="%{x}<br>Bias: %{y:+.4f}<br>Scored forecasts: %{customdata}<extra></extra>",
+        customdata=[[count, pct, rag] for count, pct, rag in zip(counts, percentage_biases, bias_rags)],
+        hovertemplate=(
+            f"%{{x}}<br>Bias ({value_label}): %{{y:{value_format}}}"
+            "<br>Percentage bias: %{customdata[1]:+.1%}"
+            "<br>Severity: %{customdata[2]}"
+            "<br>Scored forecasts: %{customdata[0]}<extra></extra>"
+        ),
     ), row=1, col=2)
 
-    shapes = [dict(
-        type="line", xref="x2 domain", x0=0, x1=1, yref="y2", y0=0, y1=0,
-        line=dict(color=palette["zero_line"], width=1),
-    )]
+    mape_top = max(
+        BACKTESTING_RAG_AMBER_MAX_MAPE * 1.2,
+        max((value for value in mapes if is_finite_number(value)), default=0.0) * 1.08,
+    )
+    shapes = [
+        dict(type="rect", xref="x domain", x0=0, x1=1, yref="y", y0=0,
+             y1=BACKTESTING_RAG_GREEN_MAX_MAPE, fillcolor=pd_rag_color("Green"),
+             opacity=0.07, line=dict(width=0), layer="below"),
+        dict(type="rect", xref="x domain", x0=0, x1=1, yref="y",
+             y0=BACKTESTING_RAG_GREEN_MAX_MAPE, y1=BACKTESTING_RAG_AMBER_MAX_MAPE,
+             fillcolor=pd_rag_color("Amber"), opacity=0.07, line=dict(width=0), layer="below"),
+        dict(type="rect", xref="x domain", x0=0, x1=1, yref="y",
+             y0=BACKTESTING_RAG_AMBER_MAX_MAPE, y1=mape_top,
+             fillcolor=pd_rag_color("Red"), opacity=0.06, line=dict(width=0), layer="below"),
+        dict(type="line", xref="x domain", x0=0, x1=1, yref="y",
+             y0=BACKTESTING_RAG_GREEN_MAX_MAPE, y1=BACKTESTING_RAG_GREEN_MAX_MAPE,
+             line=dict(color=pd_rag_color("Green"), width=1, dash="dot")),
+        dict(type="line", xref="x domain", x0=0, x1=1, yref="y",
+             y0=BACKTESTING_RAG_AMBER_MAX_MAPE, y1=BACKTESTING_RAG_AMBER_MAX_MAPE,
+             line=dict(color=pd_rag_color("Amber"), width=1, dash="dot")),
+        dict(type="line", xref="x2 domain", x0=0, x1=1, yref="y2", y0=0, y1=0,
+             line=dict(color=palette["zero_line"], width=1)),
+    ]
     legend_shapes, legend_annotations = _dual_panel_legend(
         trend_line_color, "Bias", _DUAL_PANEL_SECONDARY_DOMAIN
     )
@@ -2764,6 +2812,7 @@ def build_backtesting_horizon_error_figure(
     ), row=1, col=1)
     fig.update_yaxes(dict(
         title=dict(text="Bias", standoff=8),
+        tickformat=value_format,
         gridcolor=palette["grid_color"], gridwidth=0.8, zeroline=False, automargin=True,
     ), row=1, col=2)
     _apply_transparent_background(fig)
@@ -2846,13 +2895,14 @@ def build_backtesting_vintage_curve_figure(
         return _empty_figure(empty_message, theme=theme)
 
     palette = _saas_theme_palette(theme)
+    vintage_palette = _backtest_vintage_palette(theme)
     fig = go.Figure()
 
     label_ends: list[tuple[float, float, str, str]] = []   # (x, y, text, colour)
     max_horizon = 0
     for index, entry in enumerate(series):
         points = entry["points"]
-        colour = PD_MEV_PALETTE[index % len(PD_MEV_PALETTE)]
+        colour = vintage_palette[index % len(vintage_palette)]
         horizons = [point["horizon"] for point in points]
         values = [point["value"] for point in points]
         max_horizon = max(max_horizon, max(horizons))
@@ -2866,14 +2916,14 @@ def build_backtesting_vintage_curve_figure(
             mode="lines+markers", name=vintage_label,
             line=dict(color=colour, width=2.2),
             marker=dict(size=5, line=dict(color=palette["marker_fill"], width=1)),
-            customdata=[
-                format_pd_compact_quarter_label(point.get("target_quarter") or "")
-                for point in points
-            ],
+            customdata=[[
+                format_pd_compact_quarter_label(point.get("target_quarter") or ""),
+                point.get("horizon"),
+            ] for point in points],
             hovertemplate=(
-                f"{vintage_label} at Q+%{{x}}"
+                f"{vintage_label} at Q+%{{customdata[1]}}"
                 f"<br>{value_label}: %{{y:{value_format}}}"
-                "<br>Target quarter: %{customdata}<extra></extra>"
+                "<br>Target quarter: %{customdata[0]}<extra></extra>"
             ),
         ))
 

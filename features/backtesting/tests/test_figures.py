@@ -98,10 +98,70 @@ def test_horizon_figure_plots_mape_and_bias():
 
 
 def test_error_rag_bands():
-    assert charts.backtest_error_rag(0.05) == "Green"
-    assert charts.backtest_error_rag(-0.20) == "Amber"
-    assert charts.backtest_error_rag(0.90) == "Red"
-    assert charts.backtest_error_rag(None) == "N/A"
+    assert errors.backtest_error_rag(0.05) == "Green"
+    assert errors.backtest_error_rag(-0.20) == "Amber"
+    assert errors.backtest_error_rag(0.90) == "Red"
+    assert errors.backtest_error_rag(None) == "N/A"
+
+
+def test_summary_rag_requires_minimum_count_and_coverage():
+    assert errors.backtest_error_rag(0.05, count=29, coverage=1.0) == "N/A"
+    assert errors.backtest_error_rag(0.05, count=30, coverage=0.94) == "N/A"
+    assert errors.backtest_error_rag(0.05, count=30, coverage=0.95) == "Green"
+
+
+def test_backtesting_reference_bands_are_drawn():
+    records = _records()
+    forecast = charts.build_backtesting_forecast_actual_figure(records)
+    assert any(shape.type == "rect" and shape.y0 == pytest.approx(-0.10) and shape.y1 == pytest.approx(0.10)
+               for shape in forecast.layout.shapes)
+
+    horizon = charts.build_backtesting_horizon_error_figure(
+        errors.summarize_by(records, ["horizon"])
+    )
+    boundaries = {(shape.y0, shape.y1) for shape in horizon.layout.shapes if shape.type == "line"}
+    assert (0.10, 0.10) in boundaries
+    assert (0.25, 0.25) in boundaries
+
+
+def test_backtesting_trace_colours_change_with_theme():
+    records = _records()
+    light = charts.build_backtesting_forecast_actual_figure(records, theme="light")
+    dark = charts.build_backtesting_forecast_actual_figure(records, theme="dark")
+    assert light.data[0].line.color != dark.data[0].line.color
+    assert light.data[1].line.color != dark.data[1].line.color
+
+    series = [{
+        "vintage": "2024-Q1",
+        "points": [{"horizon": 1, "value": 0.02, "target_quarter": "2024-Q2"}],
+    }]
+    vintage_light = charts.build_backtesting_vintage_curve_figure(series, theme="light")
+    vintage_dark = charts.build_backtesting_vintage_curve_figure(series, theme="dark")
+    assert vintage_light.data[0].line.color != vintage_dark.data[0].line.color
+
+
+def test_large_positive_bias_is_red_severity_not_green_quality():
+    summaries = [{
+        "horizon": 1, "mape": 0.60, "bias": 6_000_000.0, "count": 30,
+        "hit_rate": 0.0, "percentage_bias": 0.60, "bias_rag": "Red",
+    }]
+    fig = charts.build_backtesting_horizon_error_figure(
+        summaries, value_label="EAD", value_format="$,.0f"
+    )
+    bias_trace = fig.data[1]
+    assert bias_trace.customdata[0][2] == "Red"
+    assert bias_trace.marker.symbol[0] == "x"
+    assert bias_trace.marker.line.color[0] == config.PD_RAG_COLOR["Red"]
+
+
+def test_vintage_hover_uses_raw_horizon_customdata():
+    series = [{
+        "vintage": "2024-Q1",
+        "points": [{"horizon": 1, "value": 0.02, "target_quarter": "2024-Q2"}],
+    }]
+    fig = charts.build_backtesting_vintage_curve_figure(series)
+    assert "%{customdata[1]}" in fig.data[0].hovertemplate
+    assert fig.data[0].customdata[0][1] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -351,7 +411,7 @@ def test_vintage_curve_labels_are_consistent_with_the_other_charts():
     assert fig.layout.annotations[0].text.strip() == "2024Q1"
     assert list(fig.layout.xaxis.ticktext) == ["Q+0", "Q+1"]
     # Hover target quarters are compact too.
-    assert list(fig.data[0].customdata) == ["2024Q1", "2024Q2"]
+    assert [row[0] for row in fig.data[0].customdata] == ["2024Q1", "2024Q2"]
 
 
 def test_vintage_series_keeps_horizons_that_have_no_actual_yet(applied):
