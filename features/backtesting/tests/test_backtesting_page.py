@@ -98,7 +98,7 @@ def test_every_section_anchor_is_present(nodes):
         assert section_id in present, section_id
 
 
-def test_all_nine_filters_are_present(nodes):
+def test_all_eight_filters_are_present(nodes):
     present = _ids(nodes)
     for value_id in (
         layout.REGION_ID,
@@ -108,7 +108,6 @@ def test_all_nine_filters_are_present(nodes):
         layout.MODEL_ID,
         layout.RUN_FOR_ID,
         layout.SCENARIO_ID,
-        layout.JN_FLAG_ID,
         layout.SNAPSHOT_ID,
     ):
         assert value_id in present, value_id
@@ -118,7 +117,7 @@ def test_filter_labels_read_as_specified(nodes):
     text = _text(nodes)
     for label in (
         "Region", "Portfolio", "Model Group", "Segment", "Model",
-        "Model Use Case / Cycle", "Scenario", "J/N Flag", "Month End Snapshot",
+        "Model Use Case / Cycle", "Scenario", "Month End Snapshot",
     ):
         assert label in text, label
 
@@ -300,7 +299,6 @@ def test_filter_options_are_derived_from_the_workbook():
     assert set(option["value"] for option in layout.run_for_options()) >= {
         "CCAR 2025", "CCAR 2026",
     }
-    assert set(option["value"] for option in layout.jn_flag_options()) >= {"J", "N"}
 
 
 def test_model_options_span_both_disjoint_pd_populations():
@@ -531,16 +529,16 @@ def test_apply_snapshots_every_filter_into_the_store(registered):
     assert [state.component_id for state in _states(entry)] == [
         layout.REGION_ID, layout.PORTFOLIO_ID, layout.MODEL_GROUP_ID,
         layout.SEGMENT_ID, layout.MODEL_ID, layout.RUN_FOR_ID,
-        layout.SCENARIO_ID, layout.JN_FLAG_ID, layout.SNAPSHOT_ID,
+        layout.SCENARIO_ID, layout.SNAPSHOT_ID,
     ]
 
     applied, help_text = entry["func"](
-        1, "US", "non-C&I", "PD", "Cyclical", "PD_model_a", "CCAR 2025", "Base", "N", "all",
+        1, "US", "non-C&I", "PD", "Cyclical", "PD_model_a", "CCAR 2025", "Base", "all",
     )
     assert applied == {
         "region": "US", "portfolio": "non-C&I", "model_group": "PD",
         "segment": "Cyclical", "model": "PD_model_a", "run_for": "CCAR 2025",
-        "scenario": "Base", "jn_flag": "N", "snapshot": "all",
+        "scenario": "Base", "snapshot": "all",
     }
     # The help line reads the model's descriptive name, not its raw key.
     assert "Cyclical" in help_text and "PD Model A" in help_text

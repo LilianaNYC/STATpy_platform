@@ -1,5 +1,9 @@
 # Backtesting dashboard review and improvement proposal
 
+> **Post-review decision:** J/N is not a relevant dashboard dimension. The
+> filter and paired-comparison proposal are retired; the service uses the
+> governed `N` population and never combines the alternative paths.
+
 This is a read-only audit of the current implementation and the rendered Dash
 page. No application code, source workbook, or dependency has been changed.
 

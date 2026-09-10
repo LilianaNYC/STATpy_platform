@@ -176,7 +176,7 @@ def describe_scope(applied: dict | None) -> str:
     """One-line human summary of an applied filter set.
 
     Used for the top bar's help line, so a user can see what the sections below
-    are actually reporting on without re-reading nine dropdowns.
+    are actually reporting on without re-reading the dropdowns.
     """
     if not applied:
         return ""
@@ -193,7 +193,6 @@ def describe_scope(applied: dict | None) -> str:
         f"Segment: {_label(applied.get('segment'), 'All segments')}",
         f"Model Use Case / Cycle: {_label(applied.get('run_for'), 'All cycles')}",
         f"Scenario: {_label(applied.get('scenario'), 'All scenarios')}",
-        f"J/N: {_label(applied.get('jn_flag'), 'Both')}",
         f"Snapshot: {_label(applied.get('snapshot'), 'All vintages')}",
     ]
     return " · ".join(parts)

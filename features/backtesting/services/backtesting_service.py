@@ -47,7 +47,7 @@ _INSTRUMENT = config.BACKTESTING_CREDIT_INSTRUMENT_ID_COLUMN
 # Segment/model dimensions are disjoint population pieces and combine. These
 # four dimensions identify alternative observations and remain separate when
 # their filter is All. See the analysis-grain contract in the feature README.
-_ANALYSIS_GROUP_COLUMNS = (_SNAPSHOT, _RUN_FOR, _SCENARIO, _JN)
+_ANALYSIS_GROUP_COLUMNS = (_SNAPSHOT, _RUN_FOR, _SCENARIO)
 
 
 def _frame(metric: str) -> pd.DataFrame:
@@ -105,10 +105,13 @@ def _apply_scope(
     if not selectors.is_all(segment):
         scoped = scoped[scoped[_SEGMENT] == segment]
 
-    for column, key in ((_RUN_FOR, "run_for"), (_SCENARIO, "scenario"), (_JN, "jn_flag")):
+    for column, key in ((_RUN_FOR, "run_for"), (_SCENARIO, "scenario")):
         value = applied.get(key)
         if not selectors.is_all(value):
             scoped = scoped[scoped[column] == value]
+
+    if _JN in scoped.columns:
+        scoped = scoped[scoped[_JN] == config.BACKTESTING_PRIMARY_JN_FLAG]
 
     snapshot = applied.get("snapshot")
     if not selectors.is_all(snapshot):
@@ -143,8 +146,8 @@ def _vintage_series(scoped: pd.DataFrame, metric: str, ead_frame, scenario: str)
 
     This is the vintage-curve view -- every Month End Snapshot aligned at
     horizon 0 so cohorts can be compared against each other by *age* rather
-    than by calendar quarter. Population dimensions combine, while cycle and J/N
-    remain in the key so alternative runs never inflate an amount.
+    than by calendar quarter. Population dimensions combine, while cycle
+    remains in the key so alternative runs never inflate an amount.
 
     Unlike the error records, this keeps **every** horizon, including the recent
     ones with no realised outcome yet: a vintage curve is about the projected
@@ -177,7 +180,6 @@ def _vintage_series(scoped: pd.DataFrame, metric: str, ead_frame, scenario: str)
             row[aggregation.VINTAGE_QUARTER_COLUMN],
             row[_RUN_FOR],
             row[_SCENARIO],
-            row[_JN],
         )
         series.setdefault(key, []).append({
             "horizon": int(horizon),
@@ -191,7 +193,6 @@ def _vintage_series(scoped: pd.DataFrame, metric: str, ead_frame, scenario: str)
             "vintage": key[0],
             "run_for": key[1],
             "scenario": key[2],
-            "jn_flag": key[3],
             "points": sorted(points, key=lambda point: point["horizon"]),
         }
         for key, points in sorted(series.items(), key=lambda item: item[0])
@@ -234,8 +235,7 @@ def build_loss_curve_series(applied: dict | None, *, cumulative: bool = True) ->
     nco_series = _vintage_series(nco, config.BACKTESTING_METRIC_NCO, None, scenario)
     ead_series = _vintage_series(ead, config.BACKTESTING_METRIC_EAD, None, scenario)
 
-    # Opening exposure per comparable series: cycle and J/N are alternative
-    # observations, so one must never become another's denominator.
+    # Opening exposure per cycle: alternative cycles never share a denominator.
     opening = {}
     for entry in ead_series:
         first = next(
@@ -244,12 +244,12 @@ def build_loss_curve_series(applied: dict | None, *, cumulative: bool = True) ->
             None,
         )
         if first and first["value"]:
-            key = (entry["vintage"], entry["run_for"], entry["jn_flag"])
+            key = (entry["vintage"], entry["run_for"])
             opening[key] = float(first["value"])
 
     curves = []
     for entry in nco_series:
-        key = (entry["vintage"], entry["run_for"], entry["jn_flag"])
+        key = (entry["vintage"], entry["run_for"])
         balance = opening.get(key)
         if not balance:
             continue
@@ -268,7 +268,6 @@ def build_loss_curve_series(applied: dict | None, *, cumulative: bool = True) ->
                 "vintage": entry["vintage"],
                 "run_for": entry["run_for"],
                 "scenario": entry["scenario"],
-                "jn_flag": entry["jn_flag"],
                 "points": points,
             })
     return curves

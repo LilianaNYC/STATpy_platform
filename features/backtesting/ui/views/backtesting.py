@@ -13,7 +13,7 @@ Chrome notes, so the next reader does not mistake reuse for coincidence:
   rows. ``build_global_filters`` is *not* used: it is hard-wired to monitoring's
   filter config and element ids (``pd-region``, ``pd-models``, ...), so reusing
   it here would put monitoring's ids on this page and let monitoring's callbacks
-  fire against it, while still not offering Run For / J/N Flag / Month End
+  fire against it, while still not offering Run For / Month End
   Snapshot.
 * Section and chapter headings come from ``shared.ui.cards``. Those builders
   emit ``pd-*`` class names; read ``pd-`` as "platform default card chrome",
@@ -73,11 +73,6 @@ SCENARIO_ID = "bt-scenario"
 SCENARIO_TOGGLE_ID = "bt-scenario-toggle"
 SCENARIO_MENU_ID = "bt-scenario-menu"
 SCENARIO_FILTER_KEY = "bt-scenario"
-
-JN_FLAG_ID = "bt-jn-flag"
-JN_FLAG_TOGGLE_ID = "bt-jn-flag-toggle"
-JN_FLAG_MENU_ID = "bt-jn-flag-menu"
-JN_FLAG_FILTER_KEY = "bt-jn-flag"
 
 SNAPSHOT_ID = "bt-snapshot"
 SNAPSHOT_TOGGLE_ID = "bt-snapshot-toggle"
@@ -225,10 +220,6 @@ def scenario_options() -> list[dict]:
     base = config.BACKTESTING_BASE_SCENARIO
     ordered = ([base] if base in values else []) + [value for value in values if value != base]
     return [{"label": str(value), "value": str(value)} for value in ordered]
-
-
-def jn_flag_options() -> list[dict]:
-    return _options_with_all(BACKTESTING_PAGE_DATA.get("jn_flag_values") or [])
 
 
 def snapshot_options() -> list[dict]:
@@ -428,15 +419,6 @@ def _build_top_bar() -> html.Div:
                                 filter_key=SCENARIO_FILTER_KEY,
                                 options=scenario_options(),
                                 value=DEFAULT_SCENARIO,
-                            ),
-                            _build_filter(
-                                "J/N Flag",
-                                value_id=JN_FLAG_ID,
-                                toggle_id=JN_FLAG_TOGGLE_ID,
-                                menu_id=JN_FLAG_MENU_ID,
-                                filter_key=JN_FLAG_FILTER_KEY,
-                                options=jn_flag_options(),
-                                value=ALL_VALUE,
                             ),
                             _build_filter(
                                 "Month End Snapshot",
@@ -713,7 +695,7 @@ def _build_overview_section(applied_filters: dict | None, theme_value: str | Non
             "Apply filters to run the backtest",
             "Narrow the scope in the top bar -- Region, Portfolio and Model "
             "Group filter the models available, then pick a Model or Segment, a "
-            "Model Use Case / Cycle, Scenario, J/N Flag and Month End Snapshot "
+            "Model Use Case / Cycle, Scenario and Month End Snapshot "
             "-- and click Apply filters. Each metric section below then reports "
             "forecast-versus-actual error for the selected scope.",
         )]

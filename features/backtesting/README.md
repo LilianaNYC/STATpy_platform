@@ -144,12 +144,12 @@ cover the same facilities the PD sheets do.
 ## Filters
 
 **Primary row:** Region, Portfolio, Model Group, Model, Segment.
-**Secondary row:** Model Use Case / Cycle, Scenario, J/N Flag, Month End Snapshot.
+**Secondary row:** Model Use Case / Cycle, Scenario, Month End Snapshot.
 
 Options are derived from data, never hard-coded. The scope filters come from the
 **model catalogue** (`model_names` in `dummy_mev_data.xlsx`) — the same sheet
 Monitoring and SAAS read — so all three dashboards share one model vocabulary.
-Cycle / Scenario / J/N Flag / Month End Snapshot come from
+Cycle / Scenario / Month End Snapshot come from
 `backtesting_results.xlsx`.
 
 Models are shown by their **Model Descriptive Name** ("PD Model A"); the option
@@ -186,11 +186,11 @@ single governed path rather than a population dimension.
 | Segment | **Combine** | Union segment populations. Rate metrics are exposure-weighted across the union; EAD and NCO are summed once across its facilities. |
 | Model Use Case / Cycle (`Run For`) | **Compare** | Keep one aggregate series and one set of error records per cycle. Never sum cycles together. |
 | Scenario | **Primary selection** | Base is the only accuracy path. `All` resolves to Base for scoring and raw default context; an explicitly selected non-Base scenario remains context-only and has no accuracy statistics or RAG. |
-| J/N Flag | **Compare** | Keep J and N as separate aggregate series and error records. Never sum or exposure-weight them together as extra facilities. |
+| J/N Flag | **Fixed primary path** | Not exposed as a filter. The service selects `N` for every view; the alternative judgmental population is neither scored nor summed into the portfolio. |
 | Month End Snapshot | **Compare** | Keep each forecast vintage separate. `All` compares vintages; a selected snapshot narrows forecasts while actual anchors still resolve from full comparable history. |
 
 The resulting aggregate grain is therefore
-`(Month End Snapshot, Run For, Scenario, J/N Flag, Quarter)` after the combine
+`(Month End Snapshot, Run For, Scenario, Quarter)` after the combine
 dimensions have been collapsed. Scenario is Base on every scored record. This
 contract applies equally to the score inputs, raw vintage context, and the two
 static-pool series; those surfaces may present the comparison dimensions

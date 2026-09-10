@@ -290,11 +290,10 @@ def test_non_base_selections_are_unscored_context_for_every_metric(applied):
     "metric",
     [config.BACKTESTING_METRIC_EAD, config.BACKTESTING_METRIC_NCO],
 )
-def test_all_cycles_and_jn_compare_but_model_populations_combine(
+def test_all_cycles_compare_while_jn_uses_fixed_n_population(
     monkeypatch, applied, metric
 ):
-    """Additive values combine disjoint models once and preserve four alternative
-    cycle/J-N observations instead of summing all eight partitions together."""
+    """Additive values combine models once, preserve cycles, and exclude J."""
     value_column = config.BACKTESTING_METRIC_VALUE_COLUMNS[metric]
     rows = []
     expected = {}
@@ -338,7 +337,8 @@ def test_all_cycles_and_jn_compare_but_model_populations_combine(
                         value_column: partition_actual,
                     },
                 ])
-            expected[(run_for, jn_flag)] = (forecast, actual)
+            if jn_flag == config.BACKTESTING_PRIMARY_JN_FLAG:
+                expected[run_for] = (forecast, actual)
 
     frame = pd.DataFrame(rows)
     monkeypatch.setattr(backtesting_service, "_facility_scope", lambda _applied: None)
@@ -349,20 +349,20 @@ def test_all_cycles_and_jn_compare_but_model_populations_combine(
     )
 
     all_view = backtesting_service.build_metric_view(metric, applied)
-    assert len(all_view["records"]) == 4
+    assert len(all_view["records"]) == 2
     all_records = {
-        (record[RUN_FOR], record[JN]): record for record in all_view["records"]
+        record[RUN_FOR]: record for record in all_view["records"]
     }
     assert set(all_records) == set(expected)
 
-    for identity, (forecast, actual) in expected.items():
-        record = all_records[identity]
+    for run_for, (forecast, actual) in expected.items():
+        record = all_records[run_for]
         assert record["forecast"] == pytest.approx(forecast)
         assert record["actual"] == pytest.approx(actual)
 
         scoped = backtesting_service.build_metric_view(
             metric,
-            {**applied, "run_for": identity[0], "jn_flag": identity[1]},
+            {**applied, "run_for": run_for},
         )
         assert len(scoped["records"]) == 1
         assert scoped["records"][0]["forecast"] == pytest.approx(record["forecast"])
@@ -480,11 +480,11 @@ def test_periodic_loss_sums_to_the_cumulative_curve(applied):
     assert len(cumulative) == len(periodic) and cumulative
 
     by_series = {
-        (entry["vintage"], entry["run_for"], entry["jn_flag"]): entry
+        (entry["vintage"], entry["run_for"]): entry
         for entry in periodic
     }
     for entry in cumulative:
-        key = (entry["vintage"], entry["run_for"], entry["jn_flag"])
+        key = (entry["vintage"], entry["run_for"])
         steps = [point["value"] for point in by_series[key]["points"]]
         assert sum(steps) == pytest.approx(entry["points"][-1]["value"])
 

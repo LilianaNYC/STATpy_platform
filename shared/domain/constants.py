@@ -177,6 +177,11 @@ BACKTESTING_ANCHOR_QUARTER = 0
 # the conservatism buffer rather than model accuracy.
 BACKTESTING_BASE_SCENARIO = "Base"
 
+# J/N is not a dashboard decision dimension. Backtesting uses the non-
+# judgmental population as its single governed comparison path and never sums
+# the J and N alternatives together.
+BACKTESTING_PRIMARY_JN_FLAG = "N"
+
 # Governed backtesting accuracy policy. Values are fractions: 0.10 means 10%.
 # The coverage floor follows Q22 in docs/backtesting_plan.md; the count floor is
 # the minimum sample used before a summary-level accuracy RAG is considered

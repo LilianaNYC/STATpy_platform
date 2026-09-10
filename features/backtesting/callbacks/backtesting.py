@@ -31,7 +31,6 @@ _FILTER_SHELLS = (
     (layout.MODEL_ID, layout.MODEL_TOGGLE_ID, layout.MODEL_MENU_ID, layout.MODEL_FILTER_KEY),
     (layout.RUN_FOR_ID, layout.RUN_FOR_TOGGLE_ID, layout.RUN_FOR_MENU_ID, layout.RUN_FOR_FILTER_KEY),
     (layout.SCENARIO_ID, layout.SCENARIO_TOGGLE_ID, layout.SCENARIO_MENU_ID, layout.SCENARIO_FILTER_KEY),
-    (layout.JN_FLAG_ID, layout.JN_FLAG_TOGGLE_ID, layout.JN_FLAG_MENU_ID, layout.JN_FLAG_FILTER_KEY),
     (layout.SNAPSHOT_ID, layout.SNAPSHOT_TOGGLE_ID, layout.SNAPSHOT_MENU_ID, layout.SNAPSHOT_FILTER_KEY),
 )
 
@@ -131,7 +130,7 @@ def _register_cascade_callbacks(app) -> None:
         filter_key = (triggered or {}).get("filter")
         if picked is None or filter_key not in _SCOPE_KEYS:
             # Either the remount fire, or a click on a filter that does not
-            # reshape the scope (Scenario, J/N Flag, ...).
+            # reshape the scope (Scenario, Month End Snapshot, ...).
             return (no_update,) * 8
 
         # The clicked filter's own State still holds the *previous* value in this
@@ -212,13 +211,12 @@ def _register_apply_callbacks(app) -> None:
         State(layout.MODEL_ID, "value"),
         State(layout.RUN_FOR_ID, "value"),
         State(layout.SCENARIO_ID, "value"),
-        State(layout.JN_FLAG_ID, "value"),
         State(layout.SNAPSHOT_ID, "value"),
         prevent_initial_call=True,
     )
     def apply_backtesting_filters(
         _n_clicks, region, portfolio, model_group, segment, model, run_for,
-        scenario, jn_flag, snapshot,
+        scenario, snapshot,
     ):
         applied = {
             "region": region,
@@ -228,7 +226,6 @@ def _register_apply_callbacks(app) -> None:
             "model": model,
             "run_for": run_for,
             "scenario": scenario,
-            "jn_flag": jn_flag,
             "snapshot": snapshot,
         }
         return applied, layout.build_scope_summary(applied)
