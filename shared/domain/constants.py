@@ -27,6 +27,163 @@ DUMMY_MEV_TIME_SERIES_SHEET_NAME = "scenario"
 DUMMY_MEV_MODEL_CHARACTERISTIC_SHEET_NAME = "model_names"
 DUMMY_MEV_MODEL_NAME_COLUMN = "Model Name"
 
+# Model-attribute columns on the ``model_names`` sheet. This sheet is the model
+# *catalogue*: which segment a model serves, and its region / portfolio / type /
+# descriptive name. Backtesting reads it for its filter attributes.
+DUMMY_MEV_MODEL_DESCRIPTIVE_NAME_COLUMN = "Model Descriptive Name"
+DUMMY_MEV_MODEL_TYPE_COLUMN = "Model Type"
+DUMMY_MEV_REGION_COLUMN = "Region"
+DUMMY_MEV_PORTFOLIO_COLUMN = "Portfolio"
+DUMMY_MEV_SEGMENT_NAME_COLUMN = "Segment Name"
+
+# ---------------------------------------------------------------------------
+# Backtesting workbook (``backtesting_results.xlsx``)
+# ---------------------------------------------------------------------------
+# Five facility-grain result sheets. ``results.pd`` and ``results.pd_crr`` are
+# the same structure over *disjoint* facility populations (split by owning PD
+# model), so a portfolio-level PD is the union of the two; ``results.lgd`` /
+# ``results.ead`` / ``results.nco`` each cover the full population. See
+# ``source_data/Backtesting_Workbook_Guide.md``.
+BACKTESTING_PD_SHEET_NAME = "results.pd"
+BACKTESTING_PD_CRR_SHEET_NAME = "results.pd_crr"
+BACKTESTING_LGD_SHEET_NAME = "results.lgd"
+BACKTESTING_EAD_SHEET_NAME = "results.ead"
+BACKTESTING_NCO_SHEET_NAME = "results.nco"
+
+BACKTESTING_SHEET_NAMES = (
+    BACKTESTING_PD_SHEET_NAME,
+    BACKTESTING_PD_CRR_SHEET_NAME,
+    BACKTESTING_LGD_SHEET_NAME,
+    BACKTESTING_EAD_SHEET_NAME,
+    BACKTESTING_NCO_SHEET_NAME,
+)
+
+# Run-identity and grain columns, shared by every sheet.
+BACKTESTING_SEGMENT_COLUMN = "Segment Name"
+BACKTESTING_MODEL_NAME_COLUMN = "Model Name"
+BACKTESTING_SNAPSHOT_COLUMN = "Month End Snapshot"
+BACKTESTING_RUN_FOR_COLUMN = "Run For"
+BACKTESTING_SCENARIO_COLUMN = "Scenario"
+BACKTESTING_JN_FLAG_COLUMN = "J/N Flag"
+BACKTESTING_FACILITY_ID_COLUMN = "Facility ID"
+BACKTESTING_CREDIT_INSTRUMENT_ID_COLUMN = "Credit Instrument ID"
+BACKTESTING_QUARTER_COLUMN = "Quarter"
+BACKTESTING_EXECUTION_DATETIME_COLUMN = "Execution Datetime"
+
+# ``results.nco`` names the three contributing models instead of one, and adds
+# the loss method.
+BACKTESTING_PD_MODEL_NAME_COLUMN = "PD Model Name"
+BACKTESTING_LGD_MODEL_NAME_COLUMN = "LGD Model Name"
+BACKTESTING_EAD_MODEL_NAME_COLUMN = "EAD Model Name"
+BACKTESTING_LOSS_METHOD_COLUMN = "Loss Method"
+
+# Metric value columns. Both PD sheets use the same column name.
+BACKTESTING_PD_VALUE_COLUMN = "PD Value"
+BACKTESTING_LGD_VALUE_COLUMN = "LGD Value"
+BACKTESTING_EAD_VALUE_COLUMN = "EAD Value"
+BACKTESTING_NCO_VALUE_COLUMN = "NCO Value"
+
+# Metric keys used throughout the backtesting feature, and the sheet / value
+# column each one reads.
+BACKTESTING_METRIC_PD = "pd"
+BACKTESTING_METRIC_PD_CRR = "pd_crr"
+BACKTESTING_METRIC_LGD = "lgd"
+BACKTESTING_METRIC_EAD = "ead"
+BACKTESTING_METRIC_NCO = "nco"
+
+BACKTESTING_METRIC_SHEETS = {
+    BACKTESTING_METRIC_PD: BACKTESTING_PD_SHEET_NAME,
+    BACKTESTING_METRIC_PD_CRR: BACKTESTING_PD_CRR_SHEET_NAME,
+    BACKTESTING_METRIC_LGD: BACKTESTING_LGD_SHEET_NAME,
+    BACKTESTING_METRIC_EAD: BACKTESTING_EAD_SHEET_NAME,
+    BACKTESTING_METRIC_NCO: BACKTESTING_NCO_SHEET_NAME,
+}
+
+BACKTESTING_METRIC_VALUE_COLUMNS = {
+    BACKTESTING_METRIC_PD: BACKTESTING_PD_VALUE_COLUMN,
+    BACKTESTING_METRIC_PD_CRR: BACKTESTING_PD_VALUE_COLUMN,
+    BACKTESTING_METRIC_LGD: BACKTESTING_LGD_VALUE_COLUMN,
+    BACKTESTING_METRIC_EAD: BACKTESTING_EAD_VALUE_COLUMN,
+    BACKTESTING_METRIC_NCO: BACKTESTING_NCO_VALUE_COLUMN,
+}
+
+# The two PD sheets cover disjoint populations; a portfolio PD stacks them.
+BACKTESTING_PD_METRICS = (BACKTESTING_METRIC_PD, BACKTESTING_METRIC_PD_CRR)
+
+# Metrics that are exposure-weighted (rates) versus additive (amounts).
+# Weighting an amount would understate it; averaging a rate unweighted lets a
+# small facility count as much as a large one.
+BACKTESTING_EXPOSURE_WEIGHTED_METRICS = (
+    BACKTESTING_METRIC_PD,
+    BACKTESTING_METRIC_PD_CRR,
+    BACKTESTING_METRIC_LGD,
+)
+BACKTESTING_ADDITIVE_METRICS = (BACKTESTING_METRIC_EAD, BACKTESTING_METRIC_NCO)
+
+# Run identity for the four single-model sheets.
+BACKTESTING_RUN_KEY_COLUMNS = (
+    BACKTESTING_SEGMENT_COLUMN,
+    BACKTESTING_MODEL_NAME_COLUMN,
+    BACKTESTING_SNAPSHOT_COLUMN,
+    BACKTESTING_RUN_FOR_COLUMN,
+    BACKTESTING_SCENARIO_COLUMN,
+    BACKTESTING_JN_FLAG_COLUMN,
+)
+
+# ``results.nco`` names three models plus the loss method instead of one model.
+BACKTESTING_NCO_RUN_KEY_COLUMNS = (
+    BACKTESTING_SEGMENT_COLUMN,
+    BACKTESTING_PD_MODEL_NAME_COLUMN,
+    BACKTESTING_LGD_MODEL_NAME_COLUMN,
+    BACKTESTING_EAD_MODEL_NAME_COLUMN,
+    BACKTESTING_SNAPSHOT_COLUMN,
+    BACKTESTING_RUN_FOR_COLUMN,
+    BACKTESTING_SCENARIO_COLUMN,
+    BACKTESTING_JN_FLAG_COLUMN,
+    BACKTESTING_LOSS_METHOD_COLUMN,
+)
+
+# The exposure join key: the run identity *excluding* the model, because a
+# facility's PD model is not its EAD model, plus the row grain.
+BACKTESTING_EXPOSURE_JOIN_COLUMNS = (
+    BACKTESTING_SEGMENT_COLUMN,
+    BACKTESTING_SNAPSHOT_COLUMN,
+    BACKTESTING_RUN_FOR_COLUMN,
+    BACKTESTING_SCENARIO_COLUMN,
+    BACKTESTING_JN_FLAG_COLUMN,
+    BACKTESTING_FACILITY_ID_COLUMN,
+    BACKTESTING_CREDIT_INSTRUMENT_ID_COLUMN,
+    BACKTESTING_QUARTER_COLUMN,
+)
+
+
+def backtesting_run_key_columns(metric: str) -> tuple[str, ...]:
+    """The run-identity columns for ``metric``'s sheet.
+
+    Kept here beside the tuples so the repository (which dedupes on the run key)
+    and the domain layer (which groups by it) cannot drift apart.
+    """
+    if metric == BACKTESTING_METRIC_NCO:
+        return BACKTESTING_NCO_RUN_KEY_COLUMNS
+    return BACKTESTING_RUN_KEY_COLUMNS
+
+
+# ``Quarter == 0`` is the realised anchor: the observed value at the snapshot
+# date, identical across scenarios and J/N flags. ``>= 1`` are projections.
+BACKTESTING_ANCHOR_QUARTER = 0
+
+# The scenario a backtest scores against. Non-baseline scenarios are
+# deliberately conservative, so scoring them against realised outcomes measures
+# the conservatism buffer rather than model accuracy.
+BACKTESTING_BASE_SCENARIO = "Base"
+
+# Model-attribute keys the backtesting catalogue exposes per model.
+BACKTESTING_MODEL_ATTRIBUTES = ("region", "portfolio", "model_group", "segments", "label")
+
+# Shown for a model whose catalogue attribute is blank. Surfacing the gap keeps
+# the model reachable instead of silently dropping it from a narrowed filter.
+BACKTESTING_UNASSIGNED_LABEL = "Unassigned"
+
 # ---------------------------------------------------------------------------
 # Portfolio column names (from monitoring_config.yaml -> data:)
 # ---------------------------------------------------------------------------

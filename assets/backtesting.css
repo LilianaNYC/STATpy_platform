@@ -1,0 +1,106 @@
+/* Backtesting dashboard -- only the components that do not already exist.
+ *
+ * Everything structural comes from styles.css: `section-card`, `btn`,
+ * `chart-box`, `top-bar`, `content`, `tab-panel`, the `checkbox-dropdown` /
+ * `single-select-*` dropdown vocabulary, the `monitoring-controls` /
+ * `monitoring-filter` / `monitoring-section-subnav-*` top-bar chrome, the
+ * `dashboard-loading-*` shell, and the `pd-*` card and heading chrome emitted by
+ * shared/ui/cards.py. Nothing here restyles any of those.
+ *
+ * Two constraints this file works within:
+ *
+ * 1. Dash serves assets alphabetically, so `backtesting.css` loads BEFORE
+ *    `styles.css`. A `bt-` rule at equal specificity cannot win against a
+ *    styles.css rule, so every selector below targets `bt-`-prefixed classes
+ *    only. If a generic class is ever wrong for a surface, compose differently
+ *    rather than override from here.
+ *
+ * 2. Dark theme is scoped `.monitoring-shell.theme-dark <selector>`. Colours
+ *    below use only the semantic `:root` variables that block re-binds --
+ *    --text, --text-muted, --border, --gray-light, --pd-line, --pd-panel,
+ *    --navy, --blue, --green, --red, --card-shadow -- so they flip themes with
+ *    no dark-mode rules of their own. `--pd-blue` / `--pd-blue-soft` are NOT
+ *    re-bound and are deliberately unused here. No new variables, no new
+ *    palette, no hard-coded hex.
+ */
+
+/* The section stack inside the loading shell. */
+.bt-section-stack {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* Sub-nav group, matching the PD page's group treatment. The generic
+   monitoring-section-subnav-* classes carry the appearance; this only supplies
+   the per-group emphasis hook the script toggles. */
+.bt-subnav-group.active .monitoring-section-subnav-label {
+  color: var(--navy);
+}
+
+/* Keep the Apply button aligned with the filter cells beside it, whose label
+   occupies a line above the control. */
+.bt-top-filter-action {
+  display: flex;
+  align-items: flex-end;
+}
+
+.bt-apply-filters {
+  white-space: nowrap;
+}
+
+/* Chart cards. The card surface, borders and shadow all come from
+   `section-card`; these rules only handle the spacing the chart stack needs. */
+.bt-chart-card + .bt-chart-card {
+  margin-top: 0;
+}
+
+/* `.pd-section-subtitle` carries `margin-top:-5px` globally so it can tuck under
+   a large heading; styles.css cancels that to 14px inside `.pd-mev-empty-state`.
+   These cards are not empty states, so they need the same correction or the
+   subtitle overlaps the title. Two class selectors (0,2,0) outrank the single
+   generic one (0,1,0), so this wins despite loading first. */
+.bt-chart-card .pd-section-subtitle {
+  margin-top: 6px;
+  max-width: 88ch;
+}
+
+/* Headline statistics above each forecast-vs-actual chart. Laid out on the
+   platform's existing `pd-mev-chart-meta` row; these rules only add the
+   wrapping and the separation between stats. */
+.bt-summary-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 10px 0 4px;
+}
+
+.bt-stat {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.bt-stat strong {
+  color: var(--text);
+  font-weight: 700;
+}
+
+/* Notes about coverage gaps and unscored horizons: present, but quieter than
+   the statistics they qualify. */
+.bt-stat-note {
+  white-space: normal;
+  font-style: italic;
+}
+
+.bt-chart {
+  min-height: 330px;
+}
+
+/* Narrow viewports: let the filter cells wrap rather than compress the
+   dropdowns below a usable width. */
+@media (max-width: 1100px) {
+  .bt-top-filter-action {
+    align-items: flex-start;
+  }
+}

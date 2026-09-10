@@ -8,6 +8,7 @@ unrelated central files.
 
 from __future__ import annotations
 
+from .features.backtesting.dashboard import DASHBOARD as backtesting_dashboard
 from .features.monitoring.dashboard import DASHBOARD as monitoring_dashboard
 from .features.saas.dashboard import DASHBOARD as saas_dashboard
 from .shared.types import DashboardDefinition
@@ -16,6 +17,7 @@ from .shared.types import DashboardDefinition
 DASHBOARDS: tuple[DashboardDefinition, ...] = (
     monitoring_dashboard,
     saas_dashboard,
+    backtesting_dashboard,
 )
 
 # The dashboard whose metadata the shell surfaces in the sidebar/footer and

@@ -31,7 +31,7 @@ import statistics
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from ..domain.constants import pd_rag_color
+from ..domain.constants import PD_MEV_PALETTE, pd_rag_color
 from ..domain.mev_range import (
     calculate_pd_mev_thresholds,
     get_pd_mev_scenario_quarter,
@@ -2508,5 +2508,418 @@ def build_saas_mev_time_series_figure(
             range=[axis_low, axis_high] if reference_lines == "monitoring" and 'axis_low' in locals() and axis_low is not None and axis_high is not None else None,
         ),
     )
+    _apply_transparent_background(fig)
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# Backtesting: forecast vs actual, and error by projection horizon
+# ---------------------------------------------------------------------------
+# Built to the same recipe as the monitoring trend charts above -- the dual
+# panel from ``_make_dual_panel_figure``, the shared quarter x-axis, the
+# monitoring trend-line colour, the inline secondary-panel legend, RAG-coloured
+# markers, and a transparent background so the card's themed surface shows
+# through. Nothing here introduces a new palette or a new layout idiom.
+
+# Backtesting reuses the monitoring actual/predicted pairing so the two
+# dashboards read the same way: realised outcome solid, model output dashed.
+_BACKTEST_ACTUAL_COLOR = "#dc2626"
+_BACKTEST_FORECAST_COLOR = "#2563eb"
+
+# Absolute percentage error banding for the error markers. Mirrors how the
+# monitoring charts colour a metric by its RAG rather than by an arbitrary scale.
+_BACKTEST_RAG_BANDS = ((0.10, "Green"), (0.25, "Amber"))
+
+
+def backtest_error_rag(percentage_error) -> str:
+    """RAG for one percentage error, by absolute size."""
+    if not is_finite_number(percentage_error):
+        return "N/A"
+    magnitude = abs(percentage_error)
+    for limit, rag in _BACKTEST_RAG_BANDS:
+        if magnitude <= limit:
+            return rag
+    return "Red"
+
+
+def _backtest_axis_kwargs(palette: dict) -> dict:
+    return {
+        "title": "Quarter",
+        "gridcolor": palette["grid_color"],
+        "gridwidth": 0.8,
+    }
+
+
+def build_backtesting_forecast_actual_figure(
+    records,
+    *,
+    value_label: str = "Value",
+    value_format: str = ".2%",
+    theme: str = "light",
+    empty_message: str = "No forecast/actual pairs match the applied filters.",
+) -> go.Figure:
+    """Forecast versus realised outcome, by target quarter.
+
+    Left panel: the realised series (solid) with one dashed forecast path per
+    vintage -- the "nine forecasts of one quarter" view a backtest exists to
+    show. Right panel: the percentage error of every one of those forecasts,
+    RAG-coloured by absolute size.
+
+    ``records`` are :func:`features.backtesting.domain.errors.build_error_records`
+    outputs: each carries ``quarter`` (a ``YYYY-Qn`` label), ``vintage_quarter``,
+    ``forecast``, ``actual`` and ``percentage_error``.
+    """
+    records = [record for record in records if record.get("quarter")]
+    if not records:
+        return _empty_figure(empty_message, theme=theme)
+
+    palette = _saas_theme_palette(theme)
+    trend_line_color = _monitoring_trend_line_color(theme)
+
+    quarters = sorted({record["quarter"] for record in records}, key=_pd_quarter_sort_key)
+
+    # One realised value per target quarter -- identical across vintages by
+    # construction, so first-seen wins.
+    actual_by_quarter: dict[str, float] = {}
+    for record in records:
+        actual_by_quarter.setdefault(record["quarter"], record.get("actual"))
+
+    fig = _make_dual_panel_figure()
+
+    fig.add_trace(go.Scatter(
+        x=quarters,
+        y=[actual_by_quarter.get(quarter) for quarter in quarters],
+        mode="lines+markers", name=f"Actual {value_label}",
+        line=dict(color=_BACKTEST_ACTUAL_COLOR, width=2.5),
+        marker=dict(size=6, line=dict(color=palette["marker_fill"], width=1)),
+        hovertemplate=f"%{{x}}<br>Actual {value_label}: %{{y:{value_format}}}<extra></extra>",
+    ), row=1, col=1)
+
+    # One dashed path per vintage. Only the first carries a legend entry: with
+    # nine vintages a per-vintage legend would dwarf the chart.
+    by_vintage: dict[str, list[dict]] = {}
+    for record in records:
+        by_vintage.setdefault(record["vintage_quarter"], []).append(record)
+
+    for index, vintage in enumerate(sorted(by_vintage, key=_pd_quarter_sort_key)):
+        rows = sorted(by_vintage[vintage], key=lambda row: _pd_quarter_sort_key(row["quarter"]))
+        fig.add_trace(go.Scatter(
+            x=[row["quarter"] for row in rows],
+            y=[row["forecast"] for row in rows],
+            mode="lines+markers",
+            name=f"Forecast {value_label}",
+            legendgroup="forecast",
+            showlegend=index == 0,
+            line=dict(color=_BACKTEST_FORECAST_COLOR, width=1.6, dash="dash"),
+            marker=dict(size=5),
+            opacity=0.72,
+            customdata=[[vintage, row.get("horizon")] for row in rows],
+            hovertemplate=(
+                f"%{{x}}<br>Forecast {value_label}: %{{y:{value_format}}}"
+                "<br>Vintage: %{customdata[0]}<br>Horizon: Q+%{customdata[1]}<extra></extra>"
+            ),
+        ), row=1, col=1)
+
+    percentage_errors = [record.get("percentage_error") for record in records]
+    rags = [backtest_error_rag(value) for value in percentage_errors]
+    fig.add_trace(go.Scatter(
+        x=[record["quarter"] for record in records],
+        y=percentage_errors,
+        mode="markers", name="Error %", showlegend=False,
+        marker=dict(
+            size=8,
+            color=[pd_rag_color(rag) for rag in rags],
+            line=dict(color=palette["marker_fill"], width=1),
+        ),
+        customdata=[
+            [rag, record.get("vintage_quarter"), record.get("horizon")]
+            for rag, record in zip(rags, records)
+        ],
+        hovertemplate=(
+            "%{x}<br>Error: %{y:+.1%}<br>RAG: %{customdata[0]}"
+            "<br>Vintage: %{customdata[1]}<br>Horizon: Q+%{customdata[2]}<extra></extra>"
+        ),
+    ), row=1, col=2)
+
+    shapes = [dict(
+        type="line", xref="x2 domain", x0=0, x1=1, yref="y2", y0=0, y1=0,
+        line=dict(color=palette["zero_line"], width=1),
+    )]
+    legend_shapes, legend_annotations = _dual_panel_legend(
+        trend_line_color, "Error %", _DUAL_PANEL_SECONDARY_DOMAIN
+    )
+    shapes.extend(legend_shapes)
+
+    fig.update_layout(
+        height=330,
+        margin=dict(t=34, r=48, b=82, l=72),
+        hovermode="closest",
+        legend=dict(orientation="h", x=0, y=1.22, font=dict(color=palette["legend_font"])),
+        annotations=legend_annotations,
+        shapes=shapes,
+        font=dict(color=palette["axis_tick"]),
+    )
+    axis_kwargs = _backtest_axis_kwargs(palette)
+    fig.update_xaxes(build_pd_time_series_xaxis(quarters, axis_kwargs, density="compact"), row=1, col=1)
+    fig.update_xaxes(build_pd_time_series_xaxis(quarters, axis_kwargs, density="compact"), row=1, col=2)
+    fig.update_yaxes(dict(
+        title=value_label, tickformat=value_format, rangemode="tozero",
+        gridcolor=palette["grid_color"], gridwidth=0.8, zeroline=False, automargin=True,
+    ), row=1, col=1)
+    fig.update_yaxes(dict(
+        title=dict(text="Error %", standoff=8), tickformat="+.0%",
+        gridcolor=palette["grid_color"], gridwidth=0.8, zeroline=False, automargin=True,
+    ), row=1, col=2)
+    _apply_transparent_background(fig)
+    return fig
+
+
+def build_backtesting_horizon_error_figure(
+    summaries,
+    *,
+    theme: str = "light",
+    empty_message: str = "No scored horizons for the applied filters.",
+) -> go.Figure:
+    """Error by projection horizon.
+
+    Left panel: mean absolute percentage error -- the "does accuracy decay with
+    horizon" view. Right panel: mean signed error, which carries the direction
+    the magnitude hides; below zero on a loss metric means losses were
+    systematically under-forecast.
+
+    MAPE rather than MAE on the left deliberately: exposure-weighted aggregation
+    diversifies away the facility-level noise that grows with horizon, so
+    aggregate MAE is not monotone even when the underlying error is. MAPE is
+    scale-free and keeps the horizon effect visible.
+
+    ``summaries`` is :func:`...domain.errors.summarize_by` over ``["horizon"]``.
+    """
+    rows = [row for row in summaries if row.get("horizon") is not None]
+    if not rows:
+        return _empty_figure(empty_message, theme=theme)
+
+    palette = _saas_theme_palette(theme)
+    trend_line_color = _monitoring_trend_line_color(theme)
+    rows = sorted(rows, key=lambda row: row["horizon"])
+
+    horizons = [f"Q+{row['horizon']}" for row in rows]
+    mapes = [row.get("mape") for row in rows]
+    biases = [row.get("bias") for row in rows]
+    counts = [row.get("count") for row in rows]
+    hit_rates = [row.get("hit_rate") for row in rows]
+
+    fig = _make_dual_panel_figure()
+    fig.add_trace(go.Scatter(
+        x=horizons, y=mapes,
+        mode="lines+markers", name="MAPE",
+        line=dict(color=_BACKTEST_FORECAST_COLOR, width=2.5),
+        marker=dict(size=7, line=dict(color=palette["marker_fill"], width=1)),
+        customdata=[[count, rate] for count, rate in zip(counts, hit_rates)],
+        hovertemplate=(
+            "%{x}<br>MAPE: %{y:.1%}<br>Scored forecasts: %{customdata[0]}"
+            "<br>Hit rate: %{customdata[1]:.0%}<extra></extra>"
+        ),
+    ), row=1, col=1)
+
+    fig.add_trace(go.Scatter(
+        x=horizons, y=biases,
+        mode="lines+markers", name="Bias", showlegend=False,
+        line=dict(color=trend_line_color, width=2.5),
+        marker=dict(
+            size=8,
+            color=[pd_rag_color("Green" if (value or 0) >= 0 else "Red") for value in biases],
+            line=dict(color=palette["marker_fill"], width=1),
+        ),
+        customdata=counts,
+        hovertemplate="%{x}<br>Bias: %{y:+.4f}<br>Scored forecasts: %{customdata}<extra></extra>",
+    ), row=1, col=2)
+
+    shapes = [dict(
+        type="line", xref="x2 domain", x0=0, x1=1, yref="y2", y0=0, y1=0,
+        line=dict(color=palette["zero_line"], width=1),
+    )]
+    legend_shapes, legend_annotations = _dual_panel_legend(
+        trend_line_color, "Bias", _DUAL_PANEL_SECONDARY_DOMAIN
+    )
+    shapes.extend(legend_shapes)
+
+    fig.update_layout(
+        height=330,
+        margin=dict(t=34, r=48, b=82, l=72),
+        hovermode="closest",
+        legend=dict(orientation="h", x=0, y=1.22, font=dict(color=palette["legend_font"])),
+        annotations=legend_annotations,
+        shapes=shapes,
+        font=dict(color=palette["axis_tick"]),
+    )
+    axis = dict(
+        title="Projection horizon", type="category",
+        gridcolor=palette["grid_color"], gridwidth=0.8, automargin=True,
+    )
+    fig.update_xaxes(axis, row=1, col=1)
+    fig.update_xaxes(axis, row=1, col=2)
+    fig.update_yaxes(dict(
+        title="MAPE", tickformat=".0%", rangemode="tozero",
+        gridcolor=palette["grid_color"], gridwidth=0.8, zeroline=False, automargin=True,
+    ), row=1, col=1)
+    fig.update_yaxes(dict(
+        title=dict(text="Bias", standoff=8),
+        gridcolor=palette["grid_color"], gridwidth=0.8, zeroline=False, automargin=True,
+    ), row=1, col=2)
+    _apply_transparent_background(fig)
+    return fig
+
+
+# One 10px label needs roughly 13px of vertical room, and the vintage-curve plot
+# area is about 340px tall, so labels must be at least ~3.8% of the *axis range*
+# apart. Deriving the gap from the spread of the endpoints instead would collapse
+# to a few pixels exactly when the curves converge -- which is when the labels
+# most need separating.
+_END_LABEL_GAP_FRACTION = 0.042
+
+
+def _spread_end_labels(label_ends, axis_top: float) -> list[dict]:
+    """End-of-line labels nudged apart so none sits on top of another.
+
+    Vintage curves converge, so several can finish within a hair of each other
+    and their labels overlap into an unreadable smear -- exactly where the
+    reader most needs to tell them apart. Labels are laid out bottom-up and
+    pushed to a minimum vertical separation, measured against the axis range so
+    the gap is a constant number of pixels rather than a function of how tightly
+    the curves happen to converge.
+
+    Only the label moves. The curve, its markers and every hover value stay
+    exactly where the data puts them.
+    """
+    if not label_ends:
+        return []
+
+    min_gap = (abs(axis_top) or 1.0) * _END_LABEL_GAP_FRACTION
+
+    ordered = sorted(label_ends, key=lambda end: end[1])
+    placed: list[tuple[float, float, str, str]] = []
+    previous = None
+    for x_value, y_value, text, colour in ordered:
+        if previous is not None and y_value - previous < min_gap:
+            y_value = previous + min_gap
+        placed.append((x_value, y_value, text, colour))
+        previous = y_value
+
+    return [
+        dict(
+            x=x_value, y=y_value, xref="x", yref="y",
+            text=f" {text}", showarrow=False,
+            xanchor="left", yanchor="middle",
+            font=dict(size=10, color=colour),
+        )
+        for x_value, y_value, text, colour in placed
+    ]
+
+
+def build_backtesting_vintage_curve_figure(
+    series,
+    *,
+    value_label: str = "Value",
+    value_format: str = ".2%",
+    theme: str = "light",
+    # Same axis title the error-by-horizon chart uses: both plot against
+    # projection horizon, so both should name it the same way.
+    x_title: str = "Projection horizon",
+    empty_message: str = "No vintage paths match the applied filters.",
+) -> go.Figure:
+    """Static-pool vintage curves: one line per vintage, plotted against age.
+
+    The cohort view. Every vintage is aligned at horizon 0 and drawn against
+    *age* rather than calendar quarter, so a 2024 vintage can be read against a
+    2023 one at the same point in its life -- the shape used for cumulative-loss
+    and static-pool reporting.
+
+    Each line is labelled at its right-hand end as well as in the legend: with
+    nine overlapping curves, an end-of-line label is what makes a specific
+    vintage findable without hovering.
+
+    ``series`` is ``[{"vintage": "2024-Q1", "points": [{"horizon": int,
+    "value": float, ...}]}]`` from the backtesting service.
+    """
+    series = [entry for entry in series if entry.get("points")]
+    if not series:
+        return _empty_figure(empty_message, theme=theme)
+
+    palette = _saas_theme_palette(theme)
+    fig = go.Figure()
+
+    label_ends: list[tuple[float, float, str, str]] = []   # (x, y, text, colour)
+    max_horizon = 0
+    for index, entry in enumerate(series):
+        points = entry["points"]
+        colour = PD_MEV_PALETTE[index % len(PD_MEV_PALETTE)]
+        horizons = [point["horizon"] for point in points]
+        values = [point["value"] for point in points]
+        max_horizon = max(max_horizon, max(horizons))
+
+        # Compact quarter form (2024Q1), matching the tick labels
+        # build_pd_time_series_xaxis renders on every other chart.
+        vintage_label = format_pd_compact_quarter_label(entry["vintage"])
+
+        fig.add_trace(go.Scatter(
+            x=horizons, y=values,
+            mode="lines+markers", name=vintage_label,
+            line=dict(color=colour, width=2.2),
+            marker=dict(size=5, line=dict(color=palette["marker_fill"], width=1)),
+            customdata=[
+                format_pd_compact_quarter_label(point.get("target_quarter") or "")
+                for point in points
+            ],
+            hovertemplate=(
+                f"{vintage_label} at Q+%{{x}}"
+                f"<br>{value_label}: %{{y:{value_format}}}"
+                "<br>Target quarter: %{customdata}<extra></extra>"
+            ),
+        ))
+
+        # End-of-line label, as on a static-pool chart. Positions are
+        # de-collided below, once every curve's endpoint is known.
+        if is_finite_number(values[-1]):
+            label_ends.append((horizons[-1], float(values[-1]), vintage_label, colour))
+
+    # rangemode="tozero" below, so the axis runs from 0 to the tallest point.
+    axis_top = max(
+        (point["value"] for entry in series for point in entry["points"]
+         if is_finite_number(point.get("value"))),
+        default=1.0,
+    )
+    label_annotations = _spread_end_labels(label_ends, axis_top)
+
+    fig.update_layout(
+        height=430,
+        # Right margin holds the end-of-line labels and the legend.
+        margin=dict(t=30, r=150, b=64, l=76),
+        hovermode="closest",
+        legend=dict(
+            orientation="v", x=1.02, y=1, xanchor="left",
+            font=dict(size=10, color=palette["legend_font"]),
+            bgcolor=palette["legend_bg"], bordercolor=palette["legend_border"], borderwidth=1,
+        ),
+        annotations=label_annotations,
+        font=dict(color=palette["axis_tick"]),
+    )
+    # Ticks read "Q+0 .. Q+9", the same horizon vocabulary the error-by-horizon
+    # chart uses, rather than bare integers.
+    horizon_ticks = list(range(int(max_horizon) + 1))
+    fig.update_xaxes(dict(
+        title=x_title,
+        tickmode="array",
+        tickvals=horizon_ticks,
+        ticktext=[f"Q+{value}" for value in horizon_ticks],
+        # Leave room on the right so the end labels are not clipped.
+        range=[-0.3, max_horizon + 0.9],
+        gridcolor=palette["grid_color"], gridwidth=0.8,
+        zeroline=False, automargin=True,
+    ))
+    fig.update_yaxes(dict(
+        title=value_label, tickformat=value_format, rangemode="tozero",
+        gridcolor=palette["grid_color"], gridwidth=0.8,
+        zeroline=False, automargin=True,
+    ))
     _apply_transparent_background(fig)
     return fig
