@@ -531,7 +531,16 @@ def _build_summary_strip(view: dict) -> html.Div:
     if row_coverage is not None and row_coverage < 1.0:
         children.append(
             html.Span(
-                f"Exposure coverage: {row_coverage:.0%} of rows carried a weight.",
+                f"Row coverage: {row_coverage:.0%} of forecast rows carried a weight.",
+                className="bt-stat bt-stat-note",
+            )
+        )
+
+    exposure_coverage = coverage.get("exposure_coverage")
+    if exposure_coverage is not None and exposure_coverage < 1.0:
+        children.append(
+            html.Span(
+                f"Exposure coverage: {exposure_coverage:.0%} of available EAD was represented.",
                 className="bt-stat bt-stat-note",
             )
         )

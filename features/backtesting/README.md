@@ -168,6 +168,34 @@ Nothing renders from the live filter values: **Apply filters** snapshots them
 into `bt-applied-filters-store`, and the section stack is a pure function of that
 snapshot. Same interaction model as SAAS and the PD page.
 
+### Analysis grain contract
+
+`All` has an explicit meaning for every filter dimension. A dimension marked
+**combine** describes disjoint pieces of one population and is collapsed before
+an aggregate is calculated. A dimension marked **compare** describes alternative
+observations and remains in the aggregate key; it must never increase an EAD or
+NCO total as though it introduced more facilities. A **primary selection** is a
+single governed path rather than a population dimension.
+
+| Filter dimension | Meaning of `All` | Aggregate behavior |
+|---|---|---|
+| Region | **Combine** | Union the disjoint model populations in every region surviving the catalogue scope. |
+| Portfolio | **Combine** | Union the disjoint model populations in every portfolio surviving the catalogue scope. `Unassigned` remains an explicit population. |
+| Model Group | **Combine** | Union the disjoint model populations in every selected model group. |
+| Model | **Combine** | Union disjoint PD-model facility populations. For LGD/EAD/NCO the same union is applied by facility scope; model partitions are collapsed, not added as repeated runs. |
+| Segment | **Combine** | Union segment populations. Rate metrics are exposure-weighted across the union; EAD and NCO are summed once across its facilities. |
+| Model Use Case / Cycle (`Run For`) | **Compare** | Keep one aggregate series and one set of error records per cycle. Never sum cycles together. |
+| Scenario | **Primary selection** | Base is the only accuracy path. `All` resolves to Base for scoring and raw default context; an explicitly selected non-Base scenario remains context-only and has no accuracy statistics or RAG. |
+| J/N Flag | **Compare** | Keep J and N as separate aggregate series and error records. Never sum or exposure-weight them together as extra facilities. |
+| Month End Snapshot | **Compare** | Keep each forecast vintage separate. `All` compares vintages; a selected snapshot narrows forecasts while actual anchors still resolve from full comparable history. |
+
+The resulting aggregate grain is therefore
+`(Month End Snapshot, Run For, Scenario, J/N Flag, Quarter)` after the combine
+dimensions have been collapsed. Scenario is Base on every scored record. This
+contract applies equally to the score inputs, raw vintage context, and the two
+static-pool series; those surfaces may present the comparison dimensions
+differently, but none may aggregate across them.
+
 **Scenario defaults to `Base`.** A backtest scores the base scenario; the others
 are deliberately conservative, so comparing them to realised outcomes measures
 the conservatism buffer rather than model accuracy. They stay selectable for

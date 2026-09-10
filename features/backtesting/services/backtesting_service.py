@@ -44,6 +44,12 @@ _SNAPSHOT = config.BACKTESTING_SNAPSHOT_COLUMN
 _FACILITY = config.BACKTESTING_FACILITY_ID_COLUMN
 _INSTRUMENT = config.BACKTESTING_CREDIT_INSTRUMENT_ID_COLUMN
 
+# Segment/model dimensions are disjoint population pieces and combine. These
+# four dimensions identify alternative observations and remain separate when
+# their filter is All. See the analysis-grain contract in the feature README.
+_ANALYSIS_GROUP_COLUMNS = (_SNAPSHOT, _RUN_FOR, _SCENARIO, _JN)
+
+
 def _frame(metric: str) -> pd.DataFrame:
     return (BACKTESTING_PAGE_DATA.get("metrics") or {}).get(metric, pd.DataFrame())
 
@@ -157,18 +163,23 @@ def _vintage_series(scoped: pd.DataFrame, metric: str, ead_frame, scenario: str)
         scoped,
         metric,
         ead_frame=ead_frame,
-        group_columns=[_SNAPSHOT],
+        group_columns=_ANALYSIS_GROUP_COLUMNS,
     )
     if aggregated.empty:
         return []
 
-    series: dict[str, list[dict]] = {}
+    series: dict[tuple, list[dict]] = {}
     for _, row in aggregated.iterrows():
         horizon = row[aggregation.HORIZON_COLUMN]
         if horizon is None:
             continue
-        vintage = row[aggregation.VINTAGE_QUARTER_COLUMN]
-        series.setdefault(vintage, []).append({
+        key = (
+            row[aggregation.VINTAGE_QUARTER_COLUMN],
+            row[_RUN_FOR],
+            row[_SCENARIO],
+            row[_JN],
+        )
+        series.setdefault(key, []).append({
             "horizon": int(horizon),
             "value": row["value"],
             "exposure": row["exposure"],
@@ -177,10 +188,13 @@ def _vintage_series(scoped: pd.DataFrame, metric: str, ead_frame, scenario: str)
 
     return [
         {
-            "vintage": vintage,
+            "vintage": key[0],
+            "run_for": key[1],
+            "scenario": key[2],
+            "jn_flag": key[3],
             "points": sorted(points, key=lambda point: point["horizon"]),
         }
-        for vintage, points in sorted(series.items(), key=lambda item: item[0])
+        for key, points in sorted(series.items(), key=lambda item: item[0])
     ]
 
 
@@ -220,6 +234,8 @@ def build_loss_curve_series(applied: dict | None, *, cumulative: bool = True) ->
     nco_series = _vintage_series(nco, config.BACKTESTING_METRIC_NCO, None, scenario)
     ead_series = _vintage_series(ead, config.BACKTESTING_METRIC_EAD, None, scenario)
 
+    # Opening exposure per comparable series: cycle and J/N are alternative
+    # observations, so one must never become another's denominator.
     opening = {}
     for entry in ead_series:
         first = next(
@@ -228,11 +244,13 @@ def build_loss_curve_series(applied: dict | None, *, cumulative: bool = True) ->
             None,
         )
         if first and first["value"]:
-            opening[entry["vintage"]] = float(first["value"])
+            key = (entry["vintage"], entry["run_for"], entry["jn_flag"])
+            opening[key] = float(first["value"])
 
     curves = []
     for entry in nco_series:
-        balance = opening.get(entry["vintage"])
+        key = (entry["vintage"], entry["run_for"], entry["jn_flag"])
+        balance = opening.get(key)
         if not balance:
             continue
         running = 0.0
@@ -246,7 +264,13 @@ def build_loss_curve_series(applied: dict | None, *, cumulative: bool = True) ->
                 "target_quarter": point["target_quarter"],
             })
         if points:
-            curves.append({"vintage": entry["vintage"], "points": points})
+            curves.append({
+                "vintage": entry["vintage"],
+                "run_for": entry["run_for"],
+                "scenario": entry["scenario"],
+                "jn_flag": entry["jn_flag"],
+                "points": points,
+            })
     return curves
 
 
@@ -312,6 +336,7 @@ def build_metric_view(metric: str, applied: dict | None) -> dict:
         scoped,
         metric,
         ead_frame=ead_frame,
+        group_columns=_ANALYSIS_GROUP_COLUMNS,
     )
     if aggregated.empty:
         return {**empty, "coverage": coverage, "row_count": len(scoped)}
@@ -345,6 +370,7 @@ def build_metric_view(metric: str, applied: dict | None) -> dict:
             history_frame,
             metric,
             ead_frame=history_ead,
+            group_columns=_ANALYSIS_GROUP_COLUMNS,
         )
 
     records = (

@@ -45,6 +45,7 @@ from . import vintages
 
 __all__ = [
     "EXPOSURE_WEIGHT_COLUMN",
+    "ExposureFanOutError",
     "attach_exposure_weights",
     "aggregate_metric",
     "is_exposure_weighted",
@@ -58,6 +59,10 @@ EXPOSURE_WEIGHT_COLUMN = "Exposure Weight"
 TARGET_QUARTER_COLUMN = "Target Quarter"
 VINTAGE_QUARTER_COLUMN = "Vintage Quarter"
 HORIZON_COLUMN = "Horizon"
+
+
+class ExposureFanOutError(ValueError):
+    """Raised when the EAD side is not unique on the exposure join key."""
 
 
 def is_exposure_weighted(metric: str) -> bool:
@@ -78,18 +83,35 @@ def attach_exposure_weights(
 
     ``matched_rows`` / ``total_rows``
         row coverage.
-    ``matched_exposure``
-        total positive EAD weight represented by the surviving rows.
+    ``matched_exposure`` / ``total_available_exposure``
+        EAD represented by matched metric rows versus all positive EAD available
+        in the applied scope.
+    ``exposure_coverage``
+        matched exposure / total available exposure.
     ``unmatched_rows``
         rows dropped for want of a weight.
 
     Rows with a null, zero or negative weight are excluded: a non-positive
     weight contributes nothing to a weighted mean and would only distort the
-    coverage denominator. ``fanned_out`` tells the caller whether the EAD side
-    was non-unique on the join key and multiplied rows.
+    coverage denominator. Duplicate EAD join keys raise
+    :class:`ExposureFanOutError` before the merge can multiply metric rows.
     """
     join_columns = list(config.BACKTESTING_EXPOSURE_JOIN_COLUMNS)
     total_rows = len(frame)
+    positive_weights = (
+        ead_frame[
+            ead_frame[config.BACKTESTING_EAD_VALUE_COLUMN].notna()
+            & (ead_frame[config.BACKTESTING_EAD_VALUE_COLUMN] > 0)
+        ]
+        if not ead_frame.empty
+        else ead_frame
+    )
+    total_available_exposure = (
+        float(positive_weights[config.BACKTESTING_EAD_VALUE_COLUMN].sum())
+        if not positive_weights.empty
+        else 0.0
+    )
+
     if frame.empty or ead_frame.empty:
         # Nothing can be weighted, so nothing survives. Return the frame's own
         # shape plus the weight column so callers can treat the result uniformly.
@@ -100,8 +122,9 @@ def attach_exposure_weights(
             "matched_rows": 0,
             "unmatched_rows": total_rows,
             "matched_exposure": 0.0,
+            "total_available_exposure": total_available_exposure,
             "row_coverage": 0.0,
-            "fanned_out": False,
+            "exposure_coverage": 0.0,
         }
 
     weights = (
@@ -109,8 +132,17 @@ def attach_exposure_weights(
         .rename(columns={config.BACKTESTING_EAD_VALUE_COLUMN: EXPOSURE_WEIGHT_COLUMN})
     )
 
+    duplicate_weights = weights.duplicated(join_columns, keep=False)
+    if duplicate_weights.any():
+        duplicate_key_count = int(
+            weights.loc[duplicate_weights, join_columns].drop_duplicates().shape[0]
+        )
+        raise ExposureFanOutError(
+            "exposure join would fan out metric rows: "
+            f"{duplicate_key_count} duplicate EAD key(s) on {join_columns!r}"
+        )
+
     merged = frame.merge(weights, on=join_columns, how="left")
-    fanned_out = len(merged) > total_rows
 
     usable = merged[merged[EXPOSURE_WEIGHT_COLUMN].notna() & (merged[EXPOSURE_WEIGHT_COLUMN] > 0)]
     matched_exposure = float(usable[EXPOSURE_WEIGHT_COLUMN].sum()) if not usable.empty else 0.0
@@ -120,8 +152,13 @@ def attach_exposure_weights(
         "matched_rows": len(usable),
         "unmatched_rows": max(0, total_rows - len(usable)),
         "matched_exposure": matched_exposure,
+        "total_available_exposure": total_available_exposure,
         "row_coverage": (len(usable) / total_rows) if total_rows else 0.0,
-        "fanned_out": fanned_out,
+        "exposure_coverage": (
+            matched_exposure / total_available_exposure
+            if total_available_exposure > 0
+            else 0.0
+        ),
     }
     return usable.reset_index(drop=True), coverage
 
@@ -166,9 +203,10 @@ def aggregate_metric(
         "total_rows": len(frame),
         "matched_rows": len(frame),
         "unmatched_rows": 0,
-        "matched_exposure": 0.0,
+        "matched_exposure": None,
+        "total_available_exposure": None,
         "row_coverage": 1.0 if len(frame) else 0.0,
-        "fanned_out": False,
+        "exposure_coverage": None,
     }
 
     if weighted:
