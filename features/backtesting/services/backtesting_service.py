@@ -260,9 +260,15 @@ def build_metric_view(metric: str, applied: dict | None) -> dict:
 
     Returns ``records`` (forecast-versus-actual), ``by_horizon`` summaries,
     ``summary`` (overall), ``coverage`` from the exposure join, ``unscored``
-    (forecasts whose target has no realised anchor yet), and ``row_count``.
+    (forecasts whose target has no realised anchor yet), ``row_count``, and a
+    ``scoring_status`` / ``scoring_note`` pair that distinguishes Base accuracy
+    results from a non-Base context-only selection.
     """
     applied = applied or {}
+    selected_scenario = applied.get("scenario")
+    scores_accuracy = selectors.is_all(selected_scenario) or (
+        selected_scenario == config.BACKTESTING_BASE_SCENARIO
+    )
     empty = {
         "metric": metric,
         "records": [],
@@ -272,6 +278,12 @@ def build_metric_view(metric: str, applied: dict | None) -> dict:
         "coverage": None,
         "unscored": 0,
         "row_count": 0,
+        "scoring_status": "scored" if scores_accuracy else "context_only",
+        "scoring_note": (
+            None
+            if scores_accuracy
+            else "Context only — non-Base scenarios are not scored for accuracy or RAG."
+        ),
     }
 
     frame = _frame(metric)
@@ -304,22 +316,61 @@ def build_metric_view(metric: str, applied: dict | None) -> dict:
     if aggregated.empty:
         return {**empty, "coverage": coverage, "row_count": len(scoped)}
 
-    scenario = applied.get("scenario")
-    scenario = (
+    # The selected scenario still drives the raw vintage context. Accuracy is
+    # stricter: only Base is scoreable, and a snapshot selection narrows the
+    # forecast vintages without removing later anchors from the actual lookup.
+    context_scenario = (
         config.BACKTESTING_BASE_SCENARIO
-        if selectors.is_all(scenario)
-        else scenario
+        if selectors.is_all(selected_scenario)
+        else selected_scenario
     )
-    records = errors.build_error_records(aggregated, scenario=scenario)
+    actuals_aggregated = aggregated
+    if scores_accuracy and not selectors.is_all(applied.get("snapshot")):
+        history_scope = {**applied, "snapshot": selectors.ALL_VALUE}
+        history_frame = _apply_scope(
+            frame,
+            history_scope,
+            model_column=_model_column_for(metric),
+            facility_pairs=facility_pairs,
+        )
+        history_ead = None
+        if aggregation.is_exposure_weighted(metric):
+            history_ead = _apply_scope(
+                _frame(config.BACKTESTING_METRIC_EAD),
+                history_scope,
+                model_column=None,
+                facility_pairs=facility_pairs,
+            )
+        actuals_aggregated, _ = aggregation.aggregate_metric(
+            history_frame,
+            metric,
+            ead_frame=history_ead,
+        )
+
+    records = (
+        errors.build_error_records(aggregated, actuals=actuals_aggregated)
+        if scores_accuracy
+        else []
+    )
     return {
         "metric": metric,
-        "vintage_series": _vintage_series(scoped, metric, ead_frame, scenario),
+        "vintage_series": _vintage_series(scoped, metric, ead_frame, context_scenario),
         "records": records,
         "by_horizon": errors.summarize_by(records, ["horizon"]),
         "summary": errors.summarize_errors(records),
         "coverage": coverage,
-        "unscored": errors.unmatched_forecast_count(aggregated, scenario=scenario),
+        "unscored": (
+            errors.unmatched_forecast_count(aggregated, actuals=actuals_aggregated)
+            if scores_accuracy
+            else 0
+        ),
         "row_count": len(scoped),
+        "scoring_status": "scored" if scores_accuracy else "context_only",
+        "scoring_note": (
+            None
+            if scores_accuracy
+            else "Context only — non-Base scenarios are not scored for accuracy or RAG."
+        ),
     }
 
 

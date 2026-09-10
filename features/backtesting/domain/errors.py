@@ -62,6 +62,7 @@ from . import aggregation, vintages
 
 __all__ = [
     "DEFAULT_HIT_RATE_TOLERANCE",
+    "comparable_population_key_columns",
     "build_actual_lookup",
     "build_error_records",
     "unmatched_forecast_count",
@@ -84,6 +85,40 @@ def _actual_key(row, key_columns: list[str]) -> tuple:
     return tuple(row[column] for column in key_columns)
 
 
+def comparable_population_key_columns(aggregated: pd.DataFrame) -> list[str]:
+    """Run identity that must stay fixed when a forecast is matched to an actual.
+
+    A target quarter replaces ``Month End Snapshot`` in the match, but every
+    other retained run-key field remains part of the comparable population. In
+    particular, LGD/EAD model partitions and NCO's three-model attribution must
+    not borrow one another's anchors. Keeping Scenario in the key is deliberate:
+    the scorer first narrows both sides to Base, making the policy explicit and
+    preventing a context-only scenario from entering the lookup accidentally.
+    """
+    nco_identity = (
+        config.BACKTESTING_PD_MODEL_NAME_COLUMN,
+        config.BACKTESTING_LGD_MODEL_NAME_COLUMN,
+        config.BACKTESTING_EAD_MODEL_NAME_COLUMN,
+    )
+    run_key = (
+        config.BACKTESTING_NCO_RUN_KEY_COLUMNS
+        if all(column in aggregated.columns for column in nco_identity)
+        else config.BACKTESTING_RUN_KEY_COLUMNS
+    )
+    return [
+        column
+        for column in run_key
+        if column != config.BACKTESTING_SNAPSHOT_COLUMN and column in aggregated.columns
+    ]
+
+
+def _base_scenario_rows(frame: pd.DataFrame) -> pd.DataFrame:
+    scenario_column = config.BACKTESTING_SCENARIO_COLUMN
+    if scenario_column not in frame.columns:
+        return frame
+    return frame[frame[scenario_column] == config.BACKTESTING_BASE_SCENARIO]
+
+
 def build_actual_lookup(
     aggregated: pd.DataFrame,
     *,
@@ -91,21 +126,26 @@ def build_actual_lookup(
 ) -> dict[tuple, float]:
     """Map ``(*key, target quarter)`` to the realised value at that quarter.
 
-    ``key_columns`` names the population identity an actual is scoped to. By
-    default that is Segment Name: segments must never borrow one another's
-    actuals, while model/run/scenario filters are expected to have been applied
-    by the caller.
+    Built from Base-scenario anchor rows (``Quarter == 0``) only.
+    ``key_columns`` names the identity an actual is scoped to; by default it is
+    the validated comparable-population key returned by
+    :func:`comparable_population_key_columns`.
+
+    Duplicate anchors are accepted only when they carry the same finite value.
+    Conflicting values fail instead of letting the last input row win, so lookup
+    results cannot depend on workbook or DataFrame row order.
     """
     if key_columns is None:
-        key_columns = [config.BACKTESTING_SEGMENT_COLUMN]
+        key_columns = comparable_population_key_columns(aggregated)
     key_columns = list(key_columns)
 
     if aggregated.empty:
         return {}
 
     quarter_column = config.BACKTESTING_QUARTER_COLUMN
-    anchors = aggregated[
-        aggregated[quarter_column].map(lambda value: vintages.is_anchor_quarter(_as_int(value)))
+    base = _base_scenario_rows(aggregated)
+    anchors = base[
+        base[quarter_column].map(lambda value: vintages.is_anchor_quarter(_as_int(value)))
     ]
 
     lookup: dict[tuple, float] = {}
@@ -114,7 +154,16 @@ def build_actual_lookup(
         if not is_finite_number(value):
             continue
         key = _actual_key(row, key_columns) + (row[_TARGET],)
-        lookup[key] = float(value)
+        actual = float(value)
+        existing = lookup.get(key)
+        if existing is not None and not math.isclose(
+            existing, actual, rel_tol=1e-12, abs_tol=1e-12
+        ):
+            raise ValueError(
+                "conflicting realised anchors for comparable population "
+                f"{key!r}: {existing!r} and {actual!r}"
+            )
+        lookup[key] = actual
     return lookup
 
 
@@ -135,7 +184,7 @@ def _as_int(value) -> int | None:
 def build_error_records(
     aggregated: pd.DataFrame,
     *,
-    scenario=config.BACKTESTING_BASE_SCENARIO,
+    actuals: pd.DataFrame | None = None,
     key_columns=None,
     carry_columns=None,
 ) -> list[dict]:
@@ -145,6 +194,11 @@ def build_error_records(
     ``actual``, and the three error measures. Forecasts whose target has no
     realised anchor yet are omitted -- see :func:`unmatched_forecast_count`.
 
+    ``actuals`` may be a full-history aggregate while ``aggregated`` contains
+    only the forecast vintages selected for scoring. This separation is what
+    lets a snapshot filter narrow forecasts without deleting future anchors.
+    Both inputs are always narrowed to Base before scoring.
+
     ``carry_columns`` names extra identity columns to copy onto each record (for
     example ``J/N Flag`` or ``Model Name``) so callers can group by them later
     without re-joining.
@@ -152,17 +206,15 @@ def build_error_records(
     if aggregated.empty:
         return []
 
+    actual_source = aggregated if actuals is None else actuals
     if key_columns is None:
-        key_columns = [config.BACKTESTING_SEGMENT_COLUMN]
+        key_columns = comparable_population_key_columns(actual_source)
     key_columns = list(key_columns)
 
     quarter_column = config.BACKTESTING_QUARTER_COLUMN
 
-    scoped = aggregated
-    scenario_column = config.BACKTESTING_SCENARIO_COLUMN
-    if scenario is not None and scenario_column in scoped.columns:
-        scoped = scoped[scoped[scenario_column] == scenario]
-    lookup = build_actual_lookup(scoped, key_columns=key_columns)
+    lookup = build_actual_lookup(actual_source, key_columns=key_columns)
+    scoped = _base_scenario_rows(aggregated)
 
     # Anchors are the actuals themselves; scoring one against itself is a
     # tautology that would flatter every summary statistic.
@@ -215,6 +267,8 @@ def build_error_records(
         key=lambda record: (
             vintages.quarter_sort_key(record["vintage_quarter"]),
             record["horizon"] if record["horizon"] is not None else -1,
+            tuple(_sort_value(record.get(column)) for column in key_columns),
+            vintages.quarter_sort_key(record["target_quarter"]),
         )
     )
     return records
@@ -223,7 +277,7 @@ def build_error_records(
 def unmatched_forecast_count(
     aggregated: pd.DataFrame,
     *,
-    scenario=config.BACKTESTING_BASE_SCENARIO,
+    actuals: pd.DataFrame | None = None,
     key_columns=None,
 ) -> int:
     """Forecast rows whose target quarter has no realised anchor yet.
@@ -235,16 +289,15 @@ def unmatched_forecast_count(
     if aggregated.empty:
         return 0
 
+    actual_source = aggregated if actuals is None else actuals
     if key_columns is None:
-        key_columns = [config.BACKTESTING_SEGMENT_COLUMN]
+        key_columns = comparable_population_key_columns(actual_source)
     key_columns = list(key_columns)
 
     quarter_column = config.BACKTESTING_QUARTER_COLUMN
-    scoped = aggregated
-    scenario_column = config.BACKTESTING_SCENARIO_COLUMN
-    if scenario is not None and scenario_column in scoped.columns:
-        scoped = scoped[scoped[scenario_column] == scenario]
-    lookup = build_actual_lookup(scoped, key_columns=key_columns)
+    lookup = build_actual_lookup(actual_source, key_columns=key_columns)
+
+    scoped = _base_scenario_rows(aggregated)
     forecasts = scoped[
         scoped[quarter_column].map(lambda value: not vintages.is_anchor_quarter(_as_int(value)))
     ]
