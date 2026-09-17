@@ -25,11 +25,12 @@ import pandas as pd
 
 from ....shared.domain import constants as config
 from ..data_access import BACKTESTING_PAGE_DATA
-from ..domain import aggregation, errors, selectors
+from ..domain import aggregation, diagnostics, errors, selectors
 
 __all__ = [
     "build_metric_view",
     "build_dashboard_view",
+    "build_dashboard_payload",
     "build_loss_curve_series",
     "build_cumulative_loss_series",
 ]
@@ -396,6 +397,7 @@ def build_metric_view(metric: str, applied: dict | None) -> dict:
     rag_coverage = coverage.get("exposure_coverage")
     if rag_coverage is None:
         rag_coverage = coverage.get("row_coverage")
+    records = [{**record, "coverage": rag_coverage} for record in records]
     summary = errors.summarize_errors(records, coverage=rag_coverage)
     empty_reason = None
     if scores_accuracy and not records:
@@ -424,4 +426,55 @@ def build_dashboard_view(applied: dict | None) -> dict[str, dict]:
     return {
         metric: build_metric_view(metric, applied)
         for metric in config.BACKTESTING_METRIC_SHEETS
+    }
+
+
+def _segment_records(metric: str, applied: dict) -> list[dict]:
+    selected = applied.get("segment")
+    if selectors.is_all(selected):
+        segments = selectors.segments_for_filters(
+            region=applied.get("region"),
+            portfolio=applied.get("portfolio"),
+            model_group=applied.get("model_group"),
+            model=applied.get("model"),
+        )
+    else:
+        segments = [selected]
+    rows = []
+    for segment in segments:
+        view = build_metric_view(metric, {**applied, "segment": segment})
+        rows.extend({**record, _SEGMENT: segment} for record in view.get("records") or [])
+    return rows
+
+
+def build_dashboard_payload(
+    applied: dict | None,
+    diagnostic_metric: str = config.BACKTESTING_METRIC_PD,
+) -> dict:
+    """Prepared dashboard data; views receive this without invoking services."""
+    applied = applied or {}
+    if diagnostic_metric not in config.BACKTESTING_METRIC_SHEETS:
+        diagnostic_metric = config.BACKTESTING_METRIC_PD
+    views = build_dashboard_view(applied)
+    selected_records = (views.get(diagnostic_metric) or {}).get("records") or []
+    segment_records = _segment_records(diagnostic_metric, applied)
+    pd_records = [
+        *((views.get(config.BACKTESTING_METRIC_PD) or {}).get("records") or []),
+        *((views.get(config.BACKTESTING_METRIC_PD_CRR) or {}).get("records") or []),
+    ]
+    return {
+        "views": views,
+        "diagnostic_metric": diagnostic_metric,
+        "scorecard": diagnostics.build_scorecard_rows(views),
+        "horizon_rows": diagnostics.build_cross_metric_horizon_rows(views),
+        "calibration_records": selected_records,
+        "vintage_matrix": diagnostics.build_error_matrix(selected_records, "vintage_quarter"),
+        "segment_matrix": diagnostics.build_error_matrix(segment_records, _SEGMENT),
+        "revision": diagnostics.build_revision_series(selected_records),
+        "nco_attribution": diagnostics.build_nco_attribution(
+            (views.get(config.BACKTESTING_METRIC_NCO) or {}).get("records") or [],
+            pd_records,
+            (views.get(config.BACKTESTING_METRIC_LGD) or {}).get("records") or [],
+            (views.get(config.BACKTESTING_METRIC_EAD) or {}).get("records") or [],
+        ),
     }
