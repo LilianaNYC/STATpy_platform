@@ -162,6 +162,30 @@ first filter. Both rows lead with a caption track of the same width
 row above, across the divider. Below 901px the rows stack and the caption
 becomes a plain heading over its group.
 
+### One model, except on Overview
+
+| Tab | Model filter | Why |
+|---|---|---|
+| PD / LGD / EAD / Loss | **single-select** | the page reports one model's diagnostics |
+| Overview | multi-select checklist | it pools models rather than reporting one |
+
+This is a rule, not an accident, and it is load-bearing. These tabs **look up**
+their metrics rather than computing them: `calculations.ctx_store_keys`
+resolves a single `(model, segment, quarter, horizon)` row, and the store holds
+only per-model rows — there is no aggregate row for an arbitrary subset. Handed
+several models it returns `models[0]` and silently drops the rest, so a
+multi-select there would render one model's numbers under a toggle claiming
+several. Making it correct would need one panel per selected model, aggregate
+rows in the workbook, or a recompute path — never a change to the filter alone.
+
+`test_filter_shells.py` pins both halves: the four tabs must expose a
+single-select `Dropdown`, and Overview must expose a `Checklist`.
+
+Overview's picker otherwise matches SAAS's workspace control exactly — toggle
+summary, search box, "All", checklist — including the two behaviours that are
+easy to get wrong: the search only *hides* options (a checked model stays
+selected while hidden), and "All" adds or removes only the visible ones.
+
 ### The page opens with nothing selected
 
 Every filter starts unanswered, showing a "Select …" placeholder, and **Apply

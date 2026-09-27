@@ -57,7 +57,20 @@ def test_monitoring_top_filters_use_pd_single_select_shells():
 
 
 def test_performance_specific_models_use_single_select_dropdown():
+    """PD/LGD/EAD/Loss select exactly one model. Deliberate, and load-bearing:
+    these tabs *look up* their metrics rather than computing them --
+    ``calculations.ctx_store_keys`` resolves one
+    ``(model, segment, quarter, horizon)`` row and the store holds only
+    per-model rows, with no aggregate. Given several models it would return
+    ``models[0]`` and silently drop the rest, rendering one model's numbers
+    under a toggle claiming several. Overview is the only multi-select Model
+    filter -- see ``test_overview_is_the_only_multi_select_model_filter``.
+    """
+    from STATpy_platform.shared.ui import controls as pd_controls
+    from STATpy_platform.features.monitoring.data_access import PD_PERFORMANCE_DATA
+
     pages = [
+        ([pd_controls.build_global_filters(PD_PERFORMANCE_DATA)], pd_controls.MODELS_ID),
         (lgd_page.build_layout(), lgd_page.MODEL_DROPDOWN_ID),
         (ead_page.page_layout(), ead_page.MODEL_DROPDOWN_ID),
         (loss_page.build_layout(), loss_page.MODEL_DROPDOWN_ID),
@@ -69,10 +82,26 @@ def test_performance_specific_models_use_single_select_dropdown():
             model_filter = _find_component_by_id(node, component_id)
             if model_filter is not None:
                 break
-        # Models is a single-select Dropdown (not a multi checklist) on
-        # the LGD/EAD/Loss tabs.
-        assert isinstance(model_filter, Dropdown)
-        assert getattr(model_filter, "multi", False) is not True
+        assert model_filter is not None, component_id
+        # A single-select Dropdown, not a multi checklist.
+        assert isinstance(model_filter, Dropdown), component_id
+        assert getattr(model_filter, "multi", False) is not True, component_id
+
+
+def test_overview_is_the_only_multi_select_model_filter():
+    """The other half of the rule above. Overview pools models rather than
+    reporting one model's diagnostics, so it takes a checklist -- and it is the
+    only tab that may."""
+    from dash.dcc import Checklist
+    from STATpy_platform.features.monitoring.data_access import PD_PERFORMANCE_DATA
+
+    model_filter = None
+    for node in overview_page.page_layout(PD_PERFORMANCE_DATA):
+        model_filter = _find_component_by_id(node, overview_page.OVERVIEW_MODEL_ID)
+        if model_filter is not None:
+            break
+    assert isinstance(model_filter, Checklist)
+    assert isinstance(model_filter.value, list)
 
 
 def test_monitoring_point_opens_unanswered_on_every_tab():
