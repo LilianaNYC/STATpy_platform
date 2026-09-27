@@ -30,6 +30,11 @@ from ..repositories.filters_config import MONITORING_POINT_WINDOW, monitoring_po
 # Component ids
 # ---------------------------------------------------------------------------
 
+MODEL_USE_CASE_ID = "pd-model-use-case"
+MODEL_USE_CASE_TOGGLE_ID = "pd-model-use-case-toggle"
+MODEL_USE_CASE_MENU_ID = "pd-model-use-case-menu"
+# Reporting Cycle keeps its element IDs: the value stays the composite,
+# the join key downstream; only the label is now the bare cycle.
 REPORTING_CYCLE_ID = "pd-reporting-cycle"
 REPORTING_CYCLE_TOGGLE_ID = "pd-reporting-cycle-toggle"
 REPORTING_CYCLE_MENU_ID = "pd-reporting-cycle-menu"
@@ -68,9 +73,6 @@ REGION_MENU_ID = "pd-region-menu"
 PORTFOLIO_ID = "pd-portfolio"
 PORTFOLIO_TOGGLE_ID = "pd-portfolio-toggle"
 PORTFOLIO_MENU_ID = "pd-portfolio-menu"
-MODEL_GROUP_ID = "pd-model-group"
-MODEL_GROUP_TOGGLE_ID = "pd-model-group-toggle"
-MODEL_GROUP_MENU_ID = "pd-model-group-menu"
 
 # Per-chart range controls use pattern-matching ids so a single set of
 # callbacks in callbacks.py can serve every chart's range selector.
@@ -106,11 +108,19 @@ POST_SUBJECTIVE_REVIEW_LINKS = [
 
 
 def resolve_monitoring_point_value(options: list[str] | None, value: str | None) -> str:
-    """Use the current monitoring point when valid, otherwise fall back to the latest one."""
+    """Use the current monitoring point when valid, otherwise fall back to the latest one.
+
+    "Latest" is ``max()``, not ``options[-1]``: quarter labels are fixed-width
+    ``YYYYQN`` and so sort correctly as plain strings, which makes this
+    independent of the order the options happen to be presented in. Overview
+    lists them most-recent-first to match its Reporting Cycle filter, and with a
+    positional fallback that would have silently defaulted to the *oldest*
+    quarter.
+    """
     options = options or []
     if value in options:
         return value or ""
-    return options[-1] if options else ""
+    return max(options) if options else ""
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +202,105 @@ def build_single_select_dropdown(
 
 
 # ---------------------------------------------------------------------------
+# "Nothing selected yet" placeholders
+# ---------------------------------------------------------------------------
+# The page opens with no filter chosen: each one leads with a "Select …" entry
+# whose value is the empty string, and Apply stays disabled until every filter
+# has a real value. Two consequences worth knowing before changing a cascade:
+#
+#   * The placeholder is an *option*, not a `placeholder=` prop, because these
+#     are custom button menus rather than <select> elements -- so it has to be
+#     filtered out anywhere options are treated as the set of real values.
+#   * Every cascade that rewrites a value when its options change must fall back
+#     to UNSELECTED, never to `options[0]`. Falling back to the first option is
+#     what the bar used to do, and it would silently re-fill a filter the user
+#     has not answered -- defeating the empty start on the very first render.
+UNSELECTED = ""
+
+# Filter key -> the placeholder's wording.
+#
+# Kept short enough to fit a 160px control without ellipsis -- "Select model use
+# case" and "Select monitoring point" both clipped. The label sits directly
+# above each control and supplies the qualifier, so "Select use case" under
+# MODEL USE CASE reads the same and fits. test_select_prompts_fit_their_control
+# pins the length.
+SELECT_PROMPTS = {
+    "region": "Select region",
+    "portfolio": "Select portfolio",
+    "model-use-case": "Select use case",
+    "reporting-cycle": "Select cycle",
+    "model-group": "Select group",
+    "specific-models": "Select model",
+    "portfolio-segment": "Select segment",
+    "monitoring-point": "Select point",
+    "scenario": "Select scenario",
+}
+
+
+def placeholder_option(filter_key: str) -> dict:
+    """The leading "Select …" entry for one filter."""
+    return {"label": SELECT_PROMPTS.get(filter_key, "Select"), "value": UNSELECTED}
+
+
+def with_placeholder(options: list[dict], filter_key: str) -> list[dict]:
+    """``options`` led by its "Select …" entry, added at most once."""
+    if options and options[0].get("value") == UNSELECTED:
+        return options
+    return [placeholder_option(filter_key)] + list(options)
+
+
+def keep_or_unselected(options: list[dict], current) -> str:
+    """The value a cascade should write when it rewrites a filter's options.
+
+    Keeps the current pick when it survives the narrowing, otherwise leaves the
+    filter **unanswered**. Never picks a value on the user's behalf -- see the
+    note above.
+    """
+    allowed = {option.get("value") for option in options} - {UNSELECTED}
+    return current if current in allowed else UNSELECTED
+
+
+def all_selected(*values) -> bool:
+    """True when every filter passed has a real value -- the Apply gate."""
+    return all(bool(value) and value != UNSELECTED for value in values)
+
+
+# ---------------------------------------------------------------------------
+# Filter row captions
+# ---------------------------------------------------------------------------
+# The bar reads as two labelled rows. Row 1 is the **Scope** -- Region,
+# Portfolio, Model Use Case, Reporting Cycle -- which decides what population
+# everything below covers. Row 2 is the **Focus**: which model, segment,
+# monitoring point and scenario within that scope is on screen.
+FILTER_ROW_CAPTION_CLASS = "monitoring-filter-row-caption"
+SCOPE_ROW_CAPTION = "Scope"
+FOCUS_ROW_CAPTION = "Focus"
+
+
+def _build_filter_row_caption(text: str) -> html.Div:
+    """A row caption, sitting in the row's leading grid track.
+
+    Deliberately *not* a ``.monitoring-filter``. That class carries the grid's
+    per-filter sizing and, more importantly, the cascade chevron, which
+    ``styles.css`` draws before every ``.monitoring-filter`` that follows another
+    one -- so reusing it would put an arrow between the caption and the first
+    filter. The caption gets its own class and its own leading track, the same
+    width on both rows, so the filter columns still line up across the divider.
+    """
+    return html.Div(text, className=FILTER_ROW_CAPTION_CLASS)
+
+
+def build_scope_caption() -> html.Div:
+    """Caption for the first filter row. Used by all five monitoring tabs."""
+    return _build_filter_row_caption(SCOPE_ROW_CAPTION)
+
+
+def build_focus_caption() -> html.Div:
+    """Caption for the second filter row. Used by all five monitoring tabs."""
+    return _build_filter_row_caption(FOCUS_ROW_CAPTION)
+
+
+# ---------------------------------------------------------------------------
 # Global filter bar
 # ---------------------------------------------------------------------------
 
@@ -209,6 +318,8 @@ def build_global_filters(data: dict, extra_controls=None, initial: dict | None =
     from ..domain.mev_range import model_field_values
     from ..repositories.filters_config import (
         load_filter_config, model_names as cfg_model_names, segment_values as cfg_segment_values,
+        cycle_options_for_cycles,
+        use_case_options_for_cycles,
     )
 
     cfg = load_filter_config()
@@ -216,40 +327,57 @@ def build_global_filters(data: dict, extra_controls=None, initial: dict | None =
     latest_quarter = quarters_asc[-1] if quarters_asc else ""
     model_names = cfg_model_names("pd")
     segment_values = cfg_segment_values()
-    monitoring_point_options = [{"label": q, "value": q} for q in quarters_asc]
-    segment_options = [{"label": "All", "value": "all"}] + [{"label": value, "value": value} for value in segment_values]
+    # Most-recent-first, matching Reporting Cycle beside it. The default is
+    # still resolved from the ascending list via resolve_monitoring_point_value.
+    monitoring_point_options = with_placeholder(
+        [{"label": q, "value": q} for q in reversed(quarters_asc)], "monitoring-point")
+    segment_options = with_placeholder(
+        [{"label": "All", "value": "all"}] + [{"label": value, "value": value} for value in segment_values],
+        "portfolio-segment")
 
     mev_catalog = data.get("mev_catalog") or {}
-    region_options = [{"label": "All", "value": "All"}] + [
+    # Region/Portfolio/Model Use Case/Reporting Cycle carry no "All": each offers
+    # only values that have data, so the bar can never present a combination
+    # with no rows behind it.
+    region_options = with_placeholder([
         {"label": value, "value": value} for value in model_field_values(mev_catalog, "region", model_names)
-    ]
-    portfolio_options = [{"label": "All", "value": "All"}] + [
+    ], "region")
+    portfolio_options = with_placeholder([
         {"label": value, "value": value} for value in model_field_values(mev_catalog, "portfolio", model_names)
-    ]
+    ], "portfolio")
 
-    reporting_cycle_options = [{"label": c["label"], "value": c["value"]} for c in cfg["reporting_cycles"]]
-    scenario_options = [{"label": s["label"], "value": s["value"]} for s in cfg["scenarios"]]
-    default_cycle = reporting_cycle_options[0]["value"]
-    default_scenario = scenario_options[0]["value"]
+    model_use_case_options = with_placeholder(use_case_options_for_cycles(None), "model-use-case")
+    # Every cycle, not just one use case's: with no use case chosen yet there is
+    # nothing to narrow by, and the cascade re-narrows the moment one is picked.
+    reporting_cycle_options = with_placeholder(cycle_options_for_cycles(None), "reporting-cycle")
+    scenario_options = with_placeholder(
+        [{"label": s["label"], "value": s["value"]} for s in cfg["scenarios"]], "scenario")
 
+    # ``initial`` restores a previously applied scope (the router re-enters the
+    # page with it). Anything it does not carry stays UNSELECTED rather than
+    # falling back to a first option -- that is the whole point of the empty
+    # start; see the UNSELECTED note above.
     initial = initial or {}
-    initial_model = initial.get("model", "") if initial.get("model") in model_names else ""
+    initial_model = initial.get("model", "") if initial.get("model") in model_names else UNSELECTED
     initial_segment = (
         initial.get("segment", "")
         if initial.get("segment") in segment_values or initial.get("segment") == "all"
-        else ""
+        else UNSELECTED
     )
-    initial_cycle = initial.get("cycle") if initial.get("cycle") in {c["value"] for c in reporting_cycle_options} else default_cycle
+    initial_cycle = keep_or_unselected(reporting_cycle_options, initial.get("cycle"))
+    initial_use_case = keep_or_unselected(model_use_case_options, initial.get("model_use_case"))
+    initial_region = keep_or_unselected(region_options, initial.get("region"))
+    initial_portfolio = keep_or_unselected(portfolio_options, initial.get("portfolio"))
     initial_monitoring_point = (
-        initial.get("monitoring_point") if initial.get("monitoring_point") in set(quarters_asc) else latest_quarter
+        initial.get("monitoring_point") if initial.get("monitoring_point") in set(quarters_asc)
+        else UNSELECTED
     )
-    initial_scenario = (
-        initial.get("scenario") if initial.get("scenario") in {s["value"] for s in scenario_options} else default_scenario
-    )
+    initial_scenario = keep_or_unselected(scenario_options, initial.get("scenario"))
 
     primary_row = html.Div(
         className="monitoring-controls saas-top-filter-row monitoring-primary-filter-row",
         children=[
+            build_scope_caption(),
             html.Div(
                 className="monitoring-filter",
                 children=[
@@ -260,7 +388,7 @@ def build_global_filters(data: dict, extra_controls=None, initial: dict | None =
                         menu_id=REGION_MENU_ID,
                         filter_key="region",
                         options=region_options,
-                        value="All",
+                        value=initial_region,
                     ),
                 ],
             ),
@@ -274,24 +402,49 @@ def build_global_filters(data: dict, extra_controls=None, initial: dict | None =
                         menu_id=PORTFOLIO_MENU_ID,
                         filter_key="portfolio",
                         options=portfolio_options,
-                        value="All",
+                        value=initial_portfolio,
                     ),
                 ],
             ),
-            html.Div(
-                className="monitoring-filter",
-                children=[
-                    html.Label("Model Group", htmlFor=MODEL_GROUP_TOGGLE_ID),
-                    build_single_select_dropdown(
-                        value_id=MODEL_GROUP_ID,
-                        toggle_id=MODEL_GROUP_TOGGLE_ID,
-                        menu_id=MODEL_GROUP_MENU_ID,
-                        filter_key="model-group",
-                        options=[{"label": "PD", "value": "PD"}],
-                        value="PD",
-                    ),
-                ],
-            ),
+        html.Div(
+            className="monitoring-filter",
+            children=[
+                html.Label("Model Use Case", htmlFor=MODEL_USE_CASE_TOGGLE_ID),
+                build_single_select_dropdown(
+                    value_id=MODEL_USE_CASE_ID,
+                    toggle_id=MODEL_USE_CASE_TOGGLE_ID,
+                    menu_id=MODEL_USE_CASE_MENU_ID,
+                    filter_key="model-use-case",
+                    options=model_use_case_options,
+                    value=initial_use_case,
+                ),
+            ],
+        ),
+        html.Div(
+            className="monitoring-filter",
+            children=[
+                html.Label("Reporting Cycle", htmlFor=REPORTING_CYCLE_TOGGLE_ID),
+                build_single_select_dropdown(
+                    value_id=REPORTING_CYCLE_ID,
+                    toggle_id=REPORTING_CYCLE_TOGGLE_ID,
+                    menu_id=REPORTING_CYCLE_MENU_ID,
+                    filter_key="reporting-cycle",
+                    options=reporting_cycle_options,
+                    value=initial_cycle,
+                ),
+            ],
+        ),
+        ],
+    )
+
+    # No Model Group filter here. This tab shows exactly one group, so the
+    # control could only ever return "PD" -- its value drove nothing (the group
+    # is hardcoded at every ``models_matching`` call site), and once the bar
+    # started empty it became a required click with a foregone answer. The
+    # sidebar, the page title and the URL all already name the group.
+    # Overview keeps its Model Group: there it is a real choice.
+    secondary_children = [
+            build_focus_caption(),
             html.Div(
                 className="monitoring-filter",
                 children=[
@@ -320,24 +473,6 @@ def build_global_filters(data: dict, extra_controls=None, initial: dict | None =
                     ),
                 ],
             ),
-        ],
-    )
-
-    secondary_children = [
-        html.Div(
-            className="monitoring-filter",
-            children=[
-                html.Label("Model Use Case / Cycle", htmlFor=REPORTING_CYCLE_TOGGLE_ID),
-                build_single_select_dropdown(
-                    value_id=REPORTING_CYCLE_ID,
-                    toggle_id=REPORTING_CYCLE_TOGGLE_ID,
-                    menu_id=REPORTING_CYCLE_MENU_ID,
-                    filter_key="reporting-cycle",
-                    options=reporting_cycle_options,
-                    value=initial_cycle,
-                ),
-            ],
-        ),
         html.Div(
             className="monitoring-filter",
             children=[

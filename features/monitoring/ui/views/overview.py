@@ -17,6 +17,11 @@ from dash import dcc, html
 
 from .....shared.domain.calculations import filter_pd_periods_by_range, pd_tone_class
 from .....shared.theme import normalize_theme_value
+from .....shared.domain.filter_order import alphabetical
+from .....shared.ui.controls import (
+    UNSELECTED as _UNSELECTED,
+    with_placeholder as _with_placeholder,
+)
 from .....shared.ui import controls as shared_filters
 from .....shared.ui.charts import (
     _apply_transparent_background,
@@ -51,6 +56,10 @@ from ...domain.overview import (
     segment_overview_summary,
     segment_top_findings,
     top_findings,
+    overview_region_options,
+    overview_portfolio_options,
+    overview_use_case_options,
+    overview_cycle_options,
 )
 from .cards import build_pd_chapter_heading, build_pd_section_heading, pd_rag_dot
 from .post_subjective import build_executive_summary
@@ -58,6 +67,21 @@ from .post_subjective import build_executive_summary
 CONTENT_ID = "overview-content"
 APPLY_FILTERS_ID = "overview-apply-filters"
 APPLIED_FILTERS_STORE_ID = "overview-applied-filters-store"
+REGION_ID = "overview-region"
+REGION_TOGGLE_ID = "overview-region-toggle"
+REGION_MENU_ID = "overview-region-menu"
+REGION_FILTER_KEY = "overview-region"
+PORTFOLIO_ID = "overview-portfolio"
+PORTFOLIO_TOGGLE_ID = "overview-portfolio-toggle"
+PORTFOLIO_MENU_ID = "overview-portfolio-menu"
+PORTFOLIO_FILTER_KEY = "overview-portfolio"
+MODEL_USE_CASE_ID = "overview-model-use-case"
+MODEL_USE_CASE_TOGGLE_ID = "overview-model-use-case-toggle"
+MODEL_USE_CASE_MENU_ID = "overview-model-use-case-menu"
+MODEL_USE_CASE_FILTER_KEY = "overview-model-use-case"
+# Reporting Cycle keeps its original element IDs: its *value* is still the
+# composite ("CCAR 2026"), the join key behind every store, figure and export.
+# Only its label now comes from the workbook's own Reporting Cycle column.
 REPORTING_CYCLE_ID = "overview-reporting-cycle"
 REPORTING_CYCLE_TOGGLE_ID = "overview-reporting-cycle-toggle"
 REPORTING_CYCLE_MENU_ID = "overview-reporting-cycle-menu"
@@ -70,7 +94,11 @@ SEGMENT_MODEL_GROUP_ID = "overview-segment-model-group"
 SEGMENT_MODEL_GROUP_TOGGLE_ID = "overview-segment-model-group-toggle"
 SEGMENT_MODEL_GROUP_MENU_ID = "overview-segment-model-group-menu"
 SEGMENT_MODEL_GROUP_FILTER_KEY = "overview-segment-model-group"
-SEGMENT_MODEL_GROUP_OPTIONS = ["All", "PD", "LGD", "EAD", "Loss"]
+# "All" is the aggregate, not a value, so it stays pinned at the head; the
+# real groups follow A-Z. MODEL_GROUPS itself keeps its domain order (PD ->
+# LGD -> EAD -> Loss) -- it sorts the figures, and alphabetizing it would
+# scramble their reading order.
+SEGMENT_MODEL_GROUP_OPTIONS = ["All"] + alphabetical(MODEL_GROUPS)
 OVERVIEW_MODEL_ID = "overview-model"
 OVERVIEW_MODEL_SELECT_ALL_ID = "overview-model-select-all"
 OVERVIEW_MODEL_TOGGLE_ID = "overview-model-toggle"
@@ -449,6 +477,40 @@ def _rag_trend_dropdown_options(values: list[str]) -> list[dict[str, str]]:
         }
         for value in values
     ]
+
+
+def _scope_prefix(region: str | None, portfolio: str | None) -> str:
+    """Leading scope terms for the chip. "All" adds nothing -- an unnarrowed
+    axis is the default, and spelling it out would bury the real narrowing."""
+    return " · ".join(
+        f"{label} {value}"
+        for label, value in (("Region", region), ("Portfolio", portfolio))
+        if str(value or "All").strip() not in ("", "All")
+    )
+
+
+def _scope_cycle_note(reporting_cycle: str | None) -> str:
+    """Scope-chip text for the split filters, e.g. ``"Model use case ST - CCAR ·
+    Reporting cycle 2026"``.
+
+    ``reporting_cycle`` is still the composite ("CCAR 2026") -- the applied
+    snapshot and every downstream lookup keep using it -- so the two parts are
+    looked up here rather than threaded through the callbacks. An unrecognised
+    composite falls back to showing it whole, so the chip never silently blanks.
+    """
+    from .....shared.repositories.filters_config import reporting_cycle_options, use_case_of
+
+    composite = str(reporting_cycle or "").strip()
+    if not composite:
+        return "Model use case — · Reporting cycle —"
+    use_case = use_case_of(composite)
+    if not use_case:
+        return f"Model use case / cycle {composite}"
+    label = next(
+        (o["label"] for o in reporting_cycle_options(use_case) if o["value"] == composite),
+        composite,
+    )
+    return f"Model use case {use_case} · Reporting cycle {label}"
 
 
 def _build_filter(label: str, component) -> html.Div:
@@ -2654,6 +2716,8 @@ def render_overview_content(
     theme_value: str | None = None,
     segment_model_group: str = "All",
     selected_models: list[str] | None = None,
+    region: str = "All",
+    portfolio: str = "All",
 ) -> tuple[list, list[dict], list[dict]]:
     """Returns ``(content_children, scoped_rows, segment_scoped_rows)``, cached into
     ``SCOPED_ROWS_STORE_ID`` / ``SEGMENT_SCOPED_ROWS_STORE_ID`` so each chapter's RAG-trend
@@ -2706,7 +2770,10 @@ def render_overview_content(
         "Cross-portfolio monitoring view combining PD, LGD, EAD, and Loss models into a single RAG posture. Every "
         "row is each model's Segment: All aggregate across the whole portfolio -- see the Segments chapter below "
         "for a per-segment breakdown.",
-        options={"note": f"Model use case / cycle {reporting_cycle} · Monitoring point {monitoring_point or 'All'} · Model group {segment_model_group or 'All'} · Segment: All"},
+        options={"note": " · ".join(part for part in (
+            _scope_prefix(region, portfolio),
+            f"{_scope_cycle_note(reporting_cycle)} · Monitoring point {monitoring_point or 'All'} · Model group {segment_model_group or 'All'} · Segment: All",
+        ) if part)},
     )
     chapter_1_sections = [
         _build_summary_section(current_rows, findings, monitoring_point or "All", theme, chapter1_exclusions),
@@ -2721,7 +2788,10 @@ def render_overview_content(
         "Every model group's book of business sliced by portfolio segment instead of by model (PD segments are "
         "broken out per model, since more than one PD model can cover the same segment name).",
         options={
-            "note": f"Model use case / cycle {reporting_cycle} · Monitoring point {monitoring_point or 'All'} · Model group {segment_model_group or 'All'}",
+            "note": " · ".join(part for part in (
+                _scope_prefix(region, portfolio),
+                f"{_scope_cycle_note(reporting_cycle)} · Monitoring point {monitoring_point or 'All'} · Model group {segment_model_group or 'All'}",
+            ) if part),
             "extra_class": "overview-chapter-heading-segments",
         },
     )
@@ -2745,6 +2815,34 @@ def render_overview_content(
     return children, scoped_rows, segment_scoped_rows
 
 
+APPLY_BUTTON_BASE_CLASS = "btn pd-mev-filter-reset saas-top-filter-reset saas-top-filter-apply"
+
+
+def apply_button_class(pending: dict | None, applied: dict | None) -> str:
+    """Class for the Apply button given the live top-bar values vs the applied ones.
+
+    Before the first Apply there is nothing rendered yet, so the button reads as
+    dirty -- that is the state where clicking it actually does something. The
+    model list is compared as a set: re-ordering checkboxes is not a change.
+    """
+    if not applied:
+        return f"{APPLY_BUTTON_BASE_CLASS} is-dirty"
+
+    def _norm(snapshot: dict | None) -> tuple:
+        snapshot = snapshot or {}
+        return (
+            str(snapshot.get("region") or "All"),
+            str(snapshot.get("portfolio") or "All"),
+            str(snapshot.get("reporting_cycle") or ""),
+            str(snapshot.get("monitoring_point") or ""),
+            str(snapshot.get("segment_model_group") or "All"),
+            frozenset(snapshot.get("models") or []),
+        )
+
+    state = "is-clean" if _norm(pending) == _norm(applied) else "is-dirty"
+    return f"{APPLY_BUTTON_BASE_CLASS} {state}"
+
+
 def _build_overview_apply_button() -> html.Div:
     return html.Div(
         className="monitoring-filter saas-top-filter-action",
@@ -2755,7 +2853,7 @@ def _build_overview_apply_button() -> html.Div:
                     html.Button(
                         "Apply filters",
                         id=APPLY_FILTERS_ID,
-                        className="btn pd-mev-filter-reset saas-top-filter-reset saas-top-filter-apply",
+                        className=f"{APPLY_BUTTON_BASE_CLASS} is-dirty",
                         n_clicks=0,
                         type="button",
                         title="Load the portfolio overview using the selected filters.",
@@ -2801,7 +2899,7 @@ def build_overview_apply_prompt() -> html.Section:
                                     className="saas-getting-started-highlights",
                                     children=[
                                         html.Span("1. Optionally narrow by Model Group and Model.", className="saas-getting-started-highlight"),
-                                        html.Span("2. Choose Model Use Case / Cycle and Monitoring Point.", className="saas-getting-started-highlight"),
+                                        html.Span("2. Choose Model Use Case, Reporting Cycle, and Monitoring Point.", className="saas-getting-started-highlight"),
                                         html.Span("3. Click Apply filters to load the overview.", className="saas-getting-started-highlight"),
                                     ],
                                 ),
@@ -2823,9 +2921,11 @@ def build_overview_apply_prompt() -> html.Section:
                                         "once. Leave both at their defaults to see every model.",
                                     ]),
                                     html.Li([
-                                        html.Strong("Pick a Model Use Case / Cycle. "),
-                                        "LGD, EAD, and Loss keep a separate precomputed dataset per cycle (e.g. CCAR 2026); "
-                                        "PD's data spans every cycle already.",
+                                        html.Strong("Pick a Model Use Case, then a Reporting Cycle. "),
+                                        "Model Use Case chooses the programme (e.g. ST - CCAR or CECL); Reporting Cycle "
+                                        "then lists only the cycles that use case actually has data for, so the pair is "
+                                        "never a combination without data. LGD, EAD, and Loss keep a separate "
+                                        "precomputed dataset per cycle; PD's data spans every cycle already.",
                                     ]),
                                     html.Li([
                                         html.Strong("Set the Monitoring Point. "),
@@ -2892,15 +2992,42 @@ def build_layout(search: str = "") -> list:
 
 def page_layout(data: dict) -> list:
     """Build the Overview page with top controls and the Apply-gated landing content."""
-    from .....shared.repositories.filters_config import load_filter_config
-    cfg = load_filter_config()
-    reporting_cycle_options = [{"label": c["label"], "value": c["value"]} for c in cfg["reporting_cycles"]]
-    default_cycle = reporting_cycle_options[0]["value"]
-    cycle_quarters = shared_filters.ALL_REPORTING_CYCLE_QUARTERS.get(default_cycle, [])
-    monitoring_point_options = [{"label": q, "value": q} for q in cycle_quarters]
-    default_monitoring_point = shared_filters.resolve_monitoring_point_value(cycle_quarters, None)
+    from .....shared.repositories.filters_config import (
+        model_use_case_options as _model_use_case_options,
+        reporting_cycle_options as _reporting_cycle_options,
+    )
+    # These four carry no "All": each offers only values that actually have data
+    # inside the scope its predecessors set, so every combination the bar can
+    # show is a combination with rows behind it.
+    #
+    # The page opens with **none of them answered** -- every filter leads with
+    # its "Select …" placeholder and Apply stays disabled until all of them have
+    # a real value. So the option lists here are the unnarrowed ones: with no
+    # Region or Portfolio picked there is nothing to narrow by yet, and the
+    # cascade callbacks re-narrow each list the moment its predecessor is
+    # answered. Do not reintroduce a first-option default -- see the UNSELECTED
+    # note in shared.ui.controls.
+    default_region = _UNSELECTED
+    default_portfolio = _UNSELECTED
+    default_use_case = _UNSELECTED
+    default_cycle = _UNSELECTED
+    default_monitoring_point = _UNSELECTED
+    default_models: list[str] = []
+
+    region_options = _with_placeholder(overview_region_options(data), "region")
+    portfolio_options = _with_placeholder(overview_portfolio_options(data), "portfolio")
+    model_use_case_options = _with_placeholder(overview_use_case_options(data), "model-use-case")
+    reporting_cycle_options = _with_placeholder(overview_cycle_options(data), "reporting-cycle")
+    # Every quarter any cycle offers: Monitoring Point narrows to the chosen
+    # cycle's own quarters as soon as Reporting Cycle is answered.
+    all_quarters = sorted({
+        quarter
+        for quarters in shared_filters.ALL_REPORTING_CYCLE_QUARTERS.values()
+        for quarter in quarters
+    })
+    monitoring_point_options = _with_placeholder(
+        [{"label": q, "value": q} for q in reversed(all_quarters)], "monitoring-point")
     model_options = overview_model_options(data)
-    default_models = [option["value"] for option in model_options]
 
     return [
         dcc.Store(id=RANGE_STORE_ID, data={}),
@@ -2918,23 +3045,42 @@ def page_layout(data: dict) -> list:
                         html.Div(
                             className="monitoring-controls saas-top-filter-row overview-primary-filter-row",
                             children=[
+                                shared_filters.build_scope_caption(),
                                 _build_filter(
-                                    "Model Group",
+                                    "Region",
                                     shared_filters.build_single_select_dropdown(
-                                        value_id=SEGMENT_MODEL_GROUP_ID,
-                                        toggle_id=SEGMENT_MODEL_GROUP_TOGGLE_ID,
-                                        menu_id=SEGMENT_MODEL_GROUP_MENU_ID,
-                                        filter_key=SEGMENT_MODEL_GROUP_FILTER_KEY,
-                                        options=_dropdown_options(SEGMENT_MODEL_GROUP_OPTIONS),
-                                        value="All",
+                                        value_id=REGION_ID,
+                                        toggle_id=REGION_TOGGLE_ID,
+                                        menu_id=REGION_MENU_ID,
+                                        filter_key=REGION_FILTER_KEY,
+                                        options=region_options,
+                                        value=default_region,
                                     ),
                                 ),
                                 _build_filter(
-                                    "Model",
-                                    _build_model_filter(model_options, default_models),
+                                    "Portfolio",
+                                    shared_filters.build_single_select_dropdown(
+                                        value_id=PORTFOLIO_ID,
+                                        toggle_id=PORTFOLIO_TOGGLE_ID,
+                                        menu_id=PORTFOLIO_MENU_ID,
+                                        filter_key=PORTFOLIO_FILTER_KEY,
+                                        options=portfolio_options,
+                                        value=default_portfolio,
+                                    ),
                                 ),
                                 _build_filter(
-                                    "Model Use Case / Cycle",
+                                    "Model Use Case",
+                                    shared_filters.build_single_select_dropdown(
+                                        value_id=MODEL_USE_CASE_ID,
+                                        toggle_id=MODEL_USE_CASE_TOGGLE_ID,
+                                        menu_id=MODEL_USE_CASE_MENU_ID,
+                                        filter_key=MODEL_USE_CASE_FILTER_KEY,
+                                        options=model_use_case_options,
+                                        value=default_use_case,
+                                    ),
+                                ),
+                                _build_filter(
+                                    "Reporting Cycle",
                                     shared_filters.build_single_select_dropdown(
                                         value_id=REPORTING_CYCLE_ID,
                                         toggle_id=REPORTING_CYCLE_TOGGLE_ID,
@@ -2943,6 +3089,30 @@ def page_layout(data: dict) -> list:
                                         options=reporting_cycle_options,
                                         value=default_cycle,
                                     ),
+                                ),
+                            ],
+                        ),
+                        html.Div(
+                            className="monitoring-controls saas-top-filter-row overview-secondary-filter-row",
+                            children=[
+                                shared_filters.build_focus_caption(),
+                                _build_filter(
+                                    "Model Group",
+                                    shared_filters.build_single_select_dropdown(
+                                        value_id=SEGMENT_MODEL_GROUP_ID,
+                                        toggle_id=SEGMENT_MODEL_GROUP_TOGGLE_ID,
+                                        menu_id=SEGMENT_MODEL_GROUP_MENU_ID,
+                                        filter_key=SEGMENT_MODEL_GROUP_FILTER_KEY,
+                                        options=_with_placeholder(
+                                            _dropdown_options(SEGMENT_MODEL_GROUP_OPTIONS),
+                                            "model-group",
+                                        ),
+                                        value=_UNSELECTED,
+                                    ),
+                                ),
+                                _build_filter(
+                                    "Model",
+                                    _build_model_filter(model_options, default_models),
                                 ),
                                 _build_filter(
                                     "Monitoring Point",

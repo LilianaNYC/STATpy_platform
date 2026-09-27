@@ -9,10 +9,10 @@ from ..ui.views import loss_performance as layout
 from ....shared.ui import controls
 from ..domain.loss import (
     get_loss_segments_for_model,
-    resolve_loss_segment,
 )
 from ....shared.registration import already_registered
 from ....shared.repositories.filters_config import cycle_family
+from ....shared.repositories.filters_config import cycle_options_for_cycles
 from ....shared.theme import APP_THEME_ID
 from ..data_access import PD_PERFORMANCE_DATA
 
@@ -51,11 +51,16 @@ def register_callbacks(app) -> None:
     mev_scenarios_by_cycle = data.get("mev_scenarios_by_cycle") or {}
 
     from ....shared.repositories.filters_config import load_filter_config as _load_filter_config
-    _cfg_scenario_options = [
-        {"label": s["label"], "value": s["value"]} for s in _load_filter_config()["scenarios"]
-    ]
+    # with_placeholder: every option list a callback writes has to carry the
+    # "Select …" entry, or the value "" matches no option and the shell's toggle
+    # falls back to a bare "Select" (see _option_label).
+    _cfg_scenario_options = controls.with_placeholder(
+        [{"label": s["label"], "value": s["value"]} for s in _load_filter_config()["scenarios"]],
+        "scenario",
+    )
 
     for value_id, toggle_id, menu_id, filter_key in (
+        (layout.MODEL_USE_CASE_ID, layout.MODEL_USE_CASE_TOGGLE_ID, layout.MODEL_USE_CASE_MENU_ID, layout.MODEL_USE_CASE_FILTER_KEY),
         (layout.REPORTING_CYCLE_ID, layout.REPORTING_CYCLE_TOGGLE_ID, layout.REPORTING_CYCLE_MENU_ID, layout.REPORTING_CYCLE_FILTER_KEY),
         (layout.MONITORING_POINT_DROPDOWN_ID, layout.MONITORING_POINT_TOGGLE_ID, layout.MONITORING_POINT_MENU_ID, layout.MONITORING_POINT_FILTER_KEY),
         (layout.SEGMENT_DROPDOWN_ID, layout.SEGMENT_TOGGLE_ID, layout.SEGMENT_MENU_ID, layout.SEGMENT_FILTER_KEY),
@@ -66,7 +71,6 @@ def register_callbacks(app) -> None:
         # the other three tabs -- not wired to narrow anything.
         (layout.REGION_ID, layout.REGION_TOGGLE_ID, layout.REGION_MENU_ID, layout.REGION_FILTER_KEY),
         (layout.PORTFOLIO_ID, layout.PORTFOLIO_TOGGLE_ID, layout.PORTFOLIO_MENU_ID, layout.PORTFOLIO_FILTER_KEY),
-        (layout.MODEL_GROUP_ID, layout.MODEL_GROUP_TOGGLE_ID, layout.MODEL_GROUP_MENU_ID, layout.MODEL_GROUP_FILTER_KEY),
         # Scenario: net new here (Loss has no Loss_Sensitivity_Projections sheet,
         # so nothing downstream reads it) -- present for bar consistency only.
         (layout.SCENARIO_ID, layout.SCENARIO_TOGGLE_ID, layout.SCENARIO_MENU_ID, layout.SCENARIO_FILTER_KEY),
@@ -86,6 +90,25 @@ def register_callbacks(app) -> None:
     # Still unwired to anything downstream (see the Scenario registration note
     # above), but its own options/value now stay consistent with the other tabs.
     # -----------------------------------------------------------------
+    # -----------------------------------------------------------------
+    # Model Use Case -> Reporting Cycle. Loss has a single portfolio-wide
+    # entity, so unlike the other tabs there is no Model/Segment population to
+    # narrow by -- the use case is the only scope the cycle list depends on.
+    # -----------------------------------------------------------------
+    @app.callback(
+        Output(layout.REPORTING_CYCLE_ID, "options"),
+        Output(layout.REPORTING_CYCLE_ID, "value"),
+        Input(layout.MODEL_USE_CASE_ID, "value"),
+        State(layout.REPORTING_CYCLE_ID, "value"),
+    )
+    def sync_loss_use_case_to_cycle_options(model_use_case, current_cycle):
+        # with_placeholder on every rewrite: the value "" must match an option,
+        # or the shell's toggle falls back to a bare "Select" (see _option_label).
+        options = controls.with_placeholder(
+            cycle_options_for_cycles(None, model_use_case), "reporting-cycle")
+        value = controls.keep_or_unselected(options, current_cycle)
+        return options, value
+
     @app.callback(
         Output(layout.SCENARIO_ID, "options"),
         Output(layout.SCENARIO_ID, "value"),
@@ -99,7 +122,7 @@ def register_callbacks(app) -> None:
         else:
             options = _cfg_scenario_options
         allowed_values = {option["value"] for option in options}
-        value = current_scenario if current_scenario in allowed_values else (options[0]["value"] if options else "")
+        value = controls.keep_or_unselected(options, current_scenario)
         return options, value
 
     def _install_loss_store(reporting_cycle):
@@ -178,12 +201,9 @@ def register_callbacks(app) -> None:
 
         return range_store
 
-    # Segment is never disabled/blocked by Model. With no model chosen, its
-    # options still show every real segment plus a "Select segment"
-    # placeholder (mirroring Model's own "Select model" placeholder); with a
-    # model chosen, options/value resolve via get_loss_segments_for_model /
-    # resolve_loss_segment as before -- matches LGD/EAD's
-    # sync_lgd_segment_dropdown / sync_ead_segment_dropdown.
+    # Segment is never disabled/blocked by Model: picking a Model narrows its
+    # options to that model's own segments, but never answers it. See the note
+    # in the body.
     @app.callback(
         Output(layout.SEGMENT_DROPDOWN_ID, "options"),
         Output(layout.SEGMENT_DROPDOWN_ID, "value"),
@@ -191,14 +211,19 @@ def register_callbacks(app) -> None:
         State(layout.SEGMENT_DROPDOWN_ID, "value"),
     )
     def sync_loss_segment_dropdown(selected_model, selected_segment):
-        has_model = bool(selected_model)
         segments = get_loss_segments_for_model(data, selected_model)
-        options = _dropdown_options(segments)
-        if has_model:
-            value = resolve_loss_segment(data, selected_model, selected_segment)
-        else:
-            options = [{"label": "Select segment", "value": ""}] + options
-            value = selected_segment if selected_segment in segments else ""
+        options = controls.with_placeholder(_dropdown_options(segments), "portfolio-segment")
+        # Segment stays unanswered until the user answers it, exactly like every
+        # other filter -- matching PD. Picking a Model used to run
+        # resolve_loss_segment here, which never returns empty: it falls back to
+        # "All", or to ``segments[0]`` when the model has no "All" aggregate row.
+        # For a single-segment model that was harmless, but a model with five
+        # segments had the choice made for it (LGD Model A silently became
+        # "Cyclical"), which is the auto-selection the empty start removes.
+        #
+        # resolve_loss_segment is still the right call elsewhere -- the page
+        # layout uses it for deep links, which name a scope deliberately.
+        value = controls.keep_or_unselected(options, selected_segment)
         return options, value
 
     @app.callback(
@@ -208,9 +233,13 @@ def register_callbacks(app) -> None:
         State(layout.MONITORING_POINT_DROPDOWN_ID, "value"),
     )
     def sync_loss_monitoring_point_dropdown(reporting_cycle, selected_monitoring_point):
-        options = controls.LOSS_REPORTING_CYCLE_QUARTERS.get(reporting_cycle, [])
-        value = filter_shell.resolve_monitoring_point_value(options, selected_monitoring_point)
-        return _dropdown_options(options), value
+        quarters = controls.LOSS_REPORTING_CYCLE_QUARTERS.get(reporting_cycle, [])
+        # Display most-recent-first, matching Reporting Cycle. No
+        # resolve_monitoring_point_value: it answers the filter with the latest
+        # quarter, which on the empty first render fills it in unasked.
+        options = controls.with_placeholder(
+            _dropdown_options(list(reversed(quarters))), "monitoring-point")
+        return options, controls.keep_or_unselected(options, selected_monitoring_point)
 
     # -----------------------------------------------------------------
     # Apply is gated on a Model being selected: Segment can be browsed/picked
@@ -219,12 +248,28 @@ def register_callbacks(app) -> None:
     # matches LGD/EAD's sync_lgd_apply_button_availability /
     # sync_ead_apply_button_availability.
     # -----------------------------------------------------------------
+    # -----------------------------------------------------------------
+    # Apply gate: the page opens with every filter unanswered, so Apply stays
+    # disabled until all of them have a real value -- nothing can be applied
+    # against a half-specified scope. Model Group is included for completeness;
+    # on this tab it has a single fixed value and is therefore always satisfied.
+    #
+    # This only ever writes the button's own ``disabled`` prop, and nothing
+    # reads that back, so it adds no edge to the filter cascade.
+    # -----------------------------------------------------------------
     @app.callback(
         Output(layout.APPLY_FILTERS_ID, "disabled"),
+        Input(layout.REGION_ID, "value"),
+        Input(layout.PORTFOLIO_ID, "value"),
+        Input(layout.MODEL_USE_CASE_ID, "value"),
+        Input(layout.REPORTING_CYCLE_ID, "value"),
         Input(layout.MODEL_DROPDOWN_ID, "value"),
+        Input(layout.SEGMENT_DROPDOWN_ID, "value"),
+        Input(layout.MONITORING_POINT_DROPDOWN_ID, "value"),
+        Input(layout.SCENARIO_ID, "value"),
     )
-    def sync_loss_apply_button_availability(selected_model):
-        return not bool(selected_model)
+    def sync_loss_apply_button_availability(*filter_values):
+        return not controls.all_selected(*filter_values)
 
     # -----------------------------------------------------------------
     # Apply filters: snapshot current filter values into the applied store

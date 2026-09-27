@@ -75,7 +75,13 @@ def test_performance_specific_models_use_single_select_dropdown():
         assert getattr(model_filter, "multi", False) is not True
 
 
-def test_monitoring_point_defaults_use_latest_visible_option():
+def test_monitoring_point_opens_unanswered_on_every_tab():
+    """It used to default to the latest visible quarter. The page now opens with
+    nothing selected at all, so the control shows its "Select …" placeholder --
+    ``resolve_monitoring_point_value`` is deliberately no longer reached from
+    the initial layout, because it would answer the filter for the user."""
+    from STATpy_platform.shared.ui.controls import SELECT_PROMPTS, UNSELECTED
+
     pages = [
         (overview_page.build_layout(), overview_page.MONITORING_POINT_ID),
         (lgd_page.build_layout(), lgd_page.MONITORING_POINT_DROPDOWN_ID),
@@ -91,5 +97,5 @@ def test_monitoring_point_defaults_use_latest_visible_option():
                 break
 
         assert isinstance(monitoring_point, Dropdown)
-        option_values = [option["value"] for option in (monitoring_point.options or [])]
-        assert monitoring_point.value == filter_shell.resolve_monitoring_point_value(option_values, None)
+        assert monitoring_point.value == UNSELECTED, component_id
+        assert monitoring_point.options[0]["label"] == SELECT_PROMPTS["monitoring-point"], component_id

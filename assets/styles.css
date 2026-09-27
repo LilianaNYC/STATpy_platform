@@ -187,27 +187,53 @@ body{background:#f8fafc;overflow:hidden}
 .monitoring-filter{display:flex;flex-direction:column;gap:5px;position:relative}
 .monitoring-filter>label{font-size:10px;color:var(--text-muted);font-weight:800;letter-spacing:.35px;text-transform:uppercase}
 .saas-top-filter-row{display:grid;column-gap:14px;row-gap:12px;align-items:end;justify-content:flex-start}
+/* Row captions. Row 1 is the Scope (which population the page covers), row 2
+   the Focus (which model/point within it). Both rows lead with a caption track
+   of the SAME width -- that is what keeps each row's filter columns aligned
+   with the row above across the divider -- so size it here, once, not per row.
+   64px fits "Reporting"-length words at this type size; both captions are 5
+   characters, so there is headroom. */
+.monitoring-controls.saas-top-filter-row{--filter-caption-track:64px}
+/* Vertically centered on the 32px toggles beside it, not on their labels: the
+   caption names the whole row, so it reads against the controls. line-height
+   32px makes the caption box exactly toggle-height and align-self:end puts
+   their bottoms together, so the two centers coincide by construction --
+   no padding constant to re-tune when the type size changes. */
+.monitoring-filter-row-caption{align-self:end;line-height:32px;font-size:11px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;color:var(--text);white-space:nowrap}
 /* Uniform columns: every filter (and the Apply cell) shares the same 171px max
    so all seven tracks size equally at typical widths. The Model Use Case /
    Cycle column (6th) carries a 140px floor -- its label needs 138px to stay on
    one line -- while the rest can compress to 120px on narrow screens. */
 .saas-primary-filter-row{grid-template-columns:repeat(5,minmax(120px,171px)) minmax(140px,171px) minmax(120px,171px)}
-/* Monitoring's own primary row (PD/LGD/EAD/Loss Performance tabs): Region,
-   Portfolio, Model Group, Model, Segment -- 5 tracks, unlike SAAS's 7-item
-   row above, so it needs its own template rather than reusing
-   .saas-primary-filter-row's (which would reserve two extra empty tracks). */
-.monitoring-primary-filter-row{grid-template-columns:repeat(5,minmax(120px,171px))}
-/* Overview's own primary row: Model Group, Model, Model Use Case / Cycle,
-   Monitoring Point, plus the Apply cell -- 4 filters, unlike PD/LGD/EAD/Loss's
-   5-item row, so it needs its own template; the Apply cell sizes to content
-   since it isn't a fixed-width filter. */
-.overview-primary-filter-row{grid-template-columns:repeat(4,minmax(120px,171px)) auto}
-/* Waterfall chevrons: the primary filters cascade left-to-right (each selection
-   narrows the next), so draw an arrow in the grid gap before every cell after
-   the first. Cells are position:relative; the glyph centers in the 14px gap,
-   vertically aligned with the 32px bottom-aligned toggles. Colored (and sized
-   up) in the app's accent blue, full opacity, so the cascade stands out --
-   labels stay their normal muted color. */
+/* The monitoring tabs use one consistent control width so each row has a
+   predictable rhythm and peer filters read as a single group. */
+.monitoring-primary-filter-row{grid-template-columns:var(--filter-caption-track) repeat(4,160px)}
+/* Overview now uses the same two-tier bar as the performance tabs.
+   Row 1 is the data scope: Region, Portfolio, Model Use Case, Reporting Cycle.
+   It follows the same uniform sizing as the performance tabs. */
+.overview-primary-filter-row{grid-template-columns:var(--filter-caption-track) repeat(4,160px)}
+/* Row 2 is the focus: Model Group, Model, Monitoring Point, then Apply. Keep
+   the action in a content-sized track so it reads as the final step in the
+   filter sequence instead of floating at the far edge of the bar. */
+.overview-secondary-filter-row{grid-template-columns:var(--filter-caption-track) repeat(3,160px) max-content;padding-top:12px;border-top:1px solid #e8eef6}
+.overview-secondary-filter-row>.monitoring-filter.saas-top-filter-action{width:auto;justify-self:start;margin-left:0}
+.overview-secondary-filter-row .single-select-dropdown{min-width:0;max-width:none;width:100%}
+/* The row templates own control width; suppress the shared dropdown floor. */
+.overview-primary-filter-row .single-select-dropdown{min-width:0;max-width:none;width:100%}
+/* Dirty state: the view is Apply-gated, so the button says when what is on
+   screen no longer matches what is rendered below. */
+.saas-top-filter-apply.is-dirty{background:var(--blue);border-color:var(--blue);color:#fff;box-shadow:0 4px 12px rgba(37,99,235,.28)}
+.saas-top-filter-apply.is-clean{opacity:.62}
+/* Waterfall chevrons: the primary (Scope) filters cascade left-to-right (each
+   selection narrows the next), so draw an arrow in the grid gap before every
+   cell after the first. Cells are position:relative; the glyph centers in the
+   14px gap, vertically aligned with the 32px bottom-aligned toggles. Colored
+   (and sized up) in the app's accent blue, full opacity, so the cascade stands
+   out -- labels stay their normal muted color.
+
+   Scope rows only. No Focus row carries chevrons on any tab -- Overview's was
+   the one exception, which made the same row read differently there than on
+   PD/LGD/EAD/Loss. */
 .saas-primary-filter-row>.monitoring-filter+.monitoring-filter:not(.saas-top-filter-action)::before,
 .monitoring-primary-filter-row>.monitoring-filter+.monitoring-filter:not(.saas-top-filter-action)::before,
 .overview-primary-filter-row>.monitoring-filter+.monitoring-filter:not(.saas-top-filter-action)::before{content:"❯";position:absolute;left:-15px;bottom:10px;width:16px;font-size:13px;font-weight:800;line-height:1;text-align:center;color:var(--blue);opacity:1;pointer-events:none}
@@ -218,6 +244,14 @@ body{background:#f8fafc;overflow:hidden}
    158px to render unclipped, and anything past ~162px drops the row to five
    tracks at typical widths. */
 .saas-secondary-filter-row{grid-template-columns:repeat(auto-fit,minmax(140px,160px));margin-top:14px;padding-top:12px;border-top:1px solid #e8eef6}
+/* PD/LGD/EAD/Loss row 2 is the population/point focus: Model, Segment,
+   Monitoring Point, Scenario, then Apply. Filters stay uniform and the action
+   occupies a compact final track. Scoped so SAAS is untouched.
+   Four tracks, not five: Model Group was removed from these tabs -- each shows
+   exactly one group, so the control could only ever return its own name. */
+.monitoring-controls.saas-secondary-filter-row{grid-template-columns:var(--filter-caption-track) repeat(4,160px) max-content}
+.monitoring-controls.saas-secondary-filter-row>.monitoring-filter.saas-top-filter-action{width:auto;justify-self:start;margin-left:0}
+.monitoring-controls.saas-secondary-filter-row .single-select-dropdown{min-width:0;max-width:none;width:100%}
 .saas-top-filter-row .monitoring-filter{width:100%;min-width:0 !important;max-width:none !important}
 .saas-top-filter-row .monitoring-top-select,
 .saas-top-filter-row .single-select-dropdown,
@@ -388,7 +422,11 @@ body{background:#f8fafc;overflow:hidden}
 .saas-subnav-model-chip.active{background:var(--navy);border-color:var(--navy);color:#fff;box-shadow:0 6px 16px rgba(15,29,53,.14)}
 .saas-subnav-model-chip.active:hover,.saas-subnav-model-chip.active:focus{background:var(--navy);border-color:var(--navy);color:#fff;transform:none}
 .saas-model-panel-stack{margin-top:16px}
-.saas-secondary-filter-row{margin-top:8px}
+/* One declaration owns the gap above the second filter row, so the divider
+   sits at the same height on every tab. Overview's row uses its own class
+   for sizing but must share this spacing. */
+.saas-secondary-filter-row,
+.overview-secondary-filter-row{margin-top:8px}
 .saas-date-range-controls{display:flex;align-items:flex-end}
 .saas-secondary-filter-row .saas-date-range-controls .pd-range-controls{min-height:100%}
 .saas-historical-stats-filter.is-hidden{display:none}
@@ -2761,13 +2799,49 @@ tr:last-child td{border-bottom:none}
   .pd-chapter-heading{flex-direction:column;align-items:flex-start}
   .pd-chapter-note{text-align:left}
   .monitoring-controls{align-items:stretch}
+  .monitoring-primary-filter-row,
+  .monitoring-controls.saas-secondary-filter-row,
+  .overview-primary-filter-row,
+  .overview-secondary-filter-row{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
+  /* Stacked: the caption is a heading over the column, not a cell beside it. */
+  .monitoring-filter-row-caption{line-height:normal;align-self:start}
   .monitoring-filter{width:100%}
+  .monitoring-controls.saas-secondary-filter-row>.monitoring-filter.saas-top-filter-action,
+  .overview-secondary-filter-row>.monitoring-filter.saas-top-filter-action{width:100%;padding-top:2px}
+  .monitoring-controls.saas-secondary-filter-row>.monitoring-filter.saas-top-filter-action .pd-mev-filter-reset,
+  .overview-secondary-filter-row>.monitoring-filter.saas-top-filter-action .pd-mev-filter-reset{width:100%}
+  .monitoring-primary-filter-row>.monitoring-filter+.monitoring-filter:not(.saas-top-filter-action)::before,
+  .overview-primary-filter-row>.monitoring-filter+.monitoring-filter:not(.saas-top-filter-action)::before{display:none}
   .monitoring-top-select,
   .monitoring-top-select .Select-control{min-width:100%;max-width:none}
   .single-select-dropdown{max-width:none}
   .checkbox-dropdown-toggle,.checkbox-dropdown-menu{min-width:100%;max-width:none}
   .monitoring-section-subnav-group{flex-direction:column}
   .monitoring-section-subnav-label{min-width:0}
+}
+@media(min-width:901px) and (max-width:1400px){
+  /* At medium widths the sidebar leaves less room for fixed tracks, so each
+     monitoring row becomes a compact wrapping group. Apply remains beside the
+     final filter whenever space permits and wraps directly below it otherwise. */
+  .monitoring-primary-filter-row,
+  .monitoring-controls.saas-secondary-filter-row,
+  .overview-primary-filter-row,
+  .overview-secondary-filter-row{display:flex;flex-wrap:wrap;align-items:flex-end}
+  /* .saas-top-filter-row sets width:100% on each filter, which means "the grid
+     cell" under display:grid but "the whole row" under flex -- without this
+     override every filter would claim a row of its own. */
+  .monitoring-primary-filter-row>.monitoring-filter,
+  .monitoring-controls.saas-secondary-filter-row>.monitoring-filter,
+  .overview-primary-filter-row>.monitoring-filter,
+  .overview-secondary-filter-row>.monitoring-filter{flex:0 0 140px;width:140px;min-width:140px !important;max-width:140px !important}
+  .monitoring-controls.saas-secondary-filter-row>.saas-top-filter-action,
+  .overview-secondary-filter-row>.saas-top-filter-action{flex:0 0 auto;min-width:0 !important;max-width:none !important;margin-left:0}
+  /* Under flex the caption sizes to its own text, which would start each
+     row's filters at a different x. Pin it to the shared track width so the
+     columns keep lining up across the divider. */
+  .monitoring-filter-row-caption{flex:0 0 var(--filter-caption-track)}
+  .monitoring-primary-filter-row>.monitoring-filter+.monitoring-filter:not(.saas-top-filter-action)::before,
+  .overview-primary-filter-row>.monitoring-filter+.monitoring-filter:not(.saas-top-filter-action)::before{display:none}
 }
 @media(min-width:901px) and (max-width:1400px){
   .pd-mev-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}

@@ -111,6 +111,212 @@ once via `services.data_service` → `data_access.PD_PERFORMANCE_DATA`.
 5. Register the page in `page_registry.py`.
 6. Add a smoke test under `tests/`.
 
+## Top filter bar
+
+All five tabs present the same filters in the same order, as a two-row bar: a
+**Scope** row that picks the slice of data, then a **Focus** row that narrows
+within it and applies. Each row is captioned with that word, in a stub column
+down the left of the bar, so the split is visible rather than implied.
+
+| Row | PD / LGD / EAD / Loss | Overview |
+|---|---|---|
+| **Scope** | Region · Portfolio · Model Use Case · Reporting Cycle | *same* |
+| **Focus** | Model · Segment · Monitoring Point · Scenario → **Apply filters** | Model Group · Model · Monitoring Point → **Apply filters** |
+
+Overview's row 2 differs because it is the cross-portfolio roll-up: no Segment
+or Scenario, but it is the only tab with a **Model Group** filter. The
+performance tabs each show exactly one group, so the control there could only
+ever return its own name — its value drove nothing (the group is hardcoded at
+every `models_matching` call site), the sidebar/title/URL already state it, and
+once the bar started empty it became a required click with a foregone answer.
+So it was removed from PD/LGD/EAD/Loss and kept on Overview, where picking
+between PD/LGD/EAD/Loss is a real choice.
+
+Everything else — order, the two-row split and the divider — is identical.
+Cascade chevrons appear on the **Scope** row only, on every tab; Overview's
+Focus row used to draw them too, which made the same row read differently
+there. Apply sits directly after the final filter so the controls and their
+action read as one workflow.
+
+Loss is the other exception: it has a single portfolio-wide entity ("All
+Models") carrying no per-model Region or Portfolio, so those two filters stay
+fixed placeholders showing only "All" rather than dropping it like the other
+tabs.
+
+Layout lives in CSS, not Python: `.monitoring-primary-filter-row` /
+`.saas-secondary-filter-row` size the performance tabs and
+`.overview-primary-filter-row` / `.overview-secondary-filter-row` size Overview.
+All peer filters use the same width: 160px on wide screens and 140px at medium
+widths. The **Apply filters** track is content-sized and follows the final focus
+control; medium-width rows wrap naturally, while small screens stack the
+controls and use a full-width action.
+
+The captions come from `shared.ui.controls.build_scope_caption` /
+`build_focus_caption` and are `.monitoring-filter-row-caption`, deliberately
+**not** `.monitoring-filter`: that class carries the per-filter track sizing and
+the cascade chevron, which is drawn before every `.monitoring-filter` preceded
+by another one, so reusing it would put an arrow between the caption and the
+first filter. Both rows lead with a caption track of the same width
+(`--filter-caption-track`, set once on `.monitoring-controls.saas-top-filter-row`)
+— that shared width is what keeps each row's filter columns lined up with the
+row above, across the divider. Below 901px the rows stack and the caption
+becomes a plain heading over its group.
+
+### The page opens with nothing selected
+
+Every filter starts unanswered, showing a "Select …" placeholder, and **Apply
+stays disabled until all of them have a real value** — nothing can be applied
+against a half-specified scope. The machinery is in `shared/ui/controls.py`:
+`UNSELECTED` (the empty value), `with_placeholder`, `keep_or_unselected`, `SELECT_PROMPTS` and
+`all_selected`.
+
+One exemption only: **Loss's Region/Portfolio**, which are fixed "All"
+placeholders because its single entity is the portfolio-wide "All Models",
+carrying neither attribute. Every other filter on every tab starts unanswered.
+
+Model Group was the other one-option control, and rather than exempt it the
+filter itself was removed from PD/LGD/EAD/Loss (see above) — a filter that can
+only return one answer is a label, not a filter.
+
+Three rules for anyone touching a cascade after this:
+
+1. **Never fall back to `options[0]`.** Use `keep_or_unselected`: keep a
+   still-valid pick, otherwise leave the filter unanswered. The cascade runs on
+   the first render, so a first-option fallback fills the whole bar in before
+   the user touches it. `tests/test_empty_start.py` greps for this specific
+   regression.
+2. **Every option list a callback writes needs its placeholder**, via
+   `with_placeholder`. The value `""` has to match an option, or `_option_label`
+   falls back to a bare `"Select"` and the control reads as broken.
+3. **Do not use `resolve_monitoring_point_value` from a filter callback.** It
+   answers the filter with the latest quarter. It is still correct for deep
+   links, which supply a scope deliberately.
+
+Because Apply now needs the *whole* scope, a combination with no data behind it
+is a dead end rather than a thin render: pick a region/portfolio with no CECL
+data, pick CECL, and Reporting Cycle comes back empty with no way forward. So
+the performance tabs now narrow **Model Use Case** and **Reporting Cycle** by
+Region/Portfolio, and **Model** by Reporting Cycle, the way Overview already
+did. All three read filters to their left, so the cascade stays one-way (see
+callback rule 2). `test_every_offered_cycle_still_has_a_model` walks every
+reachable scope and fails if any of them offers no model.
+
+### Option ordering
+
+One rule, applied to every filter on every tab, and to SAAS's bar too. It lives
+in `shared/domain/filter_order.py`:
+
+| Kind of value | Order | Filters |
+|---|---|---|
+| Text | A–Z, case-insensitive | Region, Portfolio, Model Use Case, Model Group, Model, Segment, Scenario |
+| Dates, quarters, numbers | Most recent / largest first | Reporting Cycle, Monitoring Point |
+
+Two things are deliberately **outside** the rule:
+
+* **Aggregate sentinels** — "All", "Select model", "Select segment". They are
+  not values, they are the absence of a choice, so they stay pinned at the head
+  of the list instead of sorting into it. Sentinels are matched by *value*, not
+  label: Loss labels its aggregate "All models" while its one real model is
+  named "All Models", and a label match cannot tell those apart.
+* **`domain/overview.MODEL_GROUPS`** (PD → LGD → EAD → Loss). That is the
+  loss-decomposition sequence every chart and table sorts on, not a filter.
+  Only the Model Group *filter* is alphabetized; the figure order is untouched.
+
+Ordering and **defaults are separate concerns**, because several defaults are
+taken from `options[0]`. Listing Model Use Case A–Z puts "CECL" first, so
+`filters_config.default_use_case` supplies the default instead — the owner of
+the most recent cycle — and every tab still opens on the live CCAR cycle.
+Reporting Cycle and Monitoring Point need no such treatment: descending already
+puts the newest first.
+
+Sorting periods is a parse, not a string compare, so "10" outranks "9". A bare
+year counts as the whole year and therefore outranks its own quarters ("2025"
+above "2025Q1"). Composite cycles sort on the part after the family name —
+compared whole, "CECL 2025Q1" would outrank "CCAR 2026".
+
+`tests/test_filter_order.py` covers the rule; the per-tab guards
+(`features/monitoring/tests/test_filter_bar_ordering.py`,
+`features/saas/tests/test_filter_ordering.py`) check the rendered bars obey it.
+
+### The cascade
+
+Each filter narrows the ones after it, so the bar can never offer a combination
+with no data behind it. One rule per line.
+
+**PD, LGD and EAD**
+
+| Picking this… | …narrows the options of |
+|---|---|
+| Region | Portfolio |
+| Model Use Case | Reporting Cycle |
+| Region + Portfolio + Reporting Cycle | Model |
+| Model | Segment |
+| Reporting Cycle + Model + Segment | Monitoring Point |
+| Reporting Cycle | Scenario |
+
+```
+Region → Portfolio ─┐
+                    ├→ Model → Segment → Monitoring Point
+Model Use Case → Reporting Cycle ─┘
+                 Reporting Cycle ─────────────────────→ Scenario
+```
+
+**Overview** — no Segment or Scenario, and its Model Use Case is itself narrowed
+by the Region/Portfolio scope:
+
+| Picking this… | …narrows the options of |
+|---|---|
+| Region | Portfolio |
+| Region + Portfolio | Model Use Case |
+| Region + Portfolio + Model Use Case | Reporting Cycle |
+| Region + Portfolio + Reporting Cycle + Model Group | Model |
+| Reporting Cycle + Model | Monitoring Point |
+
+**Loss** — fewest edges, since its Region/Portfolio are placeholders (above) and
+it has one portfolio-wide entity:
+
+| Picking this… | …narrows the options of |
+|---|---|
+| Model Use Case | Reporting Cycle |
+| Reporting Cycle | Monitoring Point |
+| Reporting Cycle | Scenario |
+| Model | Segment |
+
+### The rule that keeps it acyclic
+
+**Every arrow points rightward along the bar.** No callback may write a filter
+that sits to the left of any filter it reads — a backwards edge is exactly how
+Dash dependency cycles arise here (see the callback rules in `CLAUDE.md`), and
+they surface only in the browser console, never in pytest.
+
+This is enforced. `features/monitoring/tests/test_performance_tab_filters.py`
+parses the real `@app.callback` decorators on PD, LGD, EAD and Loss and fails on
+any backwards edge; `features/monitoring/tests/test_overview_use_case_filter.py`
+does the same for Overview. Overview carries the one known-unfixed violation —
+`sync_overview_model_select_all`, the mutually-syncing select-all, which both
+reads and writes the Model value (see callback rule 4 in `CLAUDE.md`). It is
+pinned *by name* rather than hidden, so a **new** backwards edge still fails the
+test.
+
+Reordering the bar therefore means re-checking direction. When Reporting Cycle
+moved ahead of Model, the old "Model/Segment narrows the cycle list" edges had
+to be inverted into "Reporting Cycle narrows the Model list"; keeping both would
+have closed the loop.
+
+### Model Use Case / Reporting Cycle
+
+These two were one combined "Model Use Case / Cycle" control. They are now
+separate, fed by the workbook's own `Model Use Case` and `Reporting Cycle`
+columns. The cycle dropdown **labels** the bare cycle ("2026") but its **value
+stays the composite** ("CCAR 2026") — that composite is the join key behind
+every store, figure, export and Dash element ID, so nothing downstream changed.
+
+Region, Portfolio, Model Use Case and Reporting Cycle carry **no "All" option**:
+each offers only values with data in the scope its predecessors set. Monitoring
+Point lists most-recent-first to match Reporting Cycle; the default is resolved
+with `max()`, not by position, so the display order cannot change which quarter
+is selected.
+
 ## Conventions
 - Every `register_callbacks(app)` is **idempotent** via
   `shared.registration.already_registered(app, key)`.

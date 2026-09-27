@@ -15,6 +15,7 @@ import re
 from typing import Any
 
 from .quarter_labels import compare_pd_quarter_labels, _pd_quarter_sort_key
+from .filter_order import alphabetical
 from .calculations import PdFilterContext, is_finite_number, _to_number
 
 _SLUG_NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
@@ -307,10 +308,10 @@ def models_matching(
 
 
 def model_field_values(mev_catalog: dict[str, Any], field: str, candidates: list[str]) -> list[str]:
-    """Distinct, sorted non-blank ``field`` values (e.g. ``"region"``,
-    ``"portfolio"``) across ``candidates`` -- builds a cascading filter's
-    option list from whichever models are still in scope."""
-    return sorted({value for name in candidates if (value := mev_catalog.get(name, {}).get(field))})
+    """Distinct non-blank ``field`` values (e.g. ``"region"``, ``"portfolio"``)
+    across ``candidates``, A-Z -- builds a cascading filter's option list from
+    whichever models are still in scope."""
+    return alphabetical({value for name in candidates if (value := mev_catalog.get(name, {}).get(field))})
 
 
 def get_pd_mev_chart_id(model_name: str, mev_name: str) -> str:

@@ -196,8 +196,12 @@ snapshots the top-bar selections into `pd-applied-filters-store`; a single maste
 callback then re-runs the content render whenever the applied filters or any
 per-chart store changes. Section builders are pure functions of that state.
 
-- **Model Use Case / Cycle / Scenario / Monitoring Point** drive which precomputed
-  metrics and projection quarters are shown.
+- **Model Use Case / Reporting Cycle / Scenario / Monitoring Point** drive which
+  precomputed metrics and projection quarters are shown. These were once a single
+  combined "Model Use Case / Cycle" control; the filter bar's full order, the
+  cascade between the filters, and the rule that keeps it free of Dash dependency
+  cycles are documented in
+  [`features/monitoring/README.md`](features/monitoring/README.md#top-filter-bar).
 - **Segment vs Specific Model** are mutually exclusive (single-select); leaving
   the model unselected lets you drill into a segment instead, and leaving both
   unselected defaults PD to the first available model.

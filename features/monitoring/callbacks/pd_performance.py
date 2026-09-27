@@ -20,6 +20,7 @@ from ....shared.ui import controls
 from ....shared.theme import APP_THEME_ID, URL_ID
 from ....shared.domain.calculations import PdFilterContext, ctx_store_keys, set_precomputed_metrics
 from ....shared.domain.mev_range import model_field_values, models_matching
+from ....shared.domain.filter_order import alphabetical
 from ....shared.registration import already_registered
 from ....shared.repositories.filters_config import cycle_family
 from ..data_access import PD_PERFORMANCE_DATA
@@ -30,7 +31,7 @@ _RANGE_PRESET_COUNTS = {"last-4": 4, "last-8": 8, "last-12": 12}
 
 def _merge_same_family_pd_cycle_data(observations_by_cycle: dict, reporting_cycle: str) -> dict:
     """Pool ``observations_by_cycle`` across every cycle in the same family as
-    ``reporting_cycle`` (e.g. "CCAR 2025" + "CCAR 2026", never "BAU 2025Q1")
+    ``reporting_cycle`` (e.g. "CCAR 2025" + "CCAR 2026", never "CECL 2025Q1")
     so trend charts can show history from prior same-family cycles, not just
     the selected one. Every chart that reads ``ctx.quarters`` already trims
     to ``<= snapshot_quarter`` (see ``get_pd_range_periods`` and
@@ -104,7 +105,7 @@ def register_callbacks(app) -> None:
     pd_segment_models = data.get("pd_segment_models") or {}
     pd_model_segment_cycles = data.get("pd_model_segment_cycles") or {}
     mev_catalog = data.get("mev_catalog") or {}
-    all_pd_segments = sorted({segment for segments in pd_model_segments.values() for segment in segments})
+    all_pd_segments = alphabetical({segment for segments in pd_model_segments.values() for segment in segments})
     # Which models actually have a literal (model, "All") row in each cycle's
     # precomputed store -- e.g. "PD Corp Model" in CCAR 2025 only has a
     # "Cyclical" row, no "All" aggregate. Picking "All" for such a model
@@ -134,17 +135,26 @@ def register_callbacks(app) -> None:
 
     mev_scenarios_by_cycle = data.get("mev_scenarios_by_cycle") or {}
 
-    from ....shared.repositories.filters_config import load_filter_config as _load_filter_config
+    from ....shared.repositories.filters_config import (
+        cycle_options_for_cycles,
+        load_filter_config as _load_filter_config,
+        use_case_options_for_cycles,
+    )
     _cfg = _load_filter_config()
     _cfg_cycle_options = [{"label": c["label"], "value": c["value"]} for c in _cfg["reporting_cycles"]]
-    _cfg_scenario_options = [{"label": s["label"], "value": s["value"]} for s in _cfg["scenarios"]]
+    # Every option list a callback writes has to carry the "Select …"
+    # placeholder too. Without it the value "" matches no option, and the
+    # shell's toggle falls back to a bare "Select" -- see _option_label.
+    _cfg_scenario_options = controls.with_placeholder(
+        [{"label": s["label"], "value": s["value"]} for s in _cfg["scenarios"]], "scenario")
 
-    def _narrow_pd_cycle_options(cycles: list[str] | None) -> list[dict[str, str]]:
-        if cycles is None:
-            return _cfg_cycle_options
-        allowed = set(cycles)
-        narrowed = [option for option in _cfg_cycle_options if option["value"] in allowed]
-        return narrowed or _cfg_cycle_options
+    def _narrow_pd_cycle_options(cycles: list[str] | None, use_case: str | None = None) -> list[dict[str, str]]:
+        """Cycle options for a population, scoped to the selected Model Use Case.
+
+        Labels are the bare cycle; values stay the composite.
+        """
+        return controls.with_placeholder(
+            cycle_options_for_cycles(cycles, use_case), "reporting-cycle")
 
     # -----------------------------------------------------------------
     # Every top-bar filter's open/close, click-to-value, and menu-rebuild-
@@ -159,9 +169,9 @@ def register_callbacks(app) -> None:
     for value_id, toggle_id, menu_id, filter_key in (
         (controls.REGION_ID, controls.REGION_TOGGLE_ID, controls.REGION_MENU_ID, "region"),
         (controls.PORTFOLIO_ID, controls.PORTFOLIO_TOGGLE_ID, controls.PORTFOLIO_MENU_ID, "portfolio"),
-        (controls.MODEL_GROUP_ID, controls.MODEL_GROUP_TOGGLE_ID, controls.MODEL_GROUP_MENU_ID, "model-group"),
         (controls.MODELS_ID, controls.MODELS_TOGGLE_ID, controls.MODELS_MENU_ID, "specific-models"),
         (controls.PORTFOLIO_SEGMENT_ID, controls.PORTFOLIO_SEGMENT_TOGGLE_ID, controls.PORTFOLIO_SEGMENT_MENU_ID, "portfolio-segment"),
+        (controls.MODEL_USE_CASE_ID, controls.MODEL_USE_CASE_TOGGLE_ID, controls.MODEL_USE_CASE_MENU_ID, "model-use-case"),
         (controls.REPORTING_CYCLE_ID, controls.REPORTING_CYCLE_TOGGLE_ID, controls.REPORTING_CYCLE_MENU_ID, "reporting-cycle"),
         (controls.MONITORING_POINT_ID, controls.MONITORING_POINT_TOGGLE_ID, controls.MONITORING_POINT_MENU_ID, "monitoring-point"),
         (controls.SCENARIO_ID, controls.SCENARIO_TOGGLE_ID, controls.SCENARIO_MENU_ID, "scenario"),
@@ -179,8 +189,13 @@ def register_callbacks(app) -> None:
     def sync_pd_region_to_portfolio_options(region, current_portfolio):
         matches = models_matching(mev_catalog, "PD", region, None, data["model_names"])
         portfolios = model_field_values(mev_catalog, "portfolio", matches)
-        options = [{"label": "All", "value": "All"}] + [{"label": p, "value": p} for p in portfolios]
-        value = current_portfolio if current_portfolio in portfolios or current_portfolio == "All" else "All"
+        # with_placeholder on every rewrite: the value "" must match an option,
+        # or the shell's toggle falls back to a bare "Select" (see _option_label).
+        # No "All" here: Region/Portfolio offer only values that have data, and
+        # this callback used to re-add one (and default to it) behind the view's back.
+        options = controls.with_placeholder(
+            [{"label": p, "value": p} for p in portfolios], "portfolio")
+        value = controls.keep_or_unselected(options, current_portfolio)
         return options, value
 
     # Segment narrows Models, and sync_pd_model_to_segment_options below narrows
@@ -201,6 +216,7 @@ def register_callbacks(app) -> None:
         Output(controls.MODELS_ID, "value"),
         Input(controls.REGION_ID, "value"),
         Input(controls.PORTFOLIO_ID, "value"),
+        Input(controls.REPORTING_CYCLE_ID, "value"),
         Input(
             {
                 "type": controls.SINGLE_SELECT_OPTION_ID,
@@ -212,7 +228,7 @@ def register_callbacks(app) -> None:
         State(controls.PORTFOLIO_SEGMENT_ID, "value"),
         State(controls.MODELS_ID, "value"),
     )
-    def sync_pd_filters_to_model_options(region, portfolio, segment_clicks, segment, current_model):
+    def sync_pd_filters_to_model_options(region, portfolio, reporting_cycle, segment_clicks, segment, current_model):
         triggered = ctx.triggered_id
         if isinstance(triggered, dict) and triggered.get("type") == controls.SINGLE_SELECT_OPTION_ID:
             # Option buttons are re-created whenever the Segment menu is rebuilt,
@@ -226,8 +242,19 @@ def register_callbacks(app) -> None:
         if segment and segment != "all":
             segment_models = set(pd_segment_models.get(segment, []))
             matches = [m for m in matches if m in segment_models]
-        options = [{"label": "Select model", "value": ""}] + [{"label": m, "value": m} for m in matches]
-        value = current_model if current_model in matches else ""
+        # Reporting Cycle sits to the LEFT of Model in the bar, so it narrows
+        # Model -- drop models with no rows for the chosen cycle. It was already
+        # an Input here but went unused, which let the bar offer a model/cycle
+        # pair with no data behind it. Harmless while Apply only needed a Model;
+        # now that Apply also needs a Monitoring Point it was a dead end, since
+        # such a pair leaves the Monitoring Point list empty and Apply can never
+        # enable. Skipped while the cycle is unanswered -- nothing to narrow by.
+        if reporting_cycle:
+            matches = [m for m in matches if pd_model_cycle_quarters.get((m, reporting_cycle))]
+
+        options = controls.with_placeholder(
+            [{"label": m, "value": m} for m in matches], "specific-models")
+        value = controls.keep_or_unselected(options, current_model)
         return options, value
 
     # -----------------------------------------------------------------
@@ -280,14 +307,16 @@ def register_callbacks(app) -> None:
             allowed = sorted(model_quarters)[-controls.MONITORING_POINT_WINDOW:] if model_quarters else None
         else:
             allowed = controls.PD_REPORTING_CYCLE_QUARTERS.get(cycle)
-        # Oldest-first, matching the LGD/EAD/Loss/Overview monitoring-point
-        # dropdowns. The default value is resolved via resolve_monitoring_point_value
-        # (options[-1], the latest quarter) rather than options[0], so ordering
-        # doesn't change which quarter gets picked when the current selection
-        # falls out of range.
+        # Most-recent-first, matching Reporting Cycle beside it and the other
+        # monitoring tabs. resolve_monitoring_point_value picks by max() rather
+        # than by position, so presenting the reverse cannot change which
+        # quarter is selected when the current one falls out of range.
         quarters = all_quarters_asc if allowed is None else sorted(allowed)
-        options = [{"label": q, "value": q} for q in quarters]
-        value = filter_shell.resolve_monitoring_point_value(quarters, current_mp)
+        options = controls.with_placeholder(
+            [{"label": q, "value": q} for q in reversed(quarters)], "monitoring-point")
+        # Not resolve_monitoring_point_value: it answers the filter with the
+        # latest quarter, which on the empty first render fills it in unasked.
+        value = controls.keep_or_unselected(options, current_mp)
         return options, value
 
     # -----------------------------------------------------------------
@@ -315,53 +344,106 @@ def register_callbacks(app) -> None:
         if model:
             segments = pd_model_segments.get(model, [])
             has_all = model in pd_models_with_all_by_cycle.get(reporting_cycle, set())
-            options = ([{"label": "All", "value": "all"}] if has_all else []) + [{"label": s, "value": s} for s in segments]
-            if current_segment in segments or (has_all and current_segment == "all"):
-                value = current_segment
-            else:
-                value = "all" if has_all else (segments[0] if segments else "")
-        else:
-            options = (
-                [{"label": "Select segment", "value": ""}, {"label": "All", "value": "all"}]
-                + [{"label": s, "value": s} for s in all_pd_segments]
+            options = controls.with_placeholder(
+                ([{"label": "All", "value": "all"}] if has_all else [])
+                + [{"label": s, "value": s} for s in segments],
+                "portfolio-segment",
             )
-            value = current_segment if current_segment in all_pd_segments or current_segment == "all" else ""
+        else:
+            options = controls.with_placeholder(
+                [{"label": "All", "value": "all"}]
+                + [{"label": s, "value": s} for s in all_pd_segments],
+                "portfolio-segment",
+            )
+        value = controls.keep_or_unselected(options, current_segment)
         return options, value
 
     # -----------------------------------------------------------------
     # Model Use Case / Cycle narrows to whichever reporting cycles actually
     # have data for the selected Model/Segment population -- e.g. PD Model C
-    # only has CCAR 2025/2026 rows (no BAU 2025Q1), and PD Model B's Cyclical/
+    # only has CCAR 2025/2026 rows (no CECL 2025Q1), and PD Model B's Cyclical/
     # Defensive segment breakdown starts later than its own "All" aggregate.
     # With no Model chosen but a real Segment picked, cycles are pooled across
     # every model that has that segment; with neither chosen, the full global
     # cycle list shows (unchanged from before this cascade existed).
     # -----------------------------------------------------------------
-    @app.callback(
-        Output(controls.REPORTING_CYCLE_ID, "options"),
-        Output(controls.REPORTING_CYCLE_ID, "value"),
-        Input(controls.MODELS_ID, "value"),
-        Input(controls.PORTFOLIO_SEGMENT_ID, "value"),
-        State(controls.REPORTING_CYCLE_ID, "value"),
-    )
-    def sync_pd_population_to_cycle_options(model, segment, current_cycle):
+    def _pd_population_cycles(model, segment) -> list[str] | None:
+        """Cycles the selected Model/Segment population has data for.
+
+        ``None`` means "no population narrowing". Shared by the Model Use Case
+        and Reporting Cycle callbacks so the two cannot disagree.
+        """
         segment_key = segment if segment and segment != "all" else "All"
         if model:
             cycles = pd_model_segment_cycles.get((model, segment_key))
             if cycles is None:
                 cycles = pd_model_segment_cycles.get((model, "All"), [])
-        elif segment and segment != "all":
-            cycles = sorted({
+            return cycles
+        if segment and segment != "all":
+            return sorted({
                 cycle
                 for (population_model, population_segment), population_cycles in pd_model_segment_cycles.items()
                 if population_segment == segment
                 for cycle in population_cycles
             })
-        else:
-            cycles = None
-        options = _narrow_pd_cycle_options(cycles)
+        return None
+
+    # -----------------------------------------------------------------
+    # The bar narrows left to right: Region -> Portfolio -> Model Use Case ->
+    # Reporting Cycle -> Model Group -> Model -> Segment -> Monitoring Point ->
+    # Scenario. Reporting Cycle now sits LEFT of Model/Segment, so it is scoped
+    # by the Use Case alone and in turn narrows the Model list below. Reading
+    # the population back here would write a filter to the left of its own
+    # inputs -- the loop callback rule 2 forbids.
+    # -----------------------------------------------------------------
+    # Model Use Case is narrowed by Region/Portfolio too, matching Overview.
+    # Without it the bar offered a programme the chosen region/portfolio has no
+    # data for, and picking it emptied Reporting Cycle -- a dead end now that
+    # Apply requires the whole scope. Region and Portfolio sit to the LEFT of
+    # Model Use Case, so this stays a one-way cascade (callback rule 2).
+    @app.callback(
+        Output(controls.MODEL_USE_CASE_ID, "options"),
+        Output(controls.MODEL_USE_CASE_ID, "value"),
+        Input(controls.REGION_ID, "value"),
+        Input(controls.PORTFOLIO_ID, "value"),
+        State(controls.MODEL_USE_CASE_ID, "value"),
+    )
+    def sync_pd_scope_to_use_case_options(region, portfolio, current_use_case):
+        in_scope = models_matching(mev_catalog, "PD", region, portfolio, data["model_names"])
+        cycles_with_data = {
+            cycle for (model, cycle) in pd_model_cycle_quarters
+            if model in in_scope and pd_model_cycle_quarters[(model, cycle)]
+        }
+        options = controls.with_placeholder(
+            use_case_options_for_cycles(cycles_with_data or None), "model-use-case")
+        return options, controls.keep_or_unselected(options, current_use_case)
+
+    @app.callback(
+        Output(controls.REPORTING_CYCLE_ID, "options"),
+        Output(controls.REPORTING_CYCLE_ID, "value"),
+        Input(controls.REGION_ID, "value"),
+        Input(controls.PORTFOLIO_ID, "value"),
+        Input(controls.MODEL_USE_CASE_ID, "value"),
+        State(controls.REPORTING_CYCLE_ID, "value"),
+    )
+    def sync_pd_use_case_to_cycle_options(region, portfolio, model_use_case, current_cycle):
+        # Also narrowed by Region/Portfolio, matching Overview. Without it the
+        # bar offered cycles with no model behind them for the chosen
+        # region/portfolio, and picking one emptied the Model list -- a dead
+        # end now that Apply requires both a Model and a Monitoring Point.
+        # Region and Portfolio sit to the LEFT of Reporting Cycle, so reading
+        # them here keeps the cascade one-way (callback rule 2).
+        in_scope = models_matching(mev_catalog, "PD", region, portfolio, data["model_names"])
+        cycles_with_data = {
+            cycle for (model, cycle) in pd_model_cycle_quarters
+            if model in in_scope and pd_model_cycle_quarters[(model, cycle)]
+        }
+        options = [
+            option for option in _narrow_pd_cycle_options(None, model_use_case)
+            if not option["value"] or option["value"] in cycles_with_data
+        ]
         allowed_values = {option["value"] for option in options}
-        value = current_cycle if current_cycle in allowed_values else (options[0]["value"] if options else "")
+        value = controls.keep_or_unselected(options, current_cycle)
         return options, value
 
     # -----------------------------------------------------------------
@@ -369,7 +451,7 @@ def register_callbacks(app) -> None:
     # distinct "Scenario" values available for the "Run For" cycle matching
     # the selected Model Use Case / Cycle (not a static config list). Falls
     # back to the full config list for cycles with no scenario-sheet rows
-    # (e.g. BAU 2025Q1, which the sheet doesn't cover at all).
+    # (e.g. CECL 2025Q1, which the sheet doesn't cover at all).
     # -----------------------------------------------------------------
     @app.callback(
         Output(controls.SCENARIO_ID, "options"),
@@ -384,7 +466,7 @@ def register_callbacks(app) -> None:
         else:
             options = _cfg_scenario_options
         allowed_values = {option["value"] for option in options}
-        value = current_scenario if current_scenario in allowed_values else (options[0]["value"] if options else "")
+        value = controls.keep_or_unselected(options, current_scenario)
         return options, value
 
     # -----------------------------------------------------------------
@@ -485,12 +567,23 @@ def register_callbacks(app) -> None:
     # (and the callback below no-ops even if clicked via a stale event) until
     # the user picks one.
     # -----------------------------------------------------------------
+    # The page opens with every filter unanswered, so Apply stays disabled until
+    # all of them have a real value -- nothing can be applied against a
+    # half-specified scope. Model Group is included for completeness; on this tab
+    # it has a single fixed value and is therefore always satisfied.
     @app.callback(
         Output(layout.APPLY_FILTERS_ID, "disabled"),
+        Input(controls.REGION_ID, "value"),
+        Input(controls.PORTFOLIO_ID, "value"),
+        Input(controls.MODEL_USE_CASE_ID, "value"),
+        Input(controls.REPORTING_CYCLE_ID, "value"),
         Input(controls.MODELS_ID, "value"),
+        Input(controls.PORTFOLIO_SEGMENT_ID, "value"),
+        Input(controls.MONITORING_POINT_ID, "value"),
+        Input(controls.SCENARIO_ID, "value"),
     )
-    def sync_pd_apply_button_availability(model):
-        return not bool(model)
+    def sync_pd_apply_button_availability(*filter_values):
+        return not controls.all_selected(*filter_values)
 
     # -----------------------------------------------------------------
     # Apply filters: snapshot current filter values into the applied store
