@@ -217,12 +217,12 @@ def test_model_options_narrow_by_region_portfolio_and_cycle(monkeypatch):
     how those filters reach the charts, since the content is scoped by model."""
     sync = _captured_callbacks(monkeypatch)["sync_overview_model_options"]
 
-    unfiltered, _value = sync("All", "All", "", "All", [])
-    eu_only, _value = sync("EU", "All", "", "All", [])
+    unfiltered, _value = sync("All", "All", "", "All", "", [])
+    eu_only, _value = sync("EU", "All", "", "All", "", [])
     assert {o["value"] for o in eu_only} < {o["value"] for o in unfiltered}
     assert "PD Model C" in {o["value"] for o in eu_only}
 
-    by_cycle, _value = sync("All", "All", "CCAR 2024", "All", [])
+    by_cycle, _value = sync("All", "All", "CCAR 2024", "All", "", [])
     assert [o["value"] for o in by_cycle] == ["LGD Model A"]
 
 
@@ -231,7 +231,7 @@ def test_narrowing_models_also_rewrites_the_selection(monkeypatch):
     charts would still be scoped to models no longer offered."""
     sync = _captured_callbacks(monkeypatch)["sync_overview_model_options"]
 
-    _options, value = sync("EU", "All", "", "All", ["PD Model A", "PD Model C"])
+    _options, value = sync("EU", "All", "", "All", "", ["PD Model A", "PD Model C"])
     # PD Model A is US-only, so it must drop out of the applied selection
     assert "PD Model A" not in value
     assert "PD Model C" in value
@@ -241,7 +241,7 @@ def test_loss_survives_a_region_filter(monkeypatch):
     """Loss's "All Models" carries no region/portfolio; excluding blanks would
     silently drop the whole Loss workstream whenever a region is picked."""
     sync = _captured_callbacks(monkeypatch)["sync_overview_model_options"]
-    options, _value = sync("EU", "C&I", "", "All", [])
+    options, _value = sync("EU", "C&I", "", "All", "", [])
     assert "All Models" in {o["value"] for o in options}
 
 

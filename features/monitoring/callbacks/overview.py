@@ -211,9 +211,11 @@ def register_callbacks(app) -> None:
         Input(layout.PORTFOLIO_ID, "value"),
         Input(layout.REPORTING_CYCLE_ID, "value"),
         Input(layout.SEGMENT_MODEL_GROUP_ID, "value"),
+        Input(layout.OVERVIEW_MODEL_SEARCH_ID, "value"),
         State(layout.OVERVIEW_MODEL_ID, "value"),
     )
-    def sync_overview_model_options(region, portfolio, reporting_cycle, segment_model_group, current_value):
+    def sync_overview_model_options(region, portfolio, reporting_cycle, segment_model_group,
+                                    model_search, current_value):
         options = overview_model_options(
             data,
             segment_model_group,
@@ -224,8 +226,21 @@ def register_callbacks(app) -> None:
         # Keep whatever survives the narrowing, and nothing more. This used to
         # select *every* model when the survivors were empty, which on the
         # now-empty first render meant the Model filter answered itself.
+        #
+        # The kept selection is computed against the *unsearched* list: the
+        # search box only hides options, so a model checked before searching
+        # stays selected while hidden -- matching SAAS.
         option_values = {option["value"] for option in options}
-        return options, [v for v in (current_value or []) if v in option_values]
+        kept = [v for v in (current_value or []) if v in option_values]
+
+        search_text = str(model_search or "").strip().lower()
+        if search_text:
+            options = [
+                option for option in options
+                if search_text in str(option.get("label", "")).lower()
+                or search_text in str(option.get("value", "")).lower()
+            ]
+        return options, kept
 
     @app.callback(
         Output(layout.OVERVIEW_MODEL_TOGGLE_ID, "children"),
@@ -244,13 +259,17 @@ def register_callbacks(app) -> None:
         prevent_initial_call=True,
     )
     def sync_overview_model_select_all(select_all_value, models_value, options):
-        option_values = [option["value"] for option in (options or [])]
+        # Options may be narrowed by the search box, so "All" only adds or
+        # removes the models currently visible and leaves hidden selections
+        # untouched -- "all of these", not "everything". Same rule as SAAS's
+        # sync_saas_model_selection.
+        visible_names = [option["value"] for option in (options or []) if option.get("value")]
         current_values = list(models_value or [])
         if ctx.triggered_id == layout.OVERVIEW_MODEL_SELECT_ALL_ID:
             if "all" in (select_all_value or []):
-                return list(option_values), no_update
-            return [], no_update
-        select_all = ["all"] if option_values and set(option_values).issubset(current_values) else []
+                return current_values + [n for n in visible_names if n not in current_values], no_update
+            return [v for v in current_values if v not in set(visible_names)], no_update
+        select_all = ["all"] if visible_names and set(visible_names).issubset(current_values) else []
         return no_update, select_all
 
     # -----------------------------------------------------------------

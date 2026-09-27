@@ -293,7 +293,10 @@ body{background:#f8fafc;overflow:hidden}
    (134px text + input/menu padding and borders, browser-measured) to render
    unclipped; max-content alone sizes the menu to the checklist labels, which
    can be narrower. */
-.saas-primary-filter-row .monitoring-model-filter .checkbox-dropdown-menu{width:max-content;min-width:190px}
+/* Keyed on the filter cell, not on a row: the Model picker has since moved --
+   to SAAS's Focus row, and Overview has one too -- and a row-scoped selector
+   silently stopped applying each time, taking the 190px floor with it. */
+.monitoring-model-filter .checkbox-dropdown-menu{width:max-content;min-width:190px}
 .saas-top-filter-action{justify-content:flex-end;padding-top:19px}
 .saas-top-filter-reset{width:100%;min-height:32px;justify-content:center}
 .saas-top-filter-action .pd-mev-filter-actions{width:100%;gap:8px}

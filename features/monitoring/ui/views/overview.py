@@ -100,6 +100,7 @@ SEGMENT_MODEL_GROUP_FILTER_KEY = "overview-segment-model-group"
 # scramble their reading order.
 SEGMENT_MODEL_GROUP_OPTIONS = ["All"] + alphabetical(MODEL_GROUPS)
 OVERVIEW_MODEL_ID = "overview-model"
+OVERVIEW_MODEL_SEARCH_ID = "overview-model-search"
 OVERVIEW_MODEL_SELECT_ALL_ID = "overview-model-select-all"
 OVERVIEW_MODEL_TOGGLE_ID = "overview-model-toggle"
 OVERVIEW_MODEL_MENU_ID = "overview-model-menu"
@@ -532,6 +533,14 @@ def model_toggle_label(value: list[str] | None, options: list[dict] | None) -> s
 
 
 def _build_model_filter(options: list[dict], value: list[str]) -> html.Div:
+    """Overview's Model picker, matching SAAS's workspace control.
+
+    Same four parts in the same order -- toggle summary, search box, "All",
+    checklist -- so the two dashboards' multi-select behaves identically. The
+    search narrows only what is *visible*; models checked before searching stay
+    selected while hidden, and "All" adds or removes only the visible ones (see
+    ``sync_overview_model_select_all``).
+    """
     all_checked = bool(options) and set(value) == {option["value"] for option in options}
     return html.Div(
         className="checkbox-dropdown",
@@ -547,6 +556,14 @@ def _build_model_filter(options: list[dict], value: list[str]) -> html.Div:
                 id=OVERVIEW_MODEL_MENU_ID,
                 className="checkbox-dropdown-menu",
                 children=[
+                    dcc.Input(
+                        id=OVERVIEW_MODEL_SEARCH_ID,
+                        type="text",
+                        placeholder="Type to search models…",
+                        value="",
+                        autoComplete="off",
+                        className="pd-models-search",
+                    ),
                     dcc.Checklist(
                         id=OVERVIEW_MODEL_SELECT_ALL_ID,
                         options=[{"label": "All", "value": "all"}],
@@ -3110,9 +3127,12 @@ def page_layout(data: dict) -> list:
                                         value=_UNSELECTED,
                                     ),
                                 ),
-                                _build_filter(
-                                    "Model",
-                                    _build_model_filter(model_options, default_models),
+                                html.Div(
+                                    className="monitoring-filter monitoring-model-filter",
+                                    children=[
+                                        html.Label("Model"),
+                                        _build_model_filter(model_options, default_models),
+                                    ],
                                 ),
                                 _build_filter(
                                     "Monitoring Point",
