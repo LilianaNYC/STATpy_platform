@@ -275,6 +275,7 @@ def all_selected(*values) -> bool:
 FILTER_ROW_CAPTION_CLASS = "monitoring-filter-row-caption"
 SCOPE_ROW_CAPTION = "Scope"
 FOCUS_ROW_CAPTION = "Focus"
+VIEW_ROW_CAPTION = "View"
 
 
 def _build_filter_row_caption(text: str) -> html.Div:
@@ -298,6 +299,16 @@ def build_scope_caption() -> html.Div:
 def build_focus_caption() -> html.Div:
     """Caption for the second filter row. Used by all five monitoring tabs."""
     return _build_filter_row_caption(FOCUS_ROW_CAPTION)
+
+
+def build_view_caption() -> html.Div:
+    """Caption for SAAS's third row.
+
+    SAAS alone has one: its bar carries presentation controls (Snapshot Period,
+    Reference Lines, MEV Label, Historical Statistics) that are neither scope
+    nor focus. The monitoring tabs have no equivalent row.
+    """
+    return _build_filter_row_caption(VIEW_ROW_CAPTION)
 
 
 # ---------------------------------------------------------------------------

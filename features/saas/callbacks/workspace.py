@@ -90,6 +90,15 @@ def _register_menu_callbacks(app) -> None:
         return _toggle_menu_class(current_class, base_class="checkbox-dropdown-menu single-select-menu")
 
     @app.callback(
+        Output(layout.MODEL_USE_CASE_MENU_ID, "className"),
+        Input(layout.MODEL_USE_CASE_TOGGLE_ID, "n_clicks"),
+        State(layout.MODEL_USE_CASE_MENU_ID, "className"),
+        prevent_initial_call=True,
+    )
+    def toggle_model_use_case_menu(_n_clicks, current_class):
+        return _toggle_menu_class(current_class, base_class="checkbox-dropdown-menu single-select-menu")
+
+    @app.callback(
         Output(layout.COMPARE_AGAINST_MENU_ID, "className"),
         Input(layout.COMPARE_AGAINST_TOGGLE_ID, "n_clicks"),
         State(layout.COMPARE_AGAINST_MENU_ID, "className"),
@@ -218,6 +227,18 @@ def _register_single_select_callbacks(app) -> None:
         return triggered["value"], "checkbox-dropdown-menu single-select-menu"
 
     @app.callback(
+        Output(layout.MODEL_USE_CASE_ID, "value", allow_duplicate=True),
+        Output(layout.MODEL_USE_CASE_MENU_ID, "className", allow_duplicate=True),
+        Input({"type": shared_filters.SINGLE_SELECT_OPTION_ID, "filter": layout.MODEL_USE_CASE_FILTER_KEY, "value": ALL}, "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def select_model_use_case(_clicks):
+        triggered = ctx.triggered_id
+        if not triggered:
+            return no_update, no_update
+        return triggered["value"], "checkbox-dropdown-menu single-select-menu"
+
+    @app.callback(
         Output(layout.REGION_ID, "value", allow_duplicate=True),
         Output(layout.REGION_MENU_ID, "className", allow_duplicate=True),
         Input({"type": shared_filters.SINGLE_SELECT_OPTION_ID, "filter": layout.REGION_FILTER_KEY, "value": ALL}, "n_clicks"),
@@ -304,6 +325,7 @@ def _register_single_select_callbacks(app) -> None:
 def _register_shell_callbacks(
     app,
     run_for_labels,
+    model_use_case_labels,
     region_labels,
     model_group_labels,
     portfolio_labels,
@@ -319,6 +341,16 @@ def _register_shell_callbacks(
     )
     def sync_run_for_shell(value, option_ids):
         label = run_for_labels.get(value, value or "Select")
+        return label, _single_select_option_classes(value, option_ids)
+
+    @app.callback(
+        Output(layout.MODEL_USE_CASE_TOGGLE_ID, "children"),
+        Output({"type": shared_filters.SINGLE_SELECT_OPTION_ID, "filter": layout.MODEL_USE_CASE_FILTER_KEY, "value": ALL}, "className"),
+        Input(layout.MODEL_USE_CASE_ID, "value"),
+        State({"type": shared_filters.SINGLE_SELECT_OPTION_ID, "filter": layout.MODEL_USE_CASE_FILTER_KEY, "value": ALL}, "id"),
+    )
+    def sync_model_use_case_shell(value, option_ids):
+        label = model_use_case_labels.get(value, value or "Select")
         return label, _single_select_option_classes(value, option_ids)
 
     @app.callback(
@@ -1023,12 +1055,54 @@ def _register_filter_callbacks(app) -> None:
         prevent_initial_call=True,
     )
     def narrow_portfolio_options(region, current_portfolio):
-        options = _portfolio_options_for_filters(region=region)
-        valid_values = {option["value"] for option in options}
-        selected_value = current_portfolio if current_portfolio in valid_values else layout.PORTFOLIO_ALL_VALUE
+        options = shared_filters.with_placeholder(
+            _portfolio_options_for_filters(region=region), "portfolio")
+        # keep_or_unselected, not "All": Portfolio is a Scope filter and opens
+        # unanswered, so falling back to "All" here would answer it on the
+        # user's behalf the first time Region changes.
+        selected_value = shared_filters.keep_or_unselected(options, current_portfolio)
         children = shared_filters.build_single_select_option_buttons(options, selected_value, layout.PORTFOLIO_FILTER_KEY)
         value_output = selected_value if selected_value != current_portfolio else no_update
         return options, children, value_output
+
+    # Scope narrows left to right: Region -> Portfolio -> Model Use Case ->
+    # Reporting Cycle. Both of these read only filters to their left, so the
+    # cascade stays one-way, and both leave the filter unanswered rather than
+    # picking for the user (see the UNSELECTED note in shared.ui.controls).
+    @app.callback(
+        Output(layout.MODEL_USE_CASE_ID, "options"),
+        Output(layout.MODEL_USE_CASE_MENU_ID, "children"),
+        Output(layout.MODEL_USE_CASE_ID, "value", allow_duplicate=True),
+        Input(layout.REGION_ID, "value"),
+        Input(layout.PORTFOLIO_ID, "value"),
+        State(layout.MODEL_USE_CASE_ID, "value"),
+        prevent_initial_call=True,
+    )
+    def narrow_model_use_case_options(region, portfolio, current_use_case):
+        options = shared_filters.with_placeholder(
+            layout._model_use_case_options(region, portfolio), "model-use-case")
+        selected = shared_filters.keep_or_unselected(options, current_use_case)
+        children = shared_filters.build_single_select_option_buttons(
+            options, selected, layout.MODEL_USE_CASE_FILTER_KEY)
+        return options, children, selected if selected != current_use_case else no_update
+
+    @app.callback(
+        Output(layout.RUN_FOR_ID, "options"),
+        Output(layout.RUN_FOR_MENU_ID, "children"),
+        Output(layout.RUN_FOR_ID, "value", allow_duplicate=True),
+        Input(layout.REGION_ID, "value"),
+        Input(layout.PORTFOLIO_ID, "value"),
+        Input(layout.MODEL_USE_CASE_ID, "value"),
+        State(layout.RUN_FOR_ID, "value"),
+        prevent_initial_call=True,
+    )
+    def narrow_reporting_cycle_options(region, portfolio, use_case, current_cycle):
+        options = shared_filters.with_placeholder(
+            layout._build_run_for_options(region, portfolio, use_case), "reporting-cycle")
+        selected = shared_filters.keep_or_unselected(options, current_cycle)
+        children = shared_filters.build_single_select_option_buttons(
+            options, selected, layout.RUN_FOR_FILTER_KEY)
+        return options, children, selected if selected != current_cycle else no_update
 
     @app.callback(
         Output(layout.MODEL_GROUP_ID, "options"),
@@ -1150,6 +1224,22 @@ def _register_filter_callbacks(app) -> None:
 
 
 def _register_render_callbacks(app) -> None:
+    # Apply is gated on the **Scope row only**. Those four open unanswered, and
+    # applying a half-specified scope is meaningless. The Focus and View rows
+    # keep their defaults -- an all-models run is a normal SAAS analysis, and
+    # MEV Label is presentation -- so requiring them would be friction with no
+    # analytic meaning. Writes only the button's own prop, so it adds no edge
+    # to the cascade.
+    @app.callback(
+        Output(layout.APPLY_FILTERS_ID, "disabled"),
+        Input(layout.REGION_ID, "value"),
+        Input(layout.PORTFOLIO_ID, "value"),
+        Input(layout.MODEL_USE_CASE_ID, "value"),
+        Input(layout.RUN_FOR_ID, "value"),
+    )
+    def sync_saas_apply_availability(*scope_values):
+        return not shared_filters.all_selected(*scope_values)
+
     @app.callback(
         Output(layout.APPLIED_FILTERS_STORE_ID, "data"),
         Input(layout.APPLY_FILTERS_ID, "n_clicks"),
@@ -1425,6 +1515,7 @@ def _register_render_callbacks(app) -> None:
 def _build_callback_label_maps():
     return {
         "run_for_labels": {option["value"]: option["label"] for option in layout.RUN_FOR_OPTIONS},
+        "model_use_case_labels": {option["value"]: option["label"] for option in layout.MODEL_USE_CASE_OPTIONS},
         "region_labels": {option["value"]: option["label"] for option in layout.REGION_OPTIONS},
         "model_group_labels": {option["value"]: option["label"] for option in layout.MODEL_GROUP_OPTIONS},
         "portfolio_labels": {option["value"]: option["label"] for option in layout.PORTFOLIO_OPTIONS},
@@ -1450,10 +1541,12 @@ def register_callbacks(app) -> None:
     reference_line_labels = label_maps["reference_line_labels"]
     mev_label_mode_labels = label_maps["mev_label_mode_labels"]
     run_for_labels = label_maps["run_for_labels"]
+    model_use_case_labels = label_maps["model_use_case_labels"]
 
     _register_shell_callbacks(
         app,
         run_for_labels,
+        model_use_case_labels,
         region_labels,
         model_group_labels,
         portfolio_labels,

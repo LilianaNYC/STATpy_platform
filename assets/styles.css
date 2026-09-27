@@ -235,6 +235,8 @@ body{background:#f8fafc;overflow:hidden}
    the one exception, which made the same row read differently there than on
    PD/LGD/EAD/Loss. */
 .saas-primary-filter-row>.monitoring-filter+.monitoring-filter:not(.saas-top-filter-action)::before,
+.saas-scope-filter-row>.monitoring-filter+.monitoring-filter:not(.saas-top-filter-action)::before,
+.saas-focus-filter-row>.monitoring-filter+.monitoring-filter:not(.saas-top-filter-action)::before,
 .monitoring-primary-filter-row>.monitoring-filter+.monitoring-filter:not(.saas-top-filter-action)::before,
 .overview-primary-filter-row>.monitoring-filter+.monitoring-filter:not(.saas-top-filter-action)::before{content:"❯";position:absolute;left:-15px;bottom:10px;width:16px;font-size:13px;font-weight:800;line-height:1;text-align:center;color:var(--blue);opacity:1;pointer-events:none}
 /* Narrower columns than the primary row (160px max, not 171px): auto-fit counts
@@ -259,6 +261,28 @@ body{background:#f8fafc;overflow:hidden}
 .monitoring-focus-filter-row{grid-template-columns:var(--filter-caption-track) repeat(4,160px) max-content}
 .monitoring-focus-filter-row>.monitoring-filter.saas-top-filter-action{width:auto;justify-self:start;margin-left:0}
 .monitoring-focus-filter-row .single-select-dropdown{min-width:0;max-width:none;width:100%}
+/* SAAS reads as three captioned rows -- Scope (which data), Focus (which
+   models), View (how to draw it, plus Apply). Three rather than two because
+   SAAS carries 11 controls to a monitoring tab's 8.
+
+   Every track is sized against 1032px, not the 1216px the monitoring tabs
+   have: the Export panel shares SAAS's line. All three rows lead with the same
+   caption track so their columns line up down the bar.
+
+   Defined AFTER .saas-secondary-filter-row on purpose: the View row carries
+   that class too (for the divider and spacing), and an equally specific rule
+   later in the file wins -- which is what silently reverted the View row's
+   template the first time these lived further up. */
+.saas-scope-filter-row{grid-template-columns:var(--filter-caption-track) repeat(4,minmax(120px,168px))}
+.saas-focus-filter-row{grid-template-columns:var(--filter-caption-track) repeat(3,minmax(120px,168px));margin-top:8px;padding-top:12px;border-top:1px solid #e8eef6}
+.saas-view-filter-row{grid-template-columns:var(--filter-caption-track) repeat(4,minmax(120px,160px)) max-content max-content}
+.saas-scope-filter-row .single-select-dropdown,
+.saas-focus-filter-row .single-select-dropdown,
+.saas-view-filter-row .single-select-dropdown{min-width:0;max-width:none;width:100%}
+.saas-scope-filter-row>.monitoring-filter,
+.saas-focus-filter-row>.monitoring-filter,
+.saas-view-filter-row>.monitoring-filter{min-width:0 !important;max-width:none !important}
+.saas-view-filter-row>.monitoring-filter.saas-top-filter-action{width:auto;justify-self:start;margin-left:0}
 .saas-top-filter-row .monitoring-filter{width:100%;min-width:0 !important;max-width:none !important}
 .saas-top-filter-row .monitoring-top-select,
 .saas-top-filter-row .single-select-dropdown,
@@ -2809,7 +2833,10 @@ tr:last-child td{border-bottom:none}
   .monitoring-primary-filter-row,
   .monitoring-focus-filter-row,
   .overview-primary-filter-row,
-  .overview-secondary-filter-row{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
+  .overview-secondary-filter-row,
+  .saas-scope-filter-row,
+  .saas-focus-filter-row,
+  .saas-view-filter-row{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
   /* Stacked: the caption is a heading over the column, not a cell beside it. */
   .monitoring-filter-row-caption{line-height:normal;align-self:start}
   .monitoring-filter{width:100%}
@@ -2818,7 +2845,10 @@ tr:last-child td{border-bottom:none}
   .monitoring-focus-filter-row>.monitoring-filter.saas-top-filter-action .pd-mev-filter-reset,
   .overview-secondary-filter-row>.monitoring-filter.saas-top-filter-action .pd-mev-filter-reset{width:100%}
   .monitoring-primary-filter-row>.monitoring-filter+.monitoring-filter:not(.saas-top-filter-action)::before,
-  .overview-primary-filter-row>.monitoring-filter+.monitoring-filter:not(.saas-top-filter-action)::before{display:none}
+  .overview-primary-filter-row>.monitoring-filter+.monitoring-filter:not(.saas-top-filter-action)::before,
+  .saas-scope-filter-row>.monitoring-filter+.monitoring-filter:not(.saas-top-filter-action)::before,
+  .saas-focus-filter-row>.monitoring-filter+.monitoring-filter:not(.saas-top-filter-action)::before{display:none}
+  .saas-view-filter-row>.monitoring-filter.saas-top-filter-action{width:100%}
   .monitoring-top-select,
   .monitoring-top-select .Select-control{min-width:100%;max-width:none}
   .single-select-dropdown{max-width:none}

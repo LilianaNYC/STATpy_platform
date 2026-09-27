@@ -111,6 +111,8 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
         "model_group_values": [],
         "portfolio_values": [],
         "run_for_values": [],
+        "run_for_parts": {},
+        "scope_run_fors": [],
         "transformed_mev_names": set(),
         "raw_mev_names": set(),
         "mev_label_map": {},
@@ -284,6 +286,29 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
     run_for_values = _ordered_unique_strings(
         time_series_df.get("Run For", pd.Series(dtype=object)).tolist()
     )
+
+    # The Model Use Case / Reporting Cycle split needs each composite cycle
+    # broken into its two parts, and needs to know which Region/Portfolio a
+    # composite actually has models for -- otherwise the bar can offer a cycle
+    # with nothing behind it. Both come from model_names, which carries all
+    # five columns, so the workbook stays authoritative rather than the
+    # composite being split on a space.
+    run_for_parts: dict[str, dict[str, str]] = {}
+    scope_run_fors: list[tuple[str, str, str]] = []
+    _needed = (config.RUN_FOR_COLUMN, config.MODEL_USE_CASE_COLUMN, config.REPORTING_CYCLE_COLUMN)
+    if all(column in model_characteristic_df.columns for column in _needed):
+        _seen: set[tuple[str, str, str]] = set()
+        for row in model_characteristic_df.to_dict(orient="records"):
+            composite = _cell_str(row.get(config.RUN_FOR_COLUMN))
+            use_case = _cell_str(row.get(config.MODEL_USE_CASE_COLUMN))
+            cycle = _cell_str(row.get(config.REPORTING_CYCLE_COLUMN))
+            if not composite or not use_case or not cycle:
+                continue
+            run_for_parts.setdefault(composite, {"use_case": use_case, "cycle": cycle})
+            key = (_cell_str(row.get("Region")), _cell_str(row.get("Portfolio")), composite)
+            if key not in _seen:
+                _seen.add(key)
+                scope_run_fors.append(key)
     transformed_mev_names = {
         value for value in _ordered_unique_strings(
             transformed_df.get("US Mnemonic", pd.Series(dtype=object)).tolist()
@@ -319,6 +344,8 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
         "model_group_values": model_group_values,
         "portfolio_values": portfolio_values,
         "run_for_values": run_for_values,
+        "run_for_parts": run_for_parts,
+        "scope_run_fors": scope_run_fors,
         "transformed_mev_names": transformed_mev_names,
         "raw_mev_names": raw_mev_names,
         "mev_label_map": mev_label_map,

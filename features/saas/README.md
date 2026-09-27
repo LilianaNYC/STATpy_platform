@@ -98,6 +98,46 @@ Loading happens in `repositories/loader.py`; the payload is exposed once via
 - New exports follow the existing `dcc.Download` pattern in
   `callbacks/workspace.py`, delegating the heavy build to `services/`.
 
+## Top filter bar
+
+Three captioned rows, mirroring the monitoring tabs' Scope/Focus split with a
+third row SAAS alone needs:
+
+| Row | Controls |
+|---|---|
+| **Scope** | Region · Portfolio · Model Use Case · Reporting Cycle |
+| **Focus** | Model Group · Model · Segment |
+| **View** | Compare To · Snapshot Period · Reference Lines · MEV Label · Historical Statistics · Expand all → **Apply filters** |
+
+Three rows rather than two because SAAS carries 11 controls to a monitoring
+tab's 8, and because its presentation controls are neither scope nor focus.
+Apply closes the last row, as on the monitoring tabs; it used to sit mid-bar at
+the end of row 1.
+
+The Scope row is the same four filters as every monitoring tab, which required
+splitting the old combined **Model Use Case / Cycle** control. As there,
+`RUN_FOR_ID` keeps its id and its **composite value** (`"CCAR 2026"`) — the
+join key behind the applied store, Compare To and every export — and only its
+label becomes the bare cycle. Both halves are derived from `model_names`, which
+carries `Run For`, `Model Use Case` and `Reporting Cycle`, so the workbook stays
+authoritative rather than the composite being split on a space.
+
+**Only the Scope row opens unanswered**, behind `Select …` placeholders, and
+Apply is gated on those four alone. Focus and View keep their defaults: an
+all-models run is a normal SAAS analysis, and MEV Label is presentation, so
+requiring them would be friction with no analytic meaning. `"All"` therefore
+survives as a *real* answer on Region/Portfolio, distinct from the unanswered
+placeholder — unlike the monitoring tabs, which have no `"All"` at all.
+
+Scope and Focus both cascade left to right (Region → Portfolio → Model Use Case
+→ Reporting Cycle, and Model Group → Model → Segment) and carry the cascade
+chevrons. The View row does not.
+
+Sizing note: every track is computed against **1032px**, not the 1216px the
+monitoring tabs get — the Export panel shares SAAS's line. The row templates are
+defined *after* `.saas-secondary-filter-row` on purpose, because the View row
+carries that class too and an equally specific rule later in the file wins.
+
 ## Filter option ordering
 
 The bar follows the same rule as the monitoring tabs (see
