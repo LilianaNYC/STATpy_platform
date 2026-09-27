@@ -10,6 +10,7 @@ from .....shared.ui import controls as shared_filters
 from .....shared.ui.charts import SAAS_SCENARIO_LABEL_MAP
 from .....shared.ui.loading import build_dashboard_loading_shell
 from .....shared.domain.calculations import get_pd_range_preset, get_pd_range_selection
+from .....shared.domain.filter_order import alphabetical, composite_cycles_newest_first
 from ...data_access import SAAS_PAGE_DATA
 from ...domain import selectors
 
@@ -181,8 +182,15 @@ def format_segment_label(segment_value: str | None) -> str:
 
 
 def _build_run_for_options() -> list[dict]:
+    """Model Use Case / Cycle, most recent first.
+
+    Previously the workbook's row order, which put the *oldest* cycle at the
+    head -- and ``DEFAULT_RUN_FOR_VALUE`` below takes the default from position,
+    so the page opened on CCAR 2025 rather than the live cycle.
+    """
     values = SAAS_PAGE_DATA.get("run_for_values") or []
-    return [{"label": value, "value": value} for value in values if value]
+    return [{"label": value, "value": value}
+            for value in composite_cycles_newest_first(v for v in values if v)]
 
 
 def _build_segment_options() -> list[dict]:
@@ -462,7 +470,7 @@ def _build_model_name_options() -> list[dict]:
             continue
         seen.add(label)
         options.append({"label": label, "value": label})
-    return options
+    return alphabetical(options, key=lambda option: option["label"])
 
 
 def _default_model_selection() -> list[str]:

@@ -6,6 +6,7 @@ from datetime import datetime
 import re
 
 from ....shared import theme
+from ....shared.domain.filter_order import alphabetical
 from ..data_access import SAAS_PAGE_DATA
 
 SEGMENT_ALL_VALUE = "all"
@@ -339,7 +340,9 @@ def model_options_for_filters(
         if disabled:
             option["disabled"] = True
         options.append(option)
-    return options
+    # A-Z by the label, which is what the user reads. Left in workbook order
+    # this interleaved the groups ("PD Model A, EAD Model A, LGD Model A, ...").
+    return alphabetical(options, key=lambda option: option["label"])
 
 
 def model_toggle_label(selected_models: list[str], all_options: list[dict], segment_active: bool) -> str:

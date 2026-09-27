@@ -97,3 +97,17 @@ Loading happens in `repositories/loader.py`; the payload is exposed once via
   needed while the page is mounted), so `stores.build_stores()` returns `[]`.
 - New exports follow the existing `dcc.Download` pattern in
   `callbacks/workspace.py`, delegating the heavy build to `services/`.
+
+## Filter option ordering
+
+The bar follows the same rule as the monitoring tabs (see
+`features/monitoring/README.md`, "Option ordering"): text values A–Z, cycles
+most-recent-first, "All"/"None" pinned at the head.
+
+The **mode selectors are exempt** — Snapshot Period, Reference Lines, MEV Label
+and Historical Statistics list modes, not data values, and their order is part
+of their meaning ("History → Projection → History & Projection", "Off → On").
+
+One behavioural consequence: `DEFAULT_RUN_FOR_VALUE` is `RUN_FOR_OPTIONS[0]`, so
+ordering the cycles decides which one the page opens on. It used to be the
+workbook's first row, which was the *oldest* cycle; it is now the most recent.

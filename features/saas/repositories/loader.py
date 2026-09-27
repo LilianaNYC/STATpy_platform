@@ -19,9 +19,11 @@ import pandas as pd
 
 from ....shared.domain import constants as config
 from ....config.settings import settings
+from ....shared.domain.filter_order import alphabetical
 from ....shared.text import cell_str as _cell_str
 from ....shared.text import normalize_model_name as _normalize_model_name
 from ....shared.text import ordered_unique_strings as _ordered_unique_strings
+from ....shared.repositories.tables import read_table
 from ...monitoring.repositories.loader import load_pd_mev_catalog
 
 log = logging.getLogger(__name__)
@@ -30,9 +32,8 @@ log = logging.getLogger(__name__)
 def load_saas_model_names() -> list[str]:
     """Load SAAS model-name filter options from the dummy MEV workbook."""
     try:
-        df = pd.read_excel(
-            settings.dummy_mev_data_file,
-            sheet_name=config.DUMMY_MEV_TRANSFORMED_DESCRIPTION_SHEET_NAME,
+        df = read_table(
+            config.DUMMY_MEV_TRANSFORMED_DESCRIPTION_SHEET_NAME,
             usecols=[config.DUMMY_MEV_MODEL_NAME_COLUMN],
         )
         model_names: list[str] = []
@@ -121,22 +122,10 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
     }
 
     try:
-        transformed_df = pd.read_excel(
-            settings.dummy_mev_data_file,
-            sheet_name=config.DUMMY_MEV_TRANSFORMED_DESCRIPTION_SHEET_NAME,
-        )
-        raw_df = pd.read_excel(
-            settings.dummy_mev_data_file,
-            sheet_name=config.DUMMY_MEV_RAW_DESCRIPTION_SHEET_NAME,
-        )
-        time_series_df = pd.read_excel(
-            settings.dummy_mev_data_file,
-            sheet_name=config.DUMMY_MEV_TIME_SERIES_SHEET_NAME,
-        )
-        model_characteristic_df = pd.read_excel(
-            settings.dummy_mev_data_file,
-            sheet_name=config.DUMMY_MEV_MODEL_CHARACTERISTIC_SHEET_NAME,
-        )
+        transformed_df = read_table(config.DUMMY_MEV_TRANSFORMED_DESCRIPTION_SHEET_NAME)
+        raw_df = read_table(config.DUMMY_MEV_RAW_DESCRIPTION_SHEET_NAME)
+        time_series_df = read_table(config.DUMMY_MEV_TIME_SERIES_SHEET_NAME)
+        model_characteristic_df = read_table(config.DUMMY_MEV_MODEL_CHARACTERISTIC_SHEET_NAME)
     except Exception as exc:  # noqa: BLE001 - keep the page available if workbook loading fails
         log.warning("Unable to load SAAS MEV workbook data from %s: %s", settings.dummy_mev_data_file, exc)
         return empty_payload
@@ -257,18 +246,20 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
             portfolios_for_model = model_portfolio_map.setdefault(model_name, [])
             if portfolio not in portfolios_for_model:
                 portfolios_for_model.append(portfolio)
-    segment_values = _ordered_unique_strings(
+    # A-Z rather than the workbook's row order, which is an authoring artefact
+    # and surfaced as an apparently random menu ("All, HBUS, EU").
+    segment_values = alphabetical(_ordered_unique_strings(
         model_characteristic_df.get("Segment Name", pd.Series(dtype=object)).tolist()
-    )
-    region_values = _ordered_unique_strings(
+    ))
+    region_values = alphabetical(_ordered_unique_strings(
         model_characteristic_df.get("Region", pd.Series(dtype=object)).tolist()
-    )
-    model_group_values = _ordered_unique_strings(
+    ))
+    model_group_values = alphabetical(_ordered_unique_strings(
         model_characteristic_df.get("Model Type", pd.Series(dtype=object)).tolist()
-    )
-    portfolio_values = _ordered_unique_strings(
+    ))
+    portfolio_values = alphabetical(_ordered_unique_strings(
         model_characteristic_df.get("Portfolio", pd.Series(dtype=object)).tolist()
-    )
+    ))
     model_characteristic_df["Development Date"] = pd.to_datetime(
         model_characteristic_df.get("Development Date"),
         dayfirst=False,
