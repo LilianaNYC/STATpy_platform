@@ -246,12 +246,19 @@ body{background:#f8fafc;overflow:hidden}
 .saas-secondary-filter-row{grid-template-columns:repeat(auto-fit,minmax(140px,160px));margin-top:14px;padding-top:12px;border-top:1px solid #e8eef6}
 /* PD/LGD/EAD/Loss row 2 is the population/point focus: Model, Segment,
    Monitoring Point, Scenario, then Apply. Filters stay uniform and the action
-   occupies a compact final track. Scoped so SAAS is untouched.
+   occupies a compact final track.
+
+   Keyed on .monitoring-focus-filter-row, a class these four rows carry and
+   SAAS's second row does not. It cannot be keyed on
+   .monitoring-controls.saas-secondary-filter-row: SAAS's row has that exact
+   class list too, so those rules also hit SAAS -- which gave its Compare To
+   control a 64px caption track with no caption in it, wrapping the label and
+   truncating the value to "N...".
    Four tracks, not five: Model Group was removed from these tabs -- each shows
    exactly one group, so the control could only ever return its own name. */
-.monitoring-controls.saas-secondary-filter-row{grid-template-columns:var(--filter-caption-track) repeat(4,160px) max-content}
-.monitoring-controls.saas-secondary-filter-row>.monitoring-filter.saas-top-filter-action{width:auto;justify-self:start;margin-left:0}
-.monitoring-controls.saas-secondary-filter-row .single-select-dropdown{min-width:0;max-width:none;width:100%}
+.monitoring-focus-filter-row{grid-template-columns:var(--filter-caption-track) repeat(4,160px) max-content}
+.monitoring-focus-filter-row>.monitoring-filter.saas-top-filter-action{width:auto;justify-self:start;margin-left:0}
+.monitoring-focus-filter-row .single-select-dropdown{min-width:0;max-width:none;width:100%}
 .saas-top-filter-row .monitoring-filter{width:100%;min-width:0 !important;max-width:none !important}
 .saas-top-filter-row .monitoring-top-select,
 .saas-top-filter-row .single-select-dropdown,
@@ -2800,15 +2807,15 @@ tr:last-child td{border-bottom:none}
   .pd-chapter-note{text-align:left}
   .monitoring-controls{align-items:stretch}
   .monitoring-primary-filter-row,
-  .monitoring-controls.saas-secondary-filter-row,
+  .monitoring-focus-filter-row,
   .overview-primary-filter-row,
   .overview-secondary-filter-row{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
   /* Stacked: the caption is a heading over the column, not a cell beside it. */
   .monitoring-filter-row-caption{line-height:normal;align-self:start}
   .monitoring-filter{width:100%}
-  .monitoring-controls.saas-secondary-filter-row>.monitoring-filter.saas-top-filter-action,
+  .monitoring-focus-filter-row>.monitoring-filter.saas-top-filter-action,
   .overview-secondary-filter-row>.monitoring-filter.saas-top-filter-action{width:100%;padding-top:2px}
-  .monitoring-controls.saas-secondary-filter-row>.monitoring-filter.saas-top-filter-action .pd-mev-filter-reset,
+  .monitoring-focus-filter-row>.monitoring-filter.saas-top-filter-action .pd-mev-filter-reset,
   .overview-secondary-filter-row>.monitoring-filter.saas-top-filter-action .pd-mev-filter-reset{width:100%}
   .monitoring-primary-filter-row>.monitoring-filter+.monitoring-filter:not(.saas-top-filter-action)::before,
   .overview-primary-filter-row>.monitoring-filter+.monitoring-filter:not(.saas-top-filter-action)::before{display:none}
@@ -2824,17 +2831,17 @@ tr:last-child td{border-bottom:none}
      monitoring row becomes a compact wrapping group. Apply remains beside the
      final filter whenever space permits and wraps directly below it otherwise. */
   .monitoring-primary-filter-row,
-  .monitoring-controls.saas-secondary-filter-row,
+  .monitoring-focus-filter-row,
   .overview-primary-filter-row,
   .overview-secondary-filter-row{display:flex;flex-wrap:wrap;align-items:flex-end}
   /* .saas-top-filter-row sets width:100% on each filter, which means "the grid
      cell" under display:grid but "the whole row" under flex -- without this
      override every filter would claim a row of its own. */
   .monitoring-primary-filter-row>.monitoring-filter,
-  .monitoring-controls.saas-secondary-filter-row>.monitoring-filter,
+  .monitoring-focus-filter-row>.monitoring-filter,
   .overview-primary-filter-row>.monitoring-filter,
   .overview-secondary-filter-row>.monitoring-filter{flex:0 0 140px;width:140px;min-width:140px !important;max-width:140px !important}
-  .monitoring-controls.saas-secondary-filter-row>.saas-top-filter-action,
+  .monitoring-focus-filter-row>.saas-top-filter-action,
   .overview-secondary-filter-row>.saas-top-filter-action{flex:0 0 auto;min-width:0 !important;max-width:none !important;margin-left:0}
   /* Under flex the caption sizes to its own text, which would start each
      row's filters at a different x. Pin it to the shared track width so the

@@ -506,7 +506,7 @@ def build_global_filters(data: dict, extra_controls=None, initial: dict | None =
         secondary_children.append(extra_controls)
 
     secondary_row = html.Div(
-        className="monitoring-controls saas-top-filter-row saas-secondary-filter-row",
+        className="monitoring-controls saas-top-filter-row saas-secondary-filter-row monitoring-focus-filter-row",
         children=secondary_children,
     )
 

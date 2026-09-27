@@ -2192,7 +2192,7 @@ def page_layout(search: str = "") -> list:
                             ],
                         ),
                         html.Div(
-                            className="monitoring-controls saas-top-filter-row saas-secondary-filter-row",
+                            className="monitoring-controls saas-top-filter-row saas-secondary-filter-row monitoring-focus-filter-row",
                             children=[
                                 shared_filters.build_focus_caption(),
                                 # No Model Group filter: this tab shows exactly
