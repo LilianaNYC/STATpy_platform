@@ -298,8 +298,14 @@ body{background:#f8fafc;overflow:hidden}
    silently stopped applying each time, taking the 190px floor with it. */
 .monitoring-model-filter .checkbox-dropdown-menu{width:max-content;min-width:190px}
 /* Searchable single-select menus keep their option buttons in their own
-   container so the search box above stays mounted while typing. Cap its height
-   so a long model list scrolls instead of running off the page. */
+   container so the search box above stays mounted while typing. That container
+   is also the scroller, which keeps the search box pinned while the options
+   move under it.
+
+   The menu itself must therefore stop scrolling: .checkbox-dropdown-menu
+   carries its own max-height/overflow-y, and leaving both in place nests one
+   scroller inside another and renders two scrollbars side by side. */
+.checkbox-dropdown-menu:has(.single-select-option-list){max-height:none;overflow:visible}
 .single-select-option-list{display:block;max-height:260px;overflow-y:auto}
 .saas-top-filter-action{justify-content:flex-end;padding-top:19px}
 .saas-top-filter-reset{width:100%;min-height:32px;justify-content:center}
