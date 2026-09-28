@@ -47,6 +47,7 @@ SEGMENT_DROPDOWN_ID = "loss-segment-dropdown"
 MONITORING_POINT_DROPDOWN_ID = "loss-monitoring-point-dropdown"
 MODEL_TOGGLE_ID = "loss-model-toggle"
 MODEL_MENU_ID = "loss-model-menu"
+MODEL_SEARCH_ID = "loss-model-search"
 SEGMENT_TOGGLE_ID = "loss-segment-toggle"
 SEGMENT_MENU_ID = "loss-segment-menu"
 MONITORING_POINT_TOGGLE_ID = "loss-monitoring-point-toggle"
@@ -719,16 +720,23 @@ def page_layout(data: dict, initial: dict | None = None) -> list:
                                 # became a required click with a foregone
                                 # answer. Overview keeps its Model Group -- a
                                 # real choice there.
-                                _build_filter(
-                                    "Model",
-                                    shared_filters.build_single_select_dropdown(
-                                        value_id=MODEL_DROPDOWN_ID,
-                                        toggle_id=MODEL_TOGGLE_ID,
-                                        menu_id=MODEL_MENU_ID,
-                                        filter_key=MODEL_FILTER_KEY,
-                                        options=model_select_options,
-                                        value=selected_model,
-                                    ),
+                                html.Div(
+                                    # monitoring-model-filter widens the menu to
+                                    # fit the search placeholder (styles.css).
+                                    className="monitoring-filter monitoring-model-filter",
+                                    children=[
+                                        html.Label("Model"),
+                                        shared_filters.build_single_select_dropdown(
+                                            value_id=MODEL_DROPDOWN_ID,
+                                            toggle_id=MODEL_TOGGLE_ID,
+                                            menu_id=MODEL_MENU_ID,
+                                            filter_key=MODEL_FILTER_KEY,
+                                            options=model_select_options,
+                                            value=selected_model,
+                                            search_id=MODEL_SEARCH_ID,
+                                            search_placeholder="Type to search models…",
+                                        ),
+                                    ],
                                 ),
                                 _build_filter(
                                     "Segment",

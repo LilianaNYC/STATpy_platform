@@ -297,6 +297,10 @@ body{background:#f8fafc;overflow:hidden}
    to SAAS's Focus row, and Overview has one too -- and a row-scoped selector
    silently stopped applying each time, taking the 190px floor with it. */
 .monitoring-model-filter .checkbox-dropdown-menu{width:max-content;min-width:190px}
+/* Searchable single-select menus keep their option buttons in their own
+   container so the search box above stays mounted while typing. Cap its height
+   so a long model list scrolls instead of running off the page. */
+.single-select-option-list{display:block;max-height:260px;overflow-y:auto}
 .saas-top-filter-action{justify-content:flex-end;padding-top:19px}
 .saas-top-filter-reset{width:100%;min-height:32px;justify-content:center}
 .saas-top-filter-action .pd-mev-filter-actions{width:100%;gap:8px}

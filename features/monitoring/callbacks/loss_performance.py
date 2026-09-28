@@ -59,21 +59,23 @@ def register_callbacks(app) -> None:
         "scenario",
     )
 
-    for value_id, toggle_id, menu_id, filter_key in (
-        (layout.MODEL_USE_CASE_ID, layout.MODEL_USE_CASE_TOGGLE_ID, layout.MODEL_USE_CASE_MENU_ID, layout.MODEL_USE_CASE_FILTER_KEY),
-        (layout.REPORTING_CYCLE_ID, layout.REPORTING_CYCLE_TOGGLE_ID, layout.REPORTING_CYCLE_MENU_ID, layout.REPORTING_CYCLE_FILTER_KEY),
-        (layout.MONITORING_POINT_DROPDOWN_ID, layout.MONITORING_POINT_TOGGLE_ID, layout.MONITORING_POINT_MENU_ID, layout.MONITORING_POINT_FILTER_KEY),
-        (layout.SEGMENT_DROPDOWN_ID, layout.SEGMENT_TOGGLE_ID, layout.SEGMENT_MENU_ID, layout.SEGMENT_FILTER_KEY),
-        (layout.MODEL_DROPDOWN_ID, layout.MODEL_TOGGLE_ID, layout.MODEL_MENU_ID, layout.MODEL_FILTER_KEY),
+    for value_id, toggle_id, menu_id, filter_key, search_id in (
+        (layout.MODEL_USE_CASE_ID, layout.MODEL_USE_CASE_TOGGLE_ID, layout.MODEL_USE_CASE_MENU_ID, layout.MODEL_USE_CASE_FILTER_KEY, None),
+        (layout.REPORTING_CYCLE_ID, layout.REPORTING_CYCLE_TOGGLE_ID, layout.REPORTING_CYCLE_MENU_ID, layout.REPORTING_CYCLE_FILTER_KEY, None),
+        (layout.MONITORING_POINT_DROPDOWN_ID, layout.MONITORING_POINT_TOGGLE_ID, layout.MONITORING_POINT_MENU_ID, layout.MONITORING_POINT_FILTER_KEY, None),
+        (layout.SEGMENT_DROPDOWN_ID, layout.SEGMENT_TOGGLE_ID, layout.SEGMENT_MENU_ID, layout.SEGMENT_FILTER_KEY, None),
+        # Only Model carries a search box; the rest keep the plain menu.
+        (layout.MODEL_DROPDOWN_ID, layout.MODEL_TOGGLE_ID, layout.MODEL_MENU_ID,
+         layout.MODEL_FILTER_KEY, layout.MODEL_SEARCH_ID),
         # Region/Portfolio/Model Group: Loss has no entries in dummy_mev_data.xlsx
         # (no per-model Region/Portfolio, and only one implicit "model"), so these
         # are fixed, single-option placeholders for positional consistency with
         # the other three tabs -- not wired to narrow anything.
-        (layout.REGION_ID, layout.REGION_TOGGLE_ID, layout.REGION_MENU_ID, layout.REGION_FILTER_KEY),
-        (layout.PORTFOLIO_ID, layout.PORTFOLIO_TOGGLE_ID, layout.PORTFOLIO_MENU_ID, layout.PORTFOLIO_FILTER_KEY),
+        (layout.REGION_ID, layout.REGION_TOGGLE_ID, layout.REGION_MENU_ID, layout.REGION_FILTER_KEY, None),
+        (layout.PORTFOLIO_ID, layout.PORTFOLIO_TOGGLE_ID, layout.PORTFOLIO_MENU_ID, layout.PORTFOLIO_FILTER_KEY, None),
         # Scenario: net new here (Loss has no Loss_Sensitivity_Projections sheet,
         # so nothing downstream reads it) -- present for bar consistency only.
-        (layout.SCENARIO_ID, layout.SCENARIO_TOGGLE_ID, layout.SCENARIO_MENU_ID, layout.SCENARIO_FILTER_KEY),
+        (layout.SCENARIO_ID, layout.SCENARIO_TOGGLE_ID, layout.SCENARIO_MENU_ID, layout.SCENARIO_FILTER_KEY, None),
     ):
         filter_shell.register_single_select_callbacks(
             app,
@@ -81,6 +83,7 @@ def register_callbacks(app) -> None:
             toggle_id=toggle_id,
             menu_id=menu_id,
             filter_key=filter_key,
+            search_id=search_id,
         )
 
     # -----------------------------------------------------------------

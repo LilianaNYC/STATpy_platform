@@ -318,3 +318,95 @@ def test_picking_a_model_narrows_segment_but_never_answers_it(monkeypatch, tab):
     assert real, f"{tab}: {models[0]} offered no real segment to re-check"
     _options, kept = call(models[0], real[0])
     assert kept == real[0], f"{tab}: a valid Segment pick was discarded"
+
+
+# --- Model search -----------------------------------------------------------
+
+def _all_ids(module, tab):
+    """Every element id in a tab's rendered bar (pattern ids excluded)."""
+    from STATpy_platform.features.monitoring.data_access import PD_PERFORMANCE_DATA
+
+    if module is pd_layout:
+        roots = [module.build_global_filters(PD_PERFORMANCE_DATA)]
+    elif module is overview_layout:
+        roots = module.page_layout(PD_PERFORMANCE_DATA)
+    elif hasattr(module, "build_layout"):
+        roots = module.build_layout()
+    else:
+        roots = module.page_layout()
+
+    out = set()
+    for root in roots:
+        if not isinstance(root, Component):
+            continue
+        for node in _walk(root):
+            element_id = getattr(node, "id", None)
+            if isinstance(element_id, str):
+                out.add(element_id)
+    return out
+
+
+def _model_search_id(tab):
+    from STATpy_platform.shared.ui import controls as pd_controls
+
+    if tab == "pd":
+        return pd_controls.MODELS_SEARCH_ID
+    return {"lgd": lgd_layout, "ead": ead_layout, "loss": loss_layout}[tab].MODEL_SEARCH_ID
+
+
+@pytest.mark.parametrize("name,module,tab", [t for t in TABS if t[2] != "overview"])
+def test_the_model_menu_is_searchable(name, module, tab):
+    """These tabs select one model out of a list that can get long, so the menu
+    carries a search box -- the same "Type to search models…" affordance the
+    SAAS and Overview checklists have."""
+    assert _model_search_id(tab) in _all_ids(module, tab), name
+
+
+@pytest.mark.parametrize("name,module,tab", [t for t in TABS if t[2] != "overview"])
+def test_the_search_box_survives_a_menu_rebuild(name, module, tab):
+    """The shell callback rewrites the menu on every value/options change. If
+    the input were a child of what it rewrites it would be destroyed on each
+    keystroke, losing focus and text -- so the option buttons live in their own
+    container and *that* is what gets rewritten."""
+    from STATpy_platform.shared.ui import controls as pd_controls
+
+    menu_id = (pd_controls.MODELS_MENU_ID if tab == "pd"
+               else {"lgd": lgd_layout, "ead": ead_layout, "loss": loss_layout}[tab].MODEL_MENU_ID)
+    ids = _all_ids(module, tab)
+    assert pd_controls.single_select_option_list_id(menu_id) in ids, name
+    assert _model_search_id(tab) in ids, name
+
+
+@pytest.mark.parametrize("name,module,tab", [t for t in TABS if t[2] != "overview"])
+def test_no_other_filter_gets_a_search_box(name, module, tab):
+    """One search box, on Model. A search on Scenario or Segment would be noise."""
+    searches = {i for i in _all_ids(module, tab) if i.endswith("-search")}
+    assert searches == {_model_search_id(tab)}, f"{name}: {sorted(searches)}"
+
+
+def test_only_the_model_menu_is_searchable():
+    """A search box on every filter would be noise. Scenario, Segment and the
+    rest keep the plain menu."""
+    from STATpy_platform.features.monitoring.ui import common as filter_shell
+
+    assert filter_shell.filter_options_by_search(
+        [{"label": "PD Model A", "value": "PD Model A"},
+         {"label": "PD Corp Model", "value": "PD Corp Model"}], "corp",
+    ) == [{"label": "PD Corp Model", "value": "PD Corp Model"}]
+    # Empty search is a no-op, never an empty list.
+    assert len(filter_shell.filter_options_by_search([{"label": "x", "value": "x"}], "")) == 1
+
+
+def test_search_hides_options_but_the_toggle_still_names_the_selection():
+    """The label resolves against the *full* option list, so a selected model
+    filtered out of view still reads back -- the same rule the SAAS and Overview
+    checklists follow."""
+    from STATpy_platform.features.monitoring.ui import common as filter_shell
+
+    options = [{"label": "PD Corp Model", "value": "PD Corp Model"},
+               {"label": "PD Model F", "value": "PD Model F"}]
+    label, buttons = filter_shell.build_single_select_shell(
+        options=options, value="PD Corp Model", filter_key="specific-models", search="model f",
+    )
+    assert label == "PD Corp Model"
+    assert len(buttons) == 1

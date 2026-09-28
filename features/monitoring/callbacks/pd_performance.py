@@ -166,18 +166,21 @@ def register_callbacks(app) -> None:
     # below) is unaffected and still separately owns each filter's
     # ``options``/``value`` outputs; this loop only owns the shell chrome.
     # -----------------------------------------------------------------
-    for value_id, toggle_id, menu_id, filter_key in (
-        (controls.REGION_ID, controls.REGION_TOGGLE_ID, controls.REGION_MENU_ID, "region"),
-        (controls.PORTFOLIO_ID, controls.PORTFOLIO_TOGGLE_ID, controls.PORTFOLIO_MENU_ID, "portfolio"),
-        (controls.MODELS_ID, controls.MODELS_TOGGLE_ID, controls.MODELS_MENU_ID, "specific-models"),
-        (controls.PORTFOLIO_SEGMENT_ID, controls.PORTFOLIO_SEGMENT_TOGGLE_ID, controls.PORTFOLIO_SEGMENT_MENU_ID, "portfolio-segment"),
-        (controls.MODEL_USE_CASE_ID, controls.MODEL_USE_CASE_TOGGLE_ID, controls.MODEL_USE_CASE_MENU_ID, "model-use-case"),
-        (controls.REPORTING_CYCLE_ID, controls.REPORTING_CYCLE_TOGGLE_ID, controls.REPORTING_CYCLE_MENU_ID, "reporting-cycle"),
-        (controls.MONITORING_POINT_ID, controls.MONITORING_POINT_TOGGLE_ID, controls.MONITORING_POINT_MENU_ID, "monitoring-point"),
-        (controls.SCENARIO_ID, controls.SCENARIO_TOGGLE_ID, controls.SCENARIO_MENU_ID, "scenario"),
+    for value_id, toggle_id, menu_id, filter_key, search_id in (
+        (controls.REGION_ID, controls.REGION_TOGGLE_ID, controls.REGION_MENU_ID, "region", None),
+        (controls.PORTFOLIO_ID, controls.PORTFOLIO_TOGGLE_ID, controls.PORTFOLIO_MENU_ID, "portfolio", None),
+        # Only Model carries a search box; the rest keep the plain menu.
+        (controls.MODELS_ID, controls.MODELS_TOGGLE_ID, controls.MODELS_MENU_ID, "specific-models",
+         controls.MODELS_SEARCH_ID),
+        (controls.PORTFOLIO_SEGMENT_ID, controls.PORTFOLIO_SEGMENT_TOGGLE_ID, controls.PORTFOLIO_SEGMENT_MENU_ID, "portfolio-segment", None),
+        (controls.MODEL_USE_CASE_ID, controls.MODEL_USE_CASE_TOGGLE_ID, controls.MODEL_USE_CASE_MENU_ID, "model-use-case", None),
+        (controls.REPORTING_CYCLE_ID, controls.REPORTING_CYCLE_TOGGLE_ID, controls.REPORTING_CYCLE_MENU_ID, "reporting-cycle", None),
+        (controls.MONITORING_POINT_ID, controls.MONITORING_POINT_TOGGLE_ID, controls.MONITORING_POINT_MENU_ID, "monitoring-point", None),
+        (controls.SCENARIO_ID, controls.SCENARIO_TOGGLE_ID, controls.SCENARIO_MENU_ID, "scenario", None),
     ):
         filter_shell.register_single_select_callbacks(
-            app, value_id=value_id, toggle_id=toggle_id, menu_id=menu_id, filter_key=filter_key,
+            app, value_id=value_id, toggle_id=toggle_id, menu_id=menu_id,
+            filter_key=filter_key, search_id=search_id,
         )
 
     @app.callback(

@@ -61,6 +61,7 @@ PORTFOLIO_SEGMENT_MENU_ID = "pd-portfolio-segment-menu"
 MODELS_ID = "pd-models"
 MODELS_TOGGLE_ID = "pd-models-toggle"
 MODELS_MENU_ID = "pd-models-menu"
+MODELS_SEARCH_ID = "pd-models-search"
 SINGLE_SELECT_OPTION_ID = "pd-single-select-option"
 #: ``filter`` key on the Segment dropdown's option buttons. Named here because
 #: sync_pd_filters_to_model_options listens to those buttons' clicks rather than
@@ -154,6 +155,17 @@ def build_single_select_option_buttons(
     ]
 
 
+def single_select_option_list_id(menu_id: str) -> str:
+    """Id of the container holding a searchable menu's option buttons.
+
+    Only searchable menus have one. The shell callback rewrites *this* rather
+    than the menu itself, so the search box -- a sibling -- stays mounted and
+    keeps focus and its text while you type. Rewriting the menu's own children
+    would destroy the input on every keystroke.
+    """
+    return f"{menu_id}-options"
+
+
 def build_single_select_dropdown(
     *,
     value_id: str,
@@ -163,6 +175,8 @@ def build_single_select_dropdown(
     options: list[dict],
     value: str,
     disabled: bool = False,
+    search_id: str | None = None,
+    search_placeholder: str = "Type to search…",
 ) -> html.Div:
     """Custom single-select dropdown with a toggle button and option list.
 
@@ -195,7 +209,25 @@ def build_single_select_dropdown(
             html.Div(
                 id=menu_id,
                 className="checkbox-dropdown-menu single-select-menu",
-                children=build_single_select_option_buttons(options, value, filter_key),
+                children=(
+                    build_single_select_option_buttons(options, value, filter_key)
+                    if search_id is None
+                    else [
+                        dcc.Input(
+                            id=search_id,
+                            type="text",
+                            placeholder=search_placeholder,
+                            value="",
+                            autoComplete="off",
+                            className="pd-models-search",
+                        ),
+                        html.Div(
+                            id=single_select_option_list_id(menu_id),
+                            className="single-select-option-list",
+                            children=build_single_select_option_buttons(options, value, filter_key),
+                        ),
+                    ]
+                ),
             ),
         ],
     )
@@ -457,7 +489,10 @@ def build_global_filters(data: dict, extra_controls=None, initial: dict | None =
     secondary_children = [
             build_focus_caption(),
             html.Div(
-                className="monitoring-filter",
+                # monitoring-model-filter widens the menu to fit the search
+                # placeholder (styles.css); the other single-selects keep their
+                # track width.
+                className="monitoring-filter monitoring-model-filter",
                 children=[
                     html.Label("Model", htmlFor=MODELS_TOGGLE_ID),
                     build_single_select_dropdown(
@@ -467,6 +502,8 @@ def build_global_filters(data: dict, extra_controls=None, initial: dict | None =
                         filter_key="specific-models",
                         options=[{"label": "Select model", "value": ""}] + [{"label": name, "value": name} for name in model_names],
                         value=initial_model,
+                        search_id=MODELS_SEARCH_ID,
+                        search_placeholder="Type to search models…",
                     ),
                 ],
             ),

@@ -181,6 +181,23 @@ rows in the workbook, or a recompute path — never a change to the filter alone
 `test_filter_shells.py` pins both halves: the four tabs must expose a
 single-select `Dropdown`, and Overview must expose a `Checklist`.
 
+Both kinds are **searchable**. The four tabs' single-select menus carry the same
+"Type to search models…" box as the checklists, via
+`build_single_select_dropdown(search_id=…)`. Two rules make it behave:
+
+* The search **hides** options, it never removes them — so the toggle still
+  names a selection that is filtered out of view, because the label resolves
+  against the full list.
+* The option buttons live in their own container
+  (`controls.single_select_option_list_id`) and the shell callback rewrites
+  *that*, not the menu. The menu is rebuilt on every value/options change, so an
+  input placed directly inside it would be destroyed on each keystroke, losing
+  focus and text. `test_the_search_box_survives_a_menu_rebuild` pins the
+  structure.
+
+Only Model gets a search box; a search on Scenario or Segment would be noise,
+and `test_no_other_filter_gets_a_search_box` keeps it that way.
+
 Overview's picker otherwise matches SAAS's workspace control exactly — toggle
 summary, search box, "All", checklist — including the two behaviours that are
 easy to get wrong: the search only *hides* options (a checked model stays
