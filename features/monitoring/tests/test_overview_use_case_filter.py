@@ -26,18 +26,22 @@ from STATpy_platform.shared.repositories.filters_config import (
 
 def test_use_case_options_are_listed_alphabetically():
     options = model_use_case_options()
-    assert [o["value"] for o in options] == ["CECL", "ST - CCAR"]
+    assert [o["value"] for o in options] == ["CCAR", "CECL"]
 
 
 def test_the_default_use_case_still_owns_the_most_recent_cycle():
-    """Order and default are separate concerns. Listing A-Z puts CECL first, so
-    taking the default from position would silently move every tab's landing
-    page off the current CCAR cycle -- ``default_use_case`` is what stops that."""
-    options = model_use_case_options()
-    chosen = default_use_case(options)
-    assert chosen == "ST - CCAR"
-    assert chosen != options[0]["value"], "the guard is vacuous if A-Z already picks it"
+    """Order and default stay separate concerns.
+
+    They used to visibly diverge: the use case read "ST - CCAR", so A-Z put
+    "CECL" first and taking the default from position moved every tab off the
+    live cycle. Now that the use case is the composite's own token, "CCAR"
+    sorts first anyway and the two happen to agree -- a coincidence of this
+    data, not a property. ``default_use_case`` is still what guarantees the
+    default tracks the newest cycle, which is what this asserts.
+    """
+    chosen = default_use_case(model_use_case_options())
     assert reporting_cycle_options(chosen)[0]["value"] == "CCAR 2026"
+    assert chosen == use_case_of("CCAR 2026")
 
 
 def test_default_use_case_falls_back_when_its_cycle_is_out_of_scope():
@@ -47,7 +51,7 @@ def test_default_use_case_falls_back_when_its_cycle_is_out_of_scope():
 
 
 def test_cycle_options_label_bare_but_value_composite():
-    options = reporting_cycle_options("ST - CCAR")
+    options = reporting_cycle_options("CCAR")
     assert [o["label"] for o in options] == ["2026", "2025", "2024"]
     assert [o["value"] for o in options] == ["CCAR 2026", "CCAR 2025", "CCAR 2024"]
 
@@ -65,7 +69,7 @@ def test_unscoped_cycle_options_cover_every_use_case():
 
 
 def test_use_case_of_maps_composite_back_to_its_programme():
-    assert use_case_of("CCAR 2026") == "ST - CCAR"
+    assert use_case_of("CCAR 2026") == "CCAR"
     assert use_case_of("CECL 2025Q1") == "CECL"
     assert use_case_of("nonsense") == ""
 
@@ -170,7 +174,7 @@ def test_use_case_narrows_the_cycle_options(monkeypatch):
     # filter is left unanswered rather than silently moved to the first cycle.
     assert value == UNSELECTED
 
-    options, value = sync("HBUS", "C&I", "ST - CCAR", "CCAR 2025")
+    options, value = sync("HBUS", "C&I", "CCAR", "CCAR 2025")
     assert [o["label"] for o in options if o["value"] != UNSELECTED] == ["2026", "2025"]
     # a still-valid selection is preserved rather than reset to the first option
     assert value == "CCAR 2025"
@@ -181,8 +185,8 @@ def test_cycles_offered_depend_on_the_region_portfolio_scope(monkeypatch):
     offered under a scope that excludes that model."""
     sync = _captured_callbacks(monkeypatch)["sync_overview_cycle_options"]
 
-    non_ci, _v = sync("HBUS", "non-C&I", "ST - CCAR", UNSELECTED)
-    ci, _v = sync("HBUS", "C&I", "ST - CCAR", UNSELECTED)
+    non_ci, _v = sync("HBUS", "non-C&I", "CCAR", UNSELECTED)
+    ci, _v = sync("HBUS", "C&I", "CCAR", UNSELECTED)
     assert "2024" in [o["label"] for o in non_ci]
     assert "2024" not in [o["label"] for o in ci]
 
@@ -196,8 +200,8 @@ def test_portfolio_and_use_case_offer_only_available_values(monkeypatch):
     # would fill the bar in before the user has touched it.
     assert value == UNSELECTED
 
-    use_cases, _v = cbs["sync_overview_use_case_options"]("HBUS", "C&I", "ST - CCAR")
-    assert set(_real(use_cases)) <= {"ST - CCAR", "CECL"}
+    use_cases, _v = cbs["sync_overview_use_case_options"]("HBUS", "C&I", "CCAR")
+    assert set(_real(use_cases)) <= {"CCAR", "CECL"}
 
 
 def test_none_of_the_scope_filters_offer_an_all_option(monkeypatch):
@@ -209,7 +213,7 @@ def test_none_of_the_scope_filters_offer_an_all_option(monkeypatch):
     assert "All" not in {o["value"] for o in domain.overview_region_options(PD_PERFORMANCE_DATA)}
     assert "All" not in {o["value"] for o in domain.overview_portfolio_options(PD_PERFORMANCE_DATA, "HBUS")}
     assert "All" not in {o["value"] for o in domain.overview_use_case_options(PD_PERFORMANCE_DATA, "HBUS", "C&I")}
-    assert "All" not in {o["value"] for o in domain.overview_cycle_options(PD_PERFORMANCE_DATA, "HBUS", "C&I", "ST - CCAR")}
+    assert "All" not in {o["value"] for o in domain.overview_cycle_options(PD_PERFORMANCE_DATA, "HBUS", "C&I", "CCAR")}
 
 
 def test_model_options_narrow_by_region_portfolio_and_cycle(monkeypatch):
@@ -297,7 +301,7 @@ def test_scope_chip_splits_the_cycle_like_the_filter_bar():
     """The chip mirrors the bar, so it must not keep showing the composite under
     the retired combined label."""
     note = layout._scope_cycle_note("CCAR 2026")
-    assert note == "Model use case ST - CCAR · Reporting cycle 2026"
+    assert note == "Model use case CCAR · Reporting cycle 2026"
     assert layout._scope_cycle_note("CECL 2025Q1") == "Model use case CECL · Reporting cycle 2025Q1"
 
 

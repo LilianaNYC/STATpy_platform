@@ -53,16 +53,6 @@ METRICS_QUARTER_COLUMN = "Quarter"
 # they have no separate column -- readers fall back to it.
 MONITORING_POINT_COLUMN = "monitoring_point"
 
-# ``Run For`` is the single source of truth for both parts, so portfolio.xlsx
-# stores only it. The cycle is pure string work -- the part after the first
-# space -- but the use case is a **business label**, not the family token:
-# "CCAR 2026" belongs to "ST - CCAR", not to "CCAR". That mapping therefore
-# lives here rather than being inferred. A new programme needs a row added to
-# this dict; an unknown family falls back to its own token.
-USE_CASE_BY_FAMILY = {
-    "CCAR": "ST - CCAR",
-    "CECL": "CECL",
-}
 
 # Where PD's cohort-start quarter lands after the read seam promotes
 # ``monitoring_point`` into ``quarter`` -- see

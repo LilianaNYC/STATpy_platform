@@ -20,6 +20,7 @@ import pandas as pd
 from ....shared.domain import constants as config
 from ....config.settings import settings
 from ....shared.domain.filter_order import alphabetical
+from ....shared.domain.reporting_cycle import split_run_for
 from ....shared.text import cell_str as _cell_str
 from ....shared.text import normalize_model_name as _normalize_model_name
 from ....shared.text import ordered_unique_strings as _ordered_unique_strings
@@ -295,15 +296,18 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
     # composite being split on a space.
     run_for_parts: dict[str, dict[str, str]] = {}
     scope_run_fors: list[tuple[str, str, str]] = []
-    _needed = (config.RUN_FOR_COLUMN, config.MODEL_USE_CASE_COLUMN, config.REPORTING_CYCLE_COLUMN)
-    if all(column in model_characteristic_df.columns for column in _needed):
+    if config.RUN_FOR_COLUMN in model_characteristic_df.columns:
         _seen: set[tuple[str, str, str]] = set()
         for row in model_characteristic_df.to_dict(orient="records"):
             composite = _cell_str(row.get(config.RUN_FOR_COLUMN))
-            use_case = _cell_str(row.get(config.MODEL_USE_CASE_COLUMN))
-            cycle = _cell_str(row.get(config.REPORTING_CYCLE_COLUMN))
-            if not composite or not use_case or not cycle:
+            # Derived from the composite, like the monitoring tabs, rather than
+            # read from this sheet's own Model Use Case column -- that column
+            # says "ST - CCAR" where Run For says "CCAR", so reading it would
+            # have the two dashboards label the same cycle differently.
+            split = split_run_for(composite)
+            if not composite or split is None:
                 continue
+            use_case, cycle = split
             run_for_parts.setdefault(composite, {"use_case": use_case, "cycle": cycle})
             key = (_cell_str(row.get("Region")), _cell_str(row.get("Portfolio")), composite)
             if key not in _seen:

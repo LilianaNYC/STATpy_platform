@@ -65,7 +65,7 @@ def test_the_derived_parts_match_what_the_columns_used_to_hold():
         assert parts is not None, composite
         use_case, cycle = parts
         assert composite.endswith(cycle)
-        assert use_case in {"ST - CCAR", "CECL"}
+        assert use_case in {"CCAR", "CECL"}
 
 
 def test_portfolio_grain_columns_are_folded_to_internal_keys():

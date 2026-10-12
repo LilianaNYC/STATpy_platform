@@ -107,7 +107,7 @@ def test_cycle_values_stay_composite_while_labels_are_bare(name, module, prefix)
 def test_use_case_offers_only_real_programmes(name, module, prefix):
     use_case = _by_id(_nodes(module), f"{prefix}-model-use-case")
     values = {o["value"] for o in _real(use_case.options)}
-    assert values <= {"ST - CCAR", "CECL"}, name
+    assert values <= {"CCAR", "CECL"}, name
     assert "All" not in values, name
     # The page opens unanswered -- the value is the placeholder, not a programme.
     assert use_case.value == UNSELECTED, name

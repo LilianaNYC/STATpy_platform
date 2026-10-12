@@ -40,7 +40,6 @@ from .constants import (
     MODEL_KEY,
     QUARTER_KEY,
     REPORTING_CYCLE_KEY,
-    USE_CASE_BY_FAMILY,
     RUN_FOR_COLUMN,
     SEGMENT_KEY,
 )
@@ -59,19 +58,17 @@ _PORTFOLIO_COLUMN_MAP = {
 
 
 def split_run_for(composite) -> tuple[str, str] | None:
-    """``"CCAR 2026"`` -> ``("ST - CCAR", "2026")``, or ``None`` if unusable.
+    """``"CCAR 2026"`` -> ``("CCAR", "2026")``, or ``None`` if unusable.
 
-    portfolio.xlsx stores only the composite, because both parts come out of
-    it. The cycle is the text after the first space. The use case is *not* the
-    family token -- "CCAR" maps to "ST - CCAR" -- so it goes through
-    :data:`USE_CASE_BY_FAMILY`; an unknown family falls back to its own token
-    rather than vanishing from the filter.
+    Both parts are read straight out of the composite: the use case is the
+    leading token and the cycle is the rest. No relabelling -- the filter shows
+    exactly what ``Run For`` says, so a new programme needs no code at all.
     """
     text = str(composite or "").strip()
     family, _, cycle = text.partition(" ")
     if not family or not cycle.strip():
         return None
-    return USE_CASE_BY_FAMILY.get(family, family), cycle.strip()
+    return family, cycle.strip()
 
 
 def normalize_portfolio_columns(df: pd.DataFrame | None) -> pd.DataFrame | None:

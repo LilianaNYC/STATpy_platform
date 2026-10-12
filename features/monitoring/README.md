@@ -168,23 +168,21 @@ Both parts are derived from it, not stored:
 
 | | |
 |---|---|
-| bare cycle | the text after the first space — pure string work |
-| model use case | `USE_CASE_BY_FAMILY[family]`, because `CCAR 2026` belongs to **`ST - CCAR`**, not to `CCAR` |
+| model use case | the leading token — `CCAR 2026` → `CCAR` |
+| bare cycle | the text after the first space — `CCAR 2026` → `2026` |
 
-`shared.domain.reporting_cycle.split_run_for` does both. The sheets used to
+`shared.domain.reporting_cycle.split_run_for` does both, verbatim, with no
+relabelling: the filter shows exactly what `Run For` says. The sheets used to
 carry `Model Use Case` and `Reporting Cycle` as their own columns, which meant
 three columns holding one fact and a standing risk they drifted apart — a
-consistency test existed purely to catch that. Deriving them retires the risk:
-there is now nothing to disagree with.
+consistency test existed purely to catch that. Deriving them retires the risk,
+and because nothing is remapped, a new programme needs no code at all.
 
-Only the use-case half needs anything that is not in the data, and that is a
-**business label** rather than a string operation, so it lives in
-`constants.USE_CASE_BY_FAMILY`. A new programme means a row in that dict; an
-unknown family falls back to its own token rather than vanishing from the filter.
-
-The MEV workbook still spells all three on `model_names`, because SAAS reads
-them directly — so that half of the drift risk remains and is still covered by
-`test_the_mev_workbook_parts_still_agree_with_its_composite`.
+**Both dashboards derive it**, including SAAS, which reads the same helper
+rather than `model_names`' own `Model Use Case` column. That column says
+`ST - CCAR` where `Run For` says `CCAR`, so reading it would have the two
+dashboards label the same cycle differently. It is still in the MEV workbook
+but nothing reads it.
 
 ### PD's monitoring point vs its cohort quarter
 

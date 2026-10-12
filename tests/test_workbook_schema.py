@@ -88,9 +88,8 @@ def test_portfolio_sheets_do_not_carry_the_old_lowercase_spellings(sheet_name):
 
 
 def test_every_composite_derives_to_the_agreed_use_cases():
-    """``ST - CCAR`` for CCAR cycles, ``CECL`` for the CECL cycle. A new value
-    here means source data whose family is missing from USE_CASE_BY_FAMILY, so
-    it would fall back to its own token in the filter."""
+    """The use case is the composite's leading token, verbatim -- no relabelling.
+    A new value here simply means new source data."""
     from STATpy_platform.shared.domain.reporting_cycle import split_run_for
 
     composites = set()
@@ -104,23 +103,21 @@ def test_every_composite_derives_to_the_agreed_use_cases():
         split = split_run_for(composite)
         assert split is not None, f"{composite!r} does not split into a use case and a cycle"
         derived.add(split[0])
-    assert derived == {"ST - CCAR", "CECL"}, derived
-    assert set(config.USE_CASE_BY_FAMILY.values()) >= derived
+    assert derived == {"CCAR", "CECL"}, derived
 
 
-def test_the_mev_workbook_parts_still_agree_with_its_composite():
-    """model_names *does* store the parts, so they can still drift there. This
-    is the check that used to cover portfolio.xlsx as well; deriving the parts
-    retired that half of the risk entirely."""
+def test_the_mev_workbook_still_stores_its_own_parts():
+    """model_names keeps the columns, but nothing reads them any more: both
+    dashboards derive the use case from ``Run For`` so they cannot disagree
+    about what a cycle is called. Its stored Model Use Case says "ST - CCAR"
+    where Run For says "CCAR" -- harmless while unread, and the reason the
+    SAAS loader stopped reading it."""
     df = pd.read_excel(settings.dummy_mev_data_file,
                        sheet_name=config.DUMMY_MEV_MODEL_CHARACTERISTIC_SHEET_NAME)
     trio = df[list(MEV_CYCLE_COLUMNS)].dropna().drop_duplicates()
     assert len(trio) > 0
-    for composite, use_case, cycle in trio.itertuples(index=False):
+    for composite, _use_case, cycle in trio.itertuples(index=False):
         assert str(composite).endswith(str(cycle)), (composite, cycle)
-        assert config.USE_CASE_BY_FAMILY.get(str(composite).split(" ")[0]) == str(use_case), (
-            f"{composite!r} is labelled {use_case!r}, which USE_CASE_BY_FAMILY does not agree with"
-        )
 
 
 # --- PD's monitoring point vs cohort quarter -------------------------------
