@@ -189,6 +189,43 @@ def test_all_selected_is_the_gate():
 # became dead ends -- pick a region/portfolio with no CECL data, pick CECL, and
 # Reporting Cycle comes back empty with no way forward and no explanation.
 
+def _tab_models(tab):
+    """The models a tab's own Model filter lists.
+
+    PD's come from portfolio.xlsx; LGD/EAD/Loss from the MEV workbook. The two
+    diverge -- portfolio.xlsx was trimmed to two PD models while the MEV sheet
+    still carries seven -- so a test must ask the same source the tab does.
+    """
+    from STATpy_platform.features.monitoring.data_access import PD_PERFORMANCE_DATA
+    from STATpy_platform.shared.repositories.filters_config import model_names
+
+    return list(PD_PERFORMANCE_DATA["model_names"]) if tab == "pd" else model_names(tab)
+
+
+def _scope_pairs(tab):
+    """(region, portfolio) pairs the user can actually reach.
+
+    Not the cartesian product: Portfolio is narrowed by Region, so a region
+    offers only the portfolios its own models have. Testing the full product
+    asserts against combinations the bar never presents -- and those legitimately
+    offer no cycle, because a scope with no models falls back to listing every
+    use case.
+    """
+    from STATpy_platform.features.monitoring.data_access import PD_PERFORMANCE_DATA
+    from STATpy_platform.shared.domain.mev_range import model_field_values, models_matching
+
+    catalog = PD_PERFORMANCE_DATA.get("mev_catalog") or {}
+    models = _tab_models(tab)
+    group = {"pd": "PD", "lgd": "LGD", "ead": "EAD"}[tab]
+    pairs = []
+    for region in model_field_values(catalog, "region", models):
+        in_region = models_matching(catalog, group, region, None, models)
+        for portfolio in model_field_values(catalog, "portfolio", in_region):
+            pairs.append((region, portfolio))
+    assert pairs, tab
+    return pairs
+
+
 def _captured(monkeypatch, module):
     class _App:
         def __init__(self):
@@ -215,18 +252,22 @@ def test_use_case_and_cycle_are_narrowed_by_region_and_portfolio(monkeypatch, ta
     )
     cbs = _captured(monkeypatch, module)
 
-    use_cases, _v = cbs[f"sync_{tab}_scope_to_use_case_options"]("EU", "C&I", UNSELECTED)
-    offered = {o["value"] for o in use_cases} - {UNSELECTED}
-    assert offered, f"{tab}: EU/C&I offered no use case at all"
+    # Driven by the regions/portfolios the tab actually offers. Hardcoding a
+    # pair assumes the dummy data keeps covering it -- trimming PD to two
+    # models removed EU from that tab entirely.
+    for region, portfolio in _scope_pairs(tab):
+        use_cases, _v = cbs[f"sync_{tab}_scope_to_use_case_options"](region, portfolio, UNSELECTED)
+        offered = {o["value"] for o in use_cases} - {UNSELECTED}
+        assert offered, f"{tab}: {region}/{portfolio} offered no use case at all"
 
-    # Every use case offered must yield at least one cycle, and every cycle at
-    # least one model -- otherwise the user can walk into a dead end.
-    for use_case in offered:
-        cycles, _v = cbs[f"sync_{tab}_use_case_to_cycle_options"](
-            "EU", "C&I", use_case, UNSELECTED
-        )
-        real = [o["value"] for o in cycles if o["value"] != UNSELECTED]
-        assert real, f"{tab}: use case {use_case!r} offered no cycle under EU/C&I"
+        # Every use case offered must yield at least one cycle, and every cycle
+        # at least one model -- otherwise the user can walk into a dead end.
+        for use_case in offered:
+            cycles, _v = cbs[f"sync_{tab}_use_case_to_cycle_options"](
+                region, portfolio, use_case, UNSELECTED
+            )
+            real = [o["value"] for o in cycles if o["value"] != UNSELECTED]
+            assert real, f"{tab}: {use_case!r} offered no cycle under {region}/{portfolio}"
 
 
 @pytest.mark.parametrize("tab", ["pd", "lgd", "ead"])
@@ -296,13 +337,11 @@ def test_picking_a_model_narrows_segment_but_never_answers_it(monkeypatch, tab):
     segment_cb = next(fn for name, fn in cbs.items() if name.endswith("segment_dropdown")
                       or name.endswith("to_segment_options"))
 
-    from STATpy_platform.shared.repositories.filters_config import model_names
-
     # PD also takes the cycle (as State) between the model and the segment.
     call = (lambda model, segment: segment_cb(model, UNSELECTED, segment)) if tab == "pd" \
         else (lambda model, segment: segment_cb(model, segment))
 
-    models = model_names(tab)
+    models = _tab_models(tab)
     assert models, tab
     for model in models:
         options, value = call(model, UNSELECTED)

@@ -220,7 +220,10 @@ def test_model_options_narrow_by_region_portfolio_and_cycle(monkeypatch):
     unfiltered, _value = sync("All", "All", "", "All", "", [])
     eu_only, _value = sync("EU", "All", "", "All", "", [])
     assert {o["value"] for o in eu_only} < {o["value"] for o in unfiltered}
-    assert "PD Model C" in {o["value"] for o in eu_only}
+    # Named models drift as the dummy data is trimmed, so assert the property:
+    # EU must keep at least one model, and drop at least one HBUS-only model.
+    assert eu_only, "EU narrowed the list to nothing"
+    assert {o["value"] for o in unfiltered} - {o["value"] for o in eu_only}
 
     by_cycle, _value = sync("All", "All", "CCAR 2024", "All", "", [])
     assert [o["value"] for o in by_cycle] == ["LGD Model A"]
@@ -231,10 +234,14 @@ def test_narrowing_models_also_rewrites_the_selection(monkeypatch):
     charts would still be scoped to models no longer offered."""
     sync = _captured_callbacks(monkeypatch)["sync_overview_model_options"]
 
-    _options, value = sync("EU", "All", "", "All", "", ["PD Model A", "PD Model C"])
-    # PD Model A is US-only, so it must drop out of the applied selection
-    assert "PD Model A" not in value
-    assert "PD Model C" in value
+    eu_models = [o["value"] for o in sync("EU", "All", "", "All", "", [])[0]]
+    all_models = [o["value"] for o in sync("All", "All", "", "All", "", [])[0]]
+    dropped = next(m for m in all_models if m not in eu_models)  # not an EU model
+    kept = eu_models[0]
+
+    _options, value = sync("EU", "All", "", "All", "", [dropped, kept])
+    assert dropped not in value, f"{dropped} is not in EU and must leave the selection"
+    assert kept in value
 
 
 def test_loss_survives_a_region_filter(monkeypatch):
@@ -315,13 +322,13 @@ def test_applied_snapshot_records_region_and_portfolio():
     from STATpy_platform.features.monitoring.callbacks.overview import _overview_filter_snapshot
 
     snapshot = _overview_filter_snapshot(
-        "CCAR 2026", "2026Q3", "All", ["PD Model C"], region="EU", portfolio="C&I",
+        "CCAR 2026", "2026Q3", "All", ["PD Model A"], region="EU", portfolio="C&I",
     )
     assert snapshot["region"] == "EU"
     assert snapshot["portfolio"] == "C&I"
     # unchanged keys still present, so existing readers keep working
     assert snapshot["reporting_cycle"] == "CCAR 2026"
-    assert snapshot["models"] == ["PD Model C"]
+    assert snapshot["models"] == ["PD Model A"]
 
 
 def test_applied_snapshot_defaults_the_new_keys():

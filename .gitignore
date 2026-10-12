@@ -15,3 +15,6 @@ env/
 
 # OS / misc
 *.log
+
+# Excel lock files, created while a workbook is open
+~$*

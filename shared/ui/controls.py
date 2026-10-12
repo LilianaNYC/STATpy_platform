@@ -368,7 +368,13 @@ def build_global_filters(data: dict, extra_controls=None, initial: dict | None =
     cfg = load_filter_config()
     quarters_asc = sorted(data["quarters"])
     latest_quarter = quarters_asc[-1] if quarters_asc else ""
-    model_names = cfg_model_names("pd")
+    # The tab's own model list, from portfolio.xlsx -- the same source its
+    # metrics, its callbacks and models_matching all use. Not the MEV
+    # workbook's: that lists every PD model SAAS knows about, including ones
+    # with no metrics, and offering those here produces a scope that renders
+    # nothing. The two agreed until portfolio.xlsx was trimmed to the models
+    # with complete data.
+    model_names = list(data.get("model_names") or cfg_model_names("pd"))
     segment_values = cfg_segment_values()
     # Most-recent-first, matching Reporting Cycle beside it. The default is
     # still resolved from the ascending list via resolve_monitoring_point_value.
