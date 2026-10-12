@@ -32,7 +32,9 @@ from __future__ import annotations
 import pandas as pd
 
 from .constants import (
+    COHORT_QUARTER_KEY,
     CYCLE_KEY,
+    MONITORING_POINT_COLUMN,
     METRICS_MODEL_COLUMN,
     METRICS_QUARTER_COLUMN,
     METRICS_SEGMENT_COLUMN,
@@ -71,7 +73,30 @@ def normalize_portfolio_columns(df: pd.DataFrame | None) -> pd.DataFrame | None:
         return df
 
     renames = {old: new for old, new in _PORTFOLIO_COLUMN_MAP.items() if old in df.columns}
-    return df.rename(columns=renames) if renames else df
+    df = df.rename(columns=renames) if renames else df
+    return _promote_monitoring_point(df)
+
+
+def _promote_monitoring_point(df: pd.DataFrame) -> pd.DataFrame:
+    """Make ``quarter`` mean the **as-of** date on every portfolio frame.
+
+    PD's metrics sheet distinguishes the two: ``monitoring_point`` is the as-of
+    and ``Quarter`` is the *cohort start*, which sits one year back for 1y and
+    nco_1y rows and two years back for 2y rows -- so one monitoring point spans
+    three different quarters. Every other sheet has no ``horizon``, so its
+    ``Quarter`` is already the as-of.
+
+    Rather than teach each of the half-dozen readers that difference, the swap
+    happens once here, at the read seam: ``quarter`` becomes the as-of
+    everywhere and the cohort start stays available as ``cohort_quarter``. The
+    monitoring-point filter, the metrics store and every trend therefore keep
+    the exact keys they had before PD gained the column.
+    """
+    if MONITORING_POINT_COLUMN not in df.columns:
+        return df
+    df = df.rename(columns={QUARTER_KEY: COHORT_QUARTER_KEY}) if QUARTER_KEY in df.columns else df
+    df[QUARTER_KEY] = df[MONITORING_POINT_COLUMN]
+    return df
 
 
 __all__ = ["normalize_portfolio_columns"]

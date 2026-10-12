@@ -45,6 +45,18 @@ REPORTING_CYCLE_COLUMN = "Reporting Cycle"
 # METRICS_* to stay clear of ``SEGMENT_COLUMN`` above, which is the *facility*
 # sheet's segment column ("Portfolio") and a different thing entirely.
 METRICS_QUARTER_COLUMN = "Quarter"
+# The as-of reporting date a metrics row belongs to. Only PD has it, because
+# only PD has a ``horizon`` dimension: its ``Quarter`` is the *cohort start*,
+# which sits one year back for 1y/nco_1y rows and two years back for 2y rows,
+# so the three horizons of one monitoring point carry three different quarters.
+# LGD/EAD/Loss have no horizon, so their ``Quarter`` is already the as-of and
+# they have no separate column -- readers fall back to it.
+MONITORING_POINT_COLUMN = "monitoring_point"
+
+# Where PD's cohort-start quarter lands after the read seam promotes
+# ``monitoring_point`` into ``quarter`` -- see
+# ``shared.domain.reporting_cycle._promote_monitoring_point``.
+COHORT_QUARTER_KEY = "cohort_quarter"
 METRICS_MODEL_COLUMN = "Model"
 METRICS_SEGMENT_COLUMN = "Segment"
 

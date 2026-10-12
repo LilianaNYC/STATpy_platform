@@ -162,6 +162,42 @@ first filter. Both rows lead with a caption track of the same width
 row above, across the divider. Below 901px the rows stack and the caption
 becomes a plain heading over its group.
 
+### PD's monitoring point vs its cohort quarter
+
+PD alone separates the two, because PD alone has a `horizon`:
+
+| Column | Meaning |
+|---|---|
+| `monitoring_point` | the **as-of** reporting date |
+| `Quarter` | the **cohort start** — one year back for `1y`/`nco_1y`, two for `2y` |
+
+So one monitoring point spans three different quarters:
+
+```
+monitoring_point  Quarter  horizon
+2025Q4            2024Q4   1y
+2025Q4            2023Q4   2y
+2025Q4            2024Q4   nco_1y
+2025Q4            2024Q4   (blank — the horizon-agnostic summary row)
+```
+
+LGD/EAD/Loss have no `horizon`, so their `Quarter` is already the as-of and they
+carry no `monitoring_point`.
+
+Everything downstream — the metrics store, the Monitoring Point filter, every
+trend — means the **as-of** when it says `quarter`. Rather than teach each reader
+the difference, `shared.domain.reporting_cycle._promote_monitoring_point` swaps
+them once at the read seam: `quarter` becomes the as-of and the cohort start stays
+available as `cohort_quarter`. Sheets without the column pass through untouched.
+Skip that swap and the metrics store and the filter both shift one to two years
+back — `test_the_read_seam_promotes_pd_monitoring_point_into_quarter` pins it.
+
+PD also carries `MM_P0`, `MM_Pm` and `abs_delta_MM`, joined from
+`PD_Sensitivity_Projections` on `(Run For, Model, Segment, monitoring_point)`.
+`abs_delta_MM` is `|MM_Pm − MM_P0|`. All three are blank where a model has no
+projections — PD Model E and F have none at all, and CECL has none for any model —
+and they are blank *together*, so a missing margin never reads as a real zero.
+
 ### One model, except on Overview
 
 | Tab | Model filter | Why |

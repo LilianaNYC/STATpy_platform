@@ -99,3 +99,61 @@ def test_composite_agrees_with_its_two_parts():
                 f"{sheet_name}: {composite!r} does not end with its "
                 f"{config.REPORTING_CYCLE_COLUMN} {cycle!r}"
             )
+
+
+# --- PD's monitoring point vs cohort quarter -------------------------------
+
+def test_pd_metrics_carries_a_monitoring_point_and_the_mm_margins():
+    """PD alone distinguishes the as-of date from the cohort start, because PD
+    alone has a ``horizon``."""
+    columns = _columns(settings.portfolio_file, "PD_Performance_Metrics")
+    for name in (config.MONITORING_POINT_COLUMN, "MM_P0", "MM_Pm", "abs_delta_MM"):
+        assert name in columns, f"PD_Performance_Metrics is missing {name}"
+
+
+@pytest.mark.parametrize("sheet_name", ["LGD_Performance_Metrics",
+                                        "EAD_Performance_Metrics",
+                                        "Loss_Performance_Metrics"])
+def test_the_other_metrics_sheets_have_no_monitoring_point(sheet_name):
+    """They have no ``horizon``, so their ``Quarter`` is already the as-of and a
+    separate column would be a duplicate. The read seam falls back to it."""
+    columns = _columns(settings.portfolio_file, sheet_name)
+    assert "horizon" not in columns, sheet_name
+    assert config.MONITORING_POINT_COLUMN not in columns, sheet_name
+
+
+def test_the_cohort_quarter_sits_one_or_two_years_behind_the_monitoring_point():
+    """The rule from the production sheet: for one monitoring point, the 1y and
+    nco_1y rows carry a quarter a year back and the 2y row two years back, so
+    one as-of date spans three different quarters.
+    """
+    df = pd.read_excel(settings.portfolio_file, sheet_name="PD_Performance_Metrics")
+    expected_lag = {"1y": 1, "nco_1y": 1, "2y": 2}
+
+    def _parts(label):
+        year, _, quarter = str(label).partition("Q")
+        return int(year), int(quarter)
+
+    checked = 0
+    for row in df.to_dict(orient="records"):
+        horizon = str(row.get("horizon") or "").strip()
+        lag = expected_lag.get(horizon, 1)  # blank horizon rides with the 1y cohort
+        mp_year, mp_q = _parts(row[config.MONITORING_POINT_COLUMN])
+        q_year, q_q = _parts(row[config.METRICS_QUARTER_COLUMN])
+        assert (mp_year - q_year, mp_q) == (lag, q_q), (
+            f"{row[config.MONITORING_POINT_COLUMN]} / {horizon or 'blank'} -> "
+            f"{row[config.METRICS_QUARTER_COLUMN]} (expected {lag}y back, same quarter)"
+        )
+        checked += 1
+    assert checked > 100, checked
+
+
+def test_abs_delta_mm_is_the_absolute_margin_gap():
+    df = pd.read_excel(settings.portfolio_file, sheet_name="PD_Performance_Metrics")
+    both = df.dropna(subset=["MM_P0", "MM_Pm", "abs_delta_MM"])
+    assert len(both) > 100, len(both)
+    assert ((both["abs_delta_MM"] - (both["MM_Pm"] - both["MM_P0"]).abs()).abs() < 1e-9).all()
+    # Where a model has no sensitivity projections, all three stay blank
+    # together rather than one of them reading as a real zero.
+    missing = df[df["MM_P0"].isna()]
+    assert missing["MM_Pm"].isna().all() and missing["abs_delta_MM"].isna().all()

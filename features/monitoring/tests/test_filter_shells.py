@@ -128,3 +128,29 @@ def test_monitoring_point_opens_unanswered_on_every_tab():
         assert isinstance(monitoring_point, Dropdown)
         assert monitoring_point.value == UNSELECTED, component_id
         assert monitoring_point.options[0]["label"] == SELECT_PROMPTS["monitoring-point"], component_id
+
+
+def test_the_read_seam_promotes_pd_monitoring_point_into_quarter():
+    """Everything downstream means the **as-of** by ``quarter``. PD's sheet now
+    uses ``Quarter`` for the cohort start, so the read seam swaps them and keeps
+    the cohort start as ``cohort_quarter``. Without this the metrics store and
+    the Monitoring Point filter would silently shift one to two years back.
+    """
+    from STATpy_platform.shared.repositories.tables import read_table
+
+    pd_df = read_table("PD_Performance_Metrics")
+    assert {"quarter", "cohort_quarter", "monitoring_point"} <= set(pd_df.columns)
+    assert (pd_df["quarter"] == pd_df["monitoring_point"]).all()
+    assert (pd_df["quarter"] != pd_df["cohort_quarter"]).all()
+
+    # A sheet without the column is passed through untouched.
+    lgd_df = read_table("LGD_Performance_Metrics")
+    assert "cohort_quarter" not in lgd_df.columns
+    assert "quarter" in lgd_df.columns
+
+
+def test_pd_monitoring_points_are_the_as_of_dates_not_the_cohort_quarters():
+    from STATpy_platform.shared.repositories.filters_config import monitoring_points_by_cycle
+
+    points = monitoring_points_by_cycle("pd")
+    assert points["CCAR 2026"] == ["2025Q4", "2026Q1", "2026Q2", "2026Q3"]
