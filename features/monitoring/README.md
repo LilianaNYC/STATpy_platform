@@ -178,11 +178,14 @@ three columns holding one fact and a standing risk they drifted apart — a
 consistency test existed purely to catch that. Deriving them retires the risk,
 and because nothing is remapped, a new programme needs no code at all.
 
-**Both dashboards derive it**, including SAAS, which reads the same helper
-rather than `model_names`' own `Model Use Case` column. That column says
-`ST - CCAR` where `Run For` says `CCAR`, so reading it would have the two
-dashboards label the same cycle differently. It is still in the MEV workbook
-but nothing reads it.
+**Both dashboards derive it**, through the same helper, so neither workbook
+stores the parts: `dummy_mev_data.xlsx`'s `model_names` dropped them too. That
+sheet used to say `ST - CCAR` where `Run For` said `CCAR`, which is exactly the
+disagreement deriving removes — the two dashboards can now differ only in which
+cycles they *have data for*, never in what a cycle is called.
+
+`test_no_workbook_stores_the_derived_cycle_parts` covers both files, and
+`test_both_workbooks_derive_to_the_same_use_cases` pins the agreement.
 
 ### PD's monitoring point vs its cohort quarter
 

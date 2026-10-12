@@ -25,12 +25,9 @@ from STATpy_platform.shared.domain import constants as config
 # three columns carrying one fact, which could drift apart.
 CYCLE_COLUMNS = (config.RUN_FOR_COLUMN,)  # composite, e.g. "CCAR 2026"
 
-# The MEV workbook still spells all three: SAAS reads them directly.
-MEV_CYCLE_COLUMNS = (
-    config.RUN_FOR_COLUMN,
-    config.MODEL_USE_CASE_COLUMN,
-    config.REPORTING_CYCLE_COLUMN,
-)
+# The MEV workbook spells only the composite too: SAAS derives the parts from
+# it through the same helper, so neither dashboard can relabel a cycle.
+MEV_CYCLE_COLUMNS = (config.RUN_FOR_COLUMN,)
 
 # The grain columns on every portfolio metrics/projection sheet.
 GRAIN_COLUMNS = (
@@ -61,9 +58,7 @@ def test_portfolio_sheet_carries_the_cycle_and_grain_columns(sheet_name):
     assert not missing, f"{sheet_name} is missing {missing}"
 
 
-def test_model_names_sheet_still_carries_all_three():
-    """SAAS reads the parts straight off model_names, so the MEV workbook keeps
-    them even though portfolio.xlsx no longer does."""
+def test_model_names_sheet_carries_the_composite():
     columns = _columns(settings.dummy_mev_data_file, config.DUMMY_MEV_MODEL_CHARACTERISTIC_SHEET_NAME)
     missing = [c for c in MEV_CYCLE_COLUMNS if c not in columns]
     assert not missing, f"model_names is missing {missing}"
@@ -106,18 +101,45 @@ def test_every_composite_derives_to_the_agreed_use_cases():
     assert derived == {"CCAR", "CECL"}, derived
 
 
-def test_the_mev_workbook_still_stores_its_own_parts():
-    """model_names keeps the columns, but nothing reads them any more: both
-    dashboards derive the use case from ``Run For`` so they cannot disagree
-    about what a cycle is called. Its stored Model Use Case says "ST - CCAR"
-    where Run For says "CCAR" -- harmless while unread, and the reason the
-    SAAS loader stopped reading it."""
-    df = pd.read_excel(settings.dummy_mev_data_file,
-                       sheet_name=config.DUMMY_MEV_MODEL_CHARACTERISTIC_SHEET_NAME)
-    trio = df[list(MEV_CYCLE_COLUMNS)].dropna().drop_duplicates()
-    assert len(trio) > 0
-    for composite, _use_case, cycle in trio.itertuples(index=False):
-        assert str(composite).endswith(str(cycle)), (composite, cycle)
+def test_no_workbook_stores_the_derived_cycle_parts():
+    """``Run For`` is the single source of truth in both files.
+
+    Storing the parts meant three columns carrying one fact, in two workbooks,
+    able to drift from the composite and from each other -- model_names said
+    "ST - CCAR" where Run For said "CCAR". Deriving them in both dashboards
+    removes the whole class, and leaves nothing to keep in sync.
+    """
+    checks = [(settings.portfolio_file, name) for name in PORTFOLIO_SHEETS]
+    checks += [(settings.dummy_mev_data_file, config.DUMMY_MEV_MODEL_CHARACTERISTIC_SHEET_NAME)]
+    for path, sheet_name in checks:
+        columns = _columns(path, sheet_name)
+        for derived in (config.MODEL_USE_CASE_COLUMN, config.REPORTING_CYCLE_COLUMN):
+            assert derived not in columns, f"{sheet_name} still stores {derived}"
+
+
+def test_both_workbooks_derive_to_the_same_use_cases():
+    """The point of deriving in both: the dashboards cannot disagree about what
+    a cycle is called, only about which cycles they have data for."""
+    from STATpy_platform.shared.domain.reporting_cycle import split_run_for
+
+    def _use_cases(path, sheets):
+        out = {}
+        for sheet_name in sheets:
+            df = pd.read_excel(path, sheet_name=sheet_name)
+            for composite in df[config.RUN_FOR_COLUMN].dropna().unique():
+                split = split_run_for(str(composite).strip())
+                if split:
+                    out[str(composite).strip()] = split[0]
+        return out
+
+    monitoring = _use_cases(settings.portfolio_file, PORTFOLIO_SHEETS)
+    saas = _use_cases(settings.dummy_mev_data_file,
+                      [config.DUMMY_MEV_MODEL_CHARACTERISTIC_SHEET_NAME])
+    assert monitoring and saas
+    shared_cycles = set(monitoring) & set(saas)
+    assert shared_cycles, "the two workbooks share no cycle to compare"
+    for composite in shared_cycles:
+        assert monitoring[composite] == saas[composite], composite
 
 
 # --- PD's monitoring point vs cohort quarter -------------------------------

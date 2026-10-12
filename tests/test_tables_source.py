@@ -83,8 +83,10 @@ def test_mev_tables_are_not_normalized():
 
     assert config.RUN_FOR_COLUMN in df.columns
     assert "reporting_cycle" not in df.columns
-    assert config.MODEL_USE_CASE_COLUMN in df.columns
-    assert config.REPORTING_CYCLE_COLUMN in df.columns
+    # Neither workbook stores the derived parts any more -- see
+    # test_no_workbook_stores_the_derived_cycle_parts.
+    assert config.MODEL_USE_CASE_COLUMN not in df.columns
+    assert config.REPORTING_CYCLE_COLUMN not in df.columns
 
 
 def test_usecols_is_passed_through():
