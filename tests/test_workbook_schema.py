@@ -20,12 +20,16 @@ import pytest
 from STATpy_platform.config.settings import settings
 from STATpy_platform.shared.domain import constants as config
 
-# The three columns that carry the model use case / reporting cycle, spelled
-# identically in both workbooks.
-CYCLE_COLUMNS = (
-    config.RUN_FOR_COLUMN,          # composite, e.g. "CCAR 2026"
-    config.MODEL_USE_CASE_COLUMN,   # e.g. "ST - CCAR"
-    config.REPORTING_CYCLE_COLUMN,  # bare cycle, e.g. "2026"
+# portfolio.xlsx stores only the composite. Its two parts are derived -- see
+# shared.domain.reporting_cycle.split_run_for -- because storing them meant
+# three columns carrying one fact, which could drift apart.
+CYCLE_COLUMNS = (config.RUN_FOR_COLUMN,)  # composite, e.g. "CCAR 2026"
+
+# The MEV workbook still spells all three: SAAS reads them directly.
+MEV_CYCLE_COLUMNS = (
+    config.RUN_FOR_COLUMN,
+    config.MODEL_USE_CASE_COLUMN,
+    config.REPORTING_CYCLE_COLUMN,
 )
 
 # The grain columns on every portfolio metrics/projection sheet.
@@ -57,11 +61,20 @@ def test_portfolio_sheet_carries_the_cycle_and_grain_columns(sheet_name):
     assert not missing, f"{sheet_name} is missing {missing}"
 
 
-def test_model_names_sheet_carries_the_same_cycle_columns():
-    """The MEV workbook spells them identically -- that sameness is the point."""
+def test_model_names_sheet_still_carries_all_three():
+    """SAAS reads the parts straight off model_names, so the MEV workbook keeps
+    them even though portfolio.xlsx no longer does."""
     columns = _columns(settings.dummy_mev_data_file, config.DUMMY_MEV_MODEL_CHARACTERISTIC_SHEET_NAME)
-    missing = [c for c in CYCLE_COLUMNS if c not in columns]
+    missing = [c for c in MEV_CYCLE_COLUMNS if c not in columns]
     assert not missing, f"model_names is missing {missing}"
+
+
+@pytest.mark.parametrize("sheet_name", PORTFOLIO_SHEETS)
+def test_portfolio_sheets_do_not_store_the_derived_parts(sheet_name):
+    """They come out of ``Run For``; storing them too invites drift."""
+    columns = _columns(settings.portfolio_file, sheet_name)
+    for derived in (config.MODEL_USE_CASE_COLUMN, config.REPORTING_CYCLE_COLUMN):
+        assert derived not in columns, f"{sheet_name} still stores {derived}"
 
 
 @pytest.mark.parametrize("sheet_name", PORTFOLIO_SHEETS)
@@ -74,31 +87,40 @@ def test_portfolio_sheets_do_not_carry_the_old_lowercase_spellings(sheet_name):
     assert not stale, f"{sheet_name} still has pre-rename columns {stale}"
 
 
-def test_use_case_values_are_the_agreed_set():
+def test_every_composite_derives_to_the_agreed_use_cases():
     """``ST - CCAR`` for CCAR cycles, ``CECL`` for the CECL cycle. A new value
-    appearing here means new source data that the filters have not been told
-    about yet."""
-    frames = [
-        pd.read_excel(settings.portfolio_file, sheet_name=name)
-        for name in PORTFOLIO_SHEETS
-    ]
-    values = set()
-    for df in frames:
-        values |= {str(v).strip() for v in df[config.MODEL_USE_CASE_COLUMN].dropna().unique()}
-    assert values == {"ST - CCAR", "CECL"}
+    here means source data whose family is missing from USE_CASE_BY_FAMILY, so
+    it would fall back to its own token in the filter."""
+    from STATpy_platform.shared.domain.reporting_cycle import split_run_for
+
+    composites = set()
+    for name in PORTFOLIO_SHEETS:
+        df = pd.read_excel(settings.portfolio_file, sheet_name=name)
+        composites |= {str(v).strip() for v in df[config.RUN_FOR_COLUMN].dropna().unique()}
+
+    assert composites, "no Run For values at all"
+    derived = set()
+    for composite in composites:
+        split = split_run_for(composite)
+        assert split is not None, f"{composite!r} does not split into a use case and a cycle"
+        derived.add(split[0])
+    assert derived == {"ST - CCAR", "CECL"}, derived
+    assert set(config.USE_CASE_BY_FAMILY.values()) >= derived
 
 
-def test_composite_agrees_with_its_two_parts():
-    """``Run For`` must always read as ``<use case token> <cycle>`` -- the parts
-    are stored, not derived, so nothing stops them drifting apart in the sheet."""
-    for sheet_name in PORTFOLIO_SHEETS:
-        df = pd.read_excel(settings.portfolio_file, sheet_name=sheet_name)
-        trio = df[list(CYCLE_COLUMNS)].dropna().drop_duplicates()
-        for composite, _use_case, cycle in trio.itertuples(index=False):
-            assert str(composite).endswith(str(cycle)), (
-                f"{sheet_name}: {composite!r} does not end with its "
-                f"{config.REPORTING_CYCLE_COLUMN} {cycle!r}"
-            )
+def test_the_mev_workbook_parts_still_agree_with_its_composite():
+    """model_names *does* store the parts, so they can still drift there. This
+    is the check that used to cover portfolio.xlsx as well; deriving the parts
+    retired that half of the risk entirely."""
+    df = pd.read_excel(settings.dummy_mev_data_file,
+                       sheet_name=config.DUMMY_MEV_MODEL_CHARACTERISTIC_SHEET_NAME)
+    trio = df[list(MEV_CYCLE_COLUMNS)].dropna().drop_duplicates()
+    assert len(trio) > 0
+    for composite, use_case, cycle in trio.itertuples(index=False):
+        assert str(composite).endswith(str(cycle)), (composite, cycle)
+        assert config.USE_CASE_BY_FAMILY.get(str(composite).split(" ")[0]) == str(use_case), (
+            f"{composite!r} is labelled {use_case!r}, which USE_CASE_BY_FAMILY does not agree with"
+        )
 
 
 # --- PD's monitoring point vs cohort quarter -------------------------------

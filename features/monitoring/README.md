@@ -162,6 +162,30 @@ first filter. Both rows lead with a caption track of the same width
 row above, across the divider. Below 901px the rows stack and the caption
 becomes a plain heading over its group.
 
+### portfolio.xlsx stores only `Run For`
+
+Both parts are derived from it, not stored:
+
+| | |
+|---|---|
+| bare cycle | the text after the first space — pure string work |
+| model use case | `USE_CASE_BY_FAMILY[family]`, because `CCAR 2026` belongs to **`ST - CCAR`**, not to `CCAR` |
+
+`shared.domain.reporting_cycle.split_run_for` does both. The sheets used to
+carry `Model Use Case` and `Reporting Cycle` as their own columns, which meant
+three columns holding one fact and a standing risk they drifted apart — a
+consistency test existed purely to catch that. Deriving them retires the risk:
+there is now nothing to disagree with.
+
+Only the use-case half needs anything that is not in the data, and that is a
+**business label** rather than a string operation, so it lives in
+`constants.USE_CASE_BY_FAMILY`. A new programme means a row in that dict; an
+unknown family falls back to its own token rather than vanishing from the filter.
+
+The MEV workbook still spells all three on `model_names`, because SAAS reads
+them directly — so that half of the drift risk remains and is still covered by
+`test_the_mev_workbook_parts_still_agree_with_its_composite`.
+
 ### PD's monitoring point vs its cohort quarter
 
 PD alone separates the two, because PD alone has a `horizon`:

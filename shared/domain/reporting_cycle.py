@@ -33,15 +33,14 @@ import pandas as pd
 
 from .constants import (
     COHORT_QUARTER_KEY,
-    CYCLE_KEY,
     MONITORING_POINT_COLUMN,
     METRICS_MODEL_COLUMN,
     METRICS_QUARTER_COLUMN,
     METRICS_SEGMENT_COLUMN,
     MODEL_KEY,
     QUARTER_KEY,
-    REPORTING_CYCLE_COLUMN,
     REPORTING_CYCLE_KEY,
+    USE_CASE_BY_FAMILY,
     RUN_FOR_COLUMN,
     SEGMENT_KEY,
 )
@@ -53,11 +52,26 @@ from .constants import (
 # collide on the way through.
 _PORTFOLIO_COLUMN_MAP = {
     RUN_FOR_COLUMN: REPORTING_CYCLE_KEY,
-    REPORTING_CYCLE_COLUMN: CYCLE_KEY,
     METRICS_QUARTER_COLUMN: QUARTER_KEY,
     METRICS_MODEL_COLUMN: MODEL_KEY,
     METRICS_SEGMENT_COLUMN: SEGMENT_KEY,
 }
+
+
+def split_run_for(composite) -> tuple[str, str] | None:
+    """``"CCAR 2026"`` -> ``("ST - CCAR", "2026")``, or ``None`` if unusable.
+
+    portfolio.xlsx stores only the composite, because both parts come out of
+    it. The cycle is the text after the first space. The use case is *not* the
+    family token -- "CCAR" maps to "ST - CCAR" -- so it goes through
+    :data:`USE_CASE_BY_FAMILY`; an unknown family falls back to its own token
+    rather than vanishing from the filter.
+    """
+    text = str(composite or "").strip()
+    family, _, cycle = text.partition(" ")
+    if not family or not cycle.strip():
+        return None
+    return USE_CASE_BY_FAMILY.get(family, family), cycle.strip()
 
 
 def normalize_portfolio_columns(df: pd.DataFrame | None) -> pd.DataFrame | None:
@@ -99,4 +113,4 @@ def _promote_monitoring_point(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-__all__ = ["normalize_portfolio_columns"]
+__all__ = ["normalize_portfolio_columns", "split_run_for"]

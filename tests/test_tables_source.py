@@ -35,16 +35,37 @@ def test_every_registered_table_resolves_to_a_real_sheet():
 
 
 def test_portfolio_tables_arrive_in_the_internal_column_shape():
-    """``Run For`` -> ``reporting_cycle`` (composite) and ``Reporting Cycle`` ->
-    ``cycle``, so the ~491 downstream references keep working unchanged."""
+    """``Run For`` -> ``reporting_cycle``, holding the **composite**, so the
+    ~491 downstream references keep working unchanged.
+
+    There is no ``cycle`` column any more: the bare cycle and the use case are
+    both derived from the composite rather than stored, so the sheet carries one
+    column where it used to carry three."""
     df = tables.read_table("PD_Performance_Metrics")
 
     assert "reporting_cycle" in df.columns
-    assert "cycle" in df.columns
     assert config.RUN_FOR_COLUMN not in df.columns
     # the composite, not the bare cycle
     assert df["reporting_cycle"].str.contains(" ").all()
-    assert set(df[config.MODEL_USE_CASE_COLUMN].dropna().unique()) <= {"ST - CCAR", "CECL"}
+
+    assert "cycle" not in df.columns
+    assert config.MODEL_USE_CASE_COLUMN not in df.columns
+    assert config.REPORTING_CYCLE_COLUMN not in df.columns
+
+
+def test_the_derived_parts_match_what_the_columns_used_to_hold():
+    """The point of the deletion: deriving must give the same answers the stored
+    columns did."""
+    from STATpy_platform.shared.domain.reporting_cycle import split_run_for
+
+    df = tables.read_table("PD_Performance_Metrics")
+    derived = {c: split_run_for(c) for c in df["reporting_cycle"].dropna().unique()}
+    assert derived, "no composites to derive from"
+    for composite, parts in derived.items():
+        assert parts is not None, composite
+        use_case, cycle = parts
+        assert composite.endswith(cycle)
+        assert use_case in {"ST - CCAR", "CECL"}
 
 
 def test_portfolio_grain_columns_are_folded_to_internal_keys():

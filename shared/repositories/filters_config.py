@@ -52,13 +52,12 @@ import pandas as pd
 
 from ...config.settings import settings
 from ..domain.filter_order import alphabetical, composite_cycles_newest_first
+from ..domain.reporting_cycle import split_run_for
 from ..domain.constants import (
-    CYCLE_KEY,
     DUMMY_MEV_MODEL_CHARACTERISTIC_SHEET_NAME,
     DUMMY_MEV_TIME_SERIES_SHEET_NAME,
-    MODEL_USE_CASE_COLUMN,
-    REPORTING_CYCLE_COLUMN,
     REPORTING_CYCLE_KEY,
+    RUN_FOR_COLUMN,
 )
 from .tables import read_table
 
@@ -270,26 +269,28 @@ def _scenario_values_from_mev_workbook() -> list[dict[str, str]]:
 def _cycle_parts_from_data() -> dict[str, dict[str, str]]:
     """``{composite: {"use_case": ..., "cycle": ...}}`` for every cycle with data.
 
-    Read from the workbook's own ``Model Use Case`` / ``Reporting Cycle`` columns
-    rather than by splitting the composite, so the sheet stays authoritative. A
-    row missing either part is skipped -- it would otherwise put an unlabelled
-    entry in the Model Use Case filter.
+    Derived from ``Run For`` alone. portfolio.xlsx used to store the two parts
+    as their own columns, which meant three columns carrying one fact and a
+    standing risk that they drifted apart -- the reason a consistency test had
+    to exist. The composite is the only thing stored now; see
+    ``shared.domain.reporting_cycle.split_run_for`` for the derivation, and
+    ``USE_CASE_BY_FAMILY`` for the one piece that is a business label rather
+    than string work.
     """
     parts: dict[str, dict[str, str]] = {}
     for sheet_name in _AGGREGATED_SHEET_NAMES:
         df = _read_sheet(sheet_name)
-        if df is None or df.empty:
+        if df is None or df.empty or REPORTING_CYCLE_KEY not in df.columns:
             continue
-        needed = (REPORTING_CYCLE_KEY, MODEL_USE_CASE_COLUMN, CYCLE_KEY)
-        if any(column not in df.columns for column in needed):
-            continue
-        for composite, use_case, cycle in df[list(needed)].dropna().drop_duplicates().itertuples(index=False):
-            composite, use_case, cycle = str(composite).strip(), str(use_case).strip(), str(cycle).strip()
-            if composite and use_case and cycle:
+        for composite in df[REPORTING_CYCLE_KEY].dropna().unique():
+            composite = str(composite).strip()
+            split = split_run_for(composite)
+            if composite and split:
+                use_case, cycle = split
                 parts.setdefault(composite, {"use_case": use_case, "cycle": cycle})
     if not parts:
         raise RuntimeError(
-            f"Filter config: no {MODEL_USE_CASE_COLUMN!r}/{REPORTING_CYCLE_COLUMN!r} data found across "
+            f"Filter config: no usable {RUN_FOR_COLUMN!r} values found across "
             f"{', '.join(_AGGREGATED_SHEET_NAMES)} in {settings.portfolio_file}."
         )
     return parts
