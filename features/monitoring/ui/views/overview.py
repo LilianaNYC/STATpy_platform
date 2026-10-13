@@ -234,8 +234,8 @@ _RAG_FLOW_THEME_PALETTES = {
 
 
 def _default_scenario(data: dict) -> str:
-    from .....shared.repositories.filters_config import load_filter_config
-    return load_filter_config()["scenarios"][0]["value"]
+    from .....shared.repositories.filters_config import default_scenario as cfg_default_scenario
+    return cfg_default_scenario()
 
 
 def _latest_scenario_by_key(rows: list[dict], group: str, key_fn) -> dict:

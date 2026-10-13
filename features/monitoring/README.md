@@ -118,10 +118,41 @@ All five tabs present the same filters in the same order, as a two-row bar: a
 within it and applies. Each row is captioned with that word, in a stub column
 down the left of the bar, so the split is visible rather than implied.
 
-| Row | PD / LGD / EAD / Loss | Overview |
-|---|---|---|
-| **Scope** | Region · Portfolio · Model Use Case · Reporting Cycle | *same* |
-| **Focus** | Model · Segment · Monitoring Point · Scenario → **Apply filters** | Model Group · Model · Monitoring Point → **Apply filters** |
+| Row | PD / LGD / EAD | Loss | Overview |
+|---|---|---|---|
+| **Scope** | Region · Portfolio · Model Use Case · Reporting Cycle | *same* | *same* |
+| **Focus** | Model · Segment · Monitoring Point → **Apply filters** | Model · Segment · Monitoring Point · Scenario → **Apply filters** | Model Group · Model · Monitoring Point → **Apply filters** |
+
+**Scenario is not in the bar on PD/LGD/EAD.** It only ever drove one section —
+**2.5 MEV Range** — so it lives in that section's own *Display filters* row,
+beside Window/From/To (`shared.ui.controls.build_mev_scenario_control`). Not
+Sensitivity Analysis, and not Scenario Ranking, which has its own in-section
+picker. Consequences, all deliberate:
+
+* it **re-renders immediately**, without Apply, exactly like the range controls
+  it shares a row with — it is a display control for one section, not part of
+  the page's scope;
+* Apply is no longer gated on it (seven filters instead of eight);
+* `apply_*_filters` no longer snapshots it, but a deep link's `?scenario=` still
+  reaches the render through the applied store, so an Overview escalation card
+  lands on the scenario its RAG was computed under;
+* saving a review writes the **in-section** value back to `portfolio.xlsx`, not
+  the applied scope's, which can now be stale.
+
+Loss keeps its bar control: it has no MEV Range section to move it into.
+
+**The default is `intsevere`**, from `filters_config.default_scenario()`. The
+option list is alphabetical (the repo-wide ordering rule), so the old
+`scenarios[0]` fallback meant "baseline" by accident of the alphabet; this is a
+stress dashboard, so a reviewer should land on the severe scenario — which is
+what the MEV figure builders already defaulted their own `scenario` argument to.
+Only the *default* moved; the menu still reads alphabetically. Every fallback in
+the app goes through that one helper — Overview's, for rows with no saved
+scenario, and each tab's, for a scope that has not picked one — because if the
+two disagreed a deep link from an escalation card would render under a different
+scenario than the card's RAG was computed under.
+`test_every_fallback_goes_through_the_one_helper` pins that, and the helper
+degrades to the first available value if a data set has no `intsevere` at all.
 
 Overview's row 2 differs because it is the cross-portfolio roll-up: no Segment
 or Scenario, but it is the only tab with a **Model Group** filter. The
@@ -255,8 +286,28 @@ back — `test_the_read_seam_promotes_pd_monitoring_point_into_quarter` pins it.
 PD also carries `MM_P0`, `MM_Pm` and `abs_delta_MM`, joined from
 `PD_Sensitivity_Projections` on `(Run For, Model, Segment, monitoring_point)`.
 `abs_delta_MM` is `|MM_Pm − MM_P0|`. All three are blank where a model has no
-projections — PD Model E and F have none at all, and CECL has none for any model —
-and they are blank *together*, so a missing margin never reads as a real zero.
+projections — CECL has none for any model — and they are blank *together*, so a
+missing margin never reads as a real zero.
+
+**They sit at model/segment grain, on the `horizon`-blank row.** The margins are
+a property of the model/segment at a monitoring point and do not vary by
+horizon, so they are carried once rather than repeated down the 1y/2y/nco_1y
+rows. Repeating them was not merely redundant: anything summing or averaging the
+column counted each margin four times, and nothing in the sheet said which copy
+was authoritative. Exactly one `horizon`-blank row exists per
+`(Run For, monitoring_point, Model, Segment)`, which is what gives the margins
+somewhere to live;
+`test_the_mm_margins_sit_at_model_segment_grain_on_the_horizon_blank_row` pins
+both halves. Nothing in the app reads these columns from this sheet today —
+the Transition Matrix chart takes its margins from `PD_Sensitivity_Projections`
+— so the grain is a contract with the production table, not a render input.
+
+`brier_score` and `rating_migration_index` are **not** on this sheet. They fed
+only `PD_RAG_GROUPS["performance"]`, and the PD page renders the `calibration`
+group alone (`group_rag` is never called with anything else), so they reached no
+chart, card or export. `calculate_pd_brier_score` and
+`calculate_pd_rating_migration_index` still compute them live for the RAG-metrics
+dict; there is simply nothing precomputed to read.
 
 ### One model, except on Overview
 
@@ -291,7 +342,7 @@ Both kinds are **searchable**. The four tabs' single-select menus carry the same
   focus and text. `test_the_search_box_survives_a_menu_rebuild` pins the
   structure.
 
-Only Model gets a search box; a search on Scenario or Segment would be noise,
+Only Model gets a search box; a search on Segment would be noise,
 and `test_no_other_filter_gets_a_search_box` keeps it that way.
 
 Overview's picker otherwise matches SAAS's workspace control exactly — toggle
@@ -389,14 +440,18 @@ with no data behind it. One rule per line.
 | Region + Portfolio + Reporting Cycle | Model |
 | Model | Segment |
 | Reporting Cycle + Model + Segment | Monitoring Point |
-| Reporting Cycle | Scenario |
 
 ```
 Region → Portfolio ─┐
                     ├→ Model → Segment → Monitoring Point
 Model Use Case → Reporting Cycle ─┘
-                 Reporting Cycle ─────────────────────→ Scenario
 ```
+
+Reporting Cycle still narrows Scenario, but that edge is no longer in the bar:
+the MEV Range control is built with the scenarios the MEV workbook has for the
+applied cycle (falling back to the full config list for cycles the sheet does
+not cover, e.g. CECL), so the narrowing happens at render time instead of
+through a callback.
 
 **Overview** — no Segment or Scenario, and its Model Use Case is itself narrowed
 by the Region/Portfolio scope:

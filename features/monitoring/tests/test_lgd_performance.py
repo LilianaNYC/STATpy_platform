@@ -121,7 +121,7 @@ def test_apply_lgd_filters_clears_the_reviewer_signoff_draft(monkeypatch):
 
     apply_fn = captured["apply_lgd_filters"]
     applied, notes, compensating, pending, save_status = apply_fn(
-        1, "CCAR 2026", "intsevere", "LGD Model A", "All", "2026Q3",
+        1, "CCAR 2026", "LGD Model A", "All", "2026Q3",
     )
     assert applied["monitoring_point"] == "2026Q3"
     assert notes == "", "an Apply click must discard the unsaved sign-off draft"
@@ -130,12 +130,12 @@ def test_apply_lgd_filters_clears_the_reviewer_signoff_draft(monkeypatch):
     assert save_status == "", "an Apply click must discard the stale save-status message"
 
     # Spurious fire (router re-insert, n_clicks=0) must touch no store.
-    assert apply_fn(0, "CCAR 2026", "intsevere", "LGD Model A", "All", "2026Q3") == (
+    assert apply_fn(0, "CCAR 2026", "LGD Model A", "All", "2026Q3") == (
         no_update, no_update, no_update, no_update, no_update,
     )
 
     # Apply requires a Model even on a real click -- Segment alone isn't enough.
-    assert apply_fn(1, "CCAR 2026", "intsevere", "", "O&M", "2026Q3") == (
+    assert apply_fn(1, "CCAR 2026", "", "O&M", "2026Q3") == (
         no_update, no_update, no_update, no_update, no_update,
     )
 

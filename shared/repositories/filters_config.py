@@ -75,8 +75,6 @@ _AGGREGATED_SHEET_NAMES = (
 # to hand-maintain (e.g. CCAR 2026 had exactly 4: 2025Q4-2026Q3).
 MONITORING_POINT_WINDOW = 4
 
-_MODEL_TYPE_TO_TAB = {"PD": "pd", "LGD": "lgd", "EAD": "ead"}
-
 # Each tab's monitoring points are sourced from its own sheet only, so a tab
 # never offers a quarter that doesn't actually appear in its own raw data.
 # "all" pools every sheet together for the cross-portfolio Overview page.
@@ -316,6 +314,34 @@ def load_filter_config() -> dict:
         "models": _model_names_from_portfolio(),
         "cycle_parts": _cycle_parts_from_data(),
     }
+
+
+# The scenario a page opens on when nothing has picked one -- a deliberate
+# choice, not an accident of ordering. ``scenarios`` is sorted alphabetically
+# (the repo-wide filter-ordering rule), so taking ``[0]`` used to mean whichever
+# name sorted first, which happened to be "baseline". Monitoring is a stress
+# dashboard: the severe scenario is the one a reviewer wants to land on, and the
+# MEV Range figure builders already defaulted their own ``scenario`` argument to
+# it.
+PREFERRED_DEFAULT_SCENARIO = "intsevere"
+
+
+def default_scenario() -> str:
+    """The scenario to fall back to when nothing has been picked.
+
+    ``PREFERRED_DEFAULT_SCENARIO`` if the MEV workbook actually offers it,
+    otherwise the first available -- the options come from the workbook, so a
+    data set without that scenario must still open on something real rather
+    than on a value no figure can resolve.
+
+    Every fallback goes through here: Overview reads it for rows with no saved
+    scenario, and the performance tabs for a scope that has not picked one. If
+    the two disagreed, a deep link from an Overview escalation card would render
+    under a different scenario than the RAG on the card was computed under.
+    """
+    options = load_filter_config()["scenarios"]
+    values = [option["value"] for option in options]
+    return PREFERRED_DEFAULT_SCENARIO if PREFERRED_DEFAULT_SCENARIO in values else values[0]
 
 
 def monitoring_points_by_cycle(tab: str = "all") -> dict[str, list[str]]:

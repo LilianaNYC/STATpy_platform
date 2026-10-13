@@ -133,8 +133,6 @@ def register_callbacks(app) -> None:
             pd_model_cycle_quarters.setdefault((model, cycle), set()).add(quarter)
             pd_model_segment_cycle_quarters.setdefault((model, segment, cycle), set()).add(quarter)
 
-    mev_scenarios_by_cycle = data.get("mev_scenarios_by_cycle") or {}
-
     from ....shared.repositories.filters_config import (
         cycle_options_for_cycles,
         load_filter_config as _load_filter_config,
@@ -142,11 +140,6 @@ def register_callbacks(app) -> None:
     )
     _cfg = _load_filter_config()
     _cfg_cycle_options = [{"label": c["label"], "value": c["value"]} for c in _cfg["reporting_cycles"]]
-    # Every option list a callback writes has to carry the "Select …"
-    # placeholder too. Without it the value "" matches no option, and the
-    # shell's toggle falls back to a bare "Select" -- see _option_label.
-    _cfg_scenario_options = controls.with_placeholder(
-        [{"label": s["label"], "value": s["value"]} for s in _cfg["scenarios"]], "scenario")
 
     def _narrow_pd_cycle_options(cycles: list[str] | None, use_case: str | None = None) -> list[dict[str, str]]:
         """Cycle options for a population, scoped to the selected Model Use Case.
@@ -176,7 +169,6 @@ def register_callbacks(app) -> None:
         (controls.MODEL_USE_CASE_ID, controls.MODEL_USE_CASE_TOGGLE_ID, controls.MODEL_USE_CASE_MENU_ID, "model-use-case", None),
         (controls.REPORTING_CYCLE_ID, controls.REPORTING_CYCLE_TOGGLE_ID, controls.REPORTING_CYCLE_MENU_ID, "reporting-cycle", None),
         (controls.MONITORING_POINT_ID, controls.MONITORING_POINT_TOGGLE_ID, controls.MONITORING_POINT_MENU_ID, "monitoring-point", None),
-        (controls.SCENARIO_ID, controls.SCENARIO_TOGGLE_ID, controls.SCENARIO_MENU_ID, "scenario", None),
     ):
         filter_shell.register_single_select_callbacks(
             app, value_id=value_id, toggle_id=toggle_id, menu_id=menu_id,
@@ -450,29 +442,6 @@ def register_callbacks(app) -> None:
         return options, value
 
     # -----------------------------------------------------------------
-    # Scenario options come from dummy_mev_data.xlsx's "scenario" sheet: the
-    # distinct "Scenario" values available for the "Run For" cycle matching
-    # the selected Model Use Case / Cycle (not a static config list). Falls
-    # back to the full config list for cycles with no scenario-sheet rows
-    # (e.g. CECL 2025Q1, which the sheet doesn't cover at all).
-    # -----------------------------------------------------------------
-    @app.callback(
-        Output(controls.SCENARIO_ID, "options"),
-        Output(controls.SCENARIO_ID, "value"),
-        Input(controls.REPORTING_CYCLE_ID, "value"),
-        State(controls.SCENARIO_ID, "value"),
-    )
-    def sync_pd_cycle_to_scenario_options(cycle, current_scenario):
-        scenarios = mev_scenarios_by_cycle.get(cycle)
-        if scenarios:
-            options = [option for option in _cfg_scenario_options if option["value"] in set(scenarios)] or _cfg_scenario_options
-        else:
-            options = _cfg_scenario_options
-        allowed_values = {option["value"] for option in options}
-        value = controls.keep_or_unselected(options, current_scenario)
-        return options, value
-
-    # -----------------------------------------------------------------
     # Per-chart range controls (Window / From / To) -> pd-range-store
     # -----------------------------------------------------------------
     @app.callback(
@@ -583,10 +552,26 @@ def register_callbacks(app) -> None:
         Input(controls.MODELS_ID, "value"),
         Input(controls.PORTFOLIO_SEGMENT_ID, "value"),
         Input(controls.MONITORING_POINT_ID, "value"),
-        Input(controls.SCENARIO_ID, "value"),
     )
     def sync_pd_apply_button_availability(*filter_values):
         return not controls.all_selected(*filter_values)
+
+    # -----------------------------------------------------------------
+    # MEV Range's own Scenario picker -> its store. Pattern-matching because
+    # the control lives inside the callback-rendered content: a plain id would
+    # make the renderer fail to gather this Input before the section exists.
+    # Writes only the store, which the master render reads, so changing it
+    # re-renders immediately -- the same live behaviour as the Window/From/To
+    # controls it sits beside.
+    # -----------------------------------------------------------------
+    @app.callback(
+        Output(layout.SCENARIO_STORE_ID, "data"),
+        Input({"type": layout.MEV_SCENARIO_ID, "key": ALL}, "value"),
+        prevent_initial_call=True,
+    )
+    def update_pd_mev_scenario_store(values):
+        picked = next((value for value in (values or []) if value), None)
+        return picked if picked else no_update
 
     # -----------------------------------------------------------------
     # Apply filters: snapshot current filter values into the applied store
@@ -602,10 +587,9 @@ def register_callbacks(app) -> None:
         State(controls.PORTFOLIO_SEGMENT_ID, "value"),
         State(controls.MODELS_ID, "value"),
         State(controls.REPORTING_CYCLE_ID, "value"),
-        State(controls.SCENARIO_ID, "value"),
         prevent_initial_call=True,
     )
-    def apply_pd_filters(_n_clicks, monitoring_point, segment, models, reporting_cycle, scenario):
+    def apply_pd_filters(_n_clicks, monitoring_point, segment, models, reporting_cycle):
         """Snapshot the current top filters so the content renders only on Apply.
 
         Also discards the scope-specific review-flow state: the unsaved
@@ -629,7 +613,6 @@ def register_callbacks(app) -> None:
             "segment": segment,
             "models": models,
             "reporting_cycle": reporting_cycle,
-            "scenario": scenario,
         }, "", "", {}, ""
 
     # -----------------------------------------------------------------
@@ -642,6 +625,7 @@ def register_callbacks(app) -> None:
         Input(layout.RANGE_STORE_ID, "data"),
         Input(layout.TREND_HORIZON_STORE_ID, "data"),
         Input(layout.MEV_FILTER_STORE_ID, "data"),
+        Input(layout.SCENARIO_STORE_ID, "data"),
         Input(layout.SCENARIO_RANKING_STORE_ID, "data"),
         Input(layout.PD_REVIEW_FLOW_PENDING_STORE_ID, "data"),
         Input(APP_THEME_ID, "value"),
@@ -657,7 +641,8 @@ def register_callbacks(app) -> None:
         # getting-started prompt page_layout already server-rendered.
     )
     def render_pd_performance_content(
-        applied, deep_link_applied, range_store, trend_horizon_store, mev_filter_store, scenario_ranking_store,
+        applied, deep_link_applied, range_store, trend_horizon_store, mev_filter_store, scenario_store,
+        scenario_ranking_store,
         review_flow_pending_edits, theme_value, conclusions_notes, compensating_controls, review_flow_save_status,
     ):
         # Prefer an explicit Apply click this session over the deep-link
@@ -669,14 +654,22 @@ def register_callbacks(app) -> None:
         if not applied:
             return layout.build_pd_apply_prompt()
 
-        from ....shared.repositories.filters_config import load_filter_config
+        from ....shared.repositories.filters_config import (
+            default_scenario as cfg_default_scenario,
+            load_filter_config,
+        )
         cfg = load_filter_config()
         default_cycle = cfg["reporting_cycles"][0]["value"]
-        default_scenario = cfg["scenarios"][0]["value"]
+        default_scenario = cfg_default_scenario()
+        # From the MEV Range section's own store, not the applied scope: it is a
+        # display control for that section, so it re-renders live rather than
+        # waiting for Apply.
 
         applied = applied or {}
         reporting_cycle = applied.get("reporting_cycle") or default_cycle
-        scenario = applied.get("scenario") or default_scenario
+        # In-section pick wins; otherwise the deep link's ?scenario=, which
+        # still rides in the applied/deep-link store; otherwise the default.
+        scenario = scenario_store or applied.get("scenario") or default_scenario
 
         observations_by_cycle = data.get("observations_by_cycle") or {}
         cycle_data = observations_by_cycle.get(reporting_cycle)
@@ -792,9 +785,10 @@ def register_callbacks(app) -> None:
         State(layout.APPLIED_FILTERS_STORE_ID, "data"),
         State(layout.CONCLUSIONS_NOTES_STORE_ID, "data"),
         State(layout.COMPENSATING_CONTROLS_STORE_ID, "data"),
+        State(layout.SCENARIO_STORE_ID, "data"),
         prevent_initial_call=True,
     )
-    def save_pd_review_flow_rag_changes(n_clicks, pending, applied, conclusions_notes, compensating_controls):
+    def save_pd_review_flow_rag_changes(n_clicks, pending, applied, conclusions_notes, compensating_controls, scenario_store):
         # Same dynamic-mount quirk as the picker above: the Save button only exists once there's a
         # pending edit or commentary change, so it "just appeared" at least once and could fire
         # without a real click.
@@ -847,9 +841,11 @@ def register_callbacks(app) -> None:
         # augment_rows_with_post_subjective in ui/views/overview.py). Not
         # counted in saved_fields/the status message -- it's metadata, not a
         # reviewer-facing field edit.
-        from ....shared.repositories.filters_config import load_filter_config
-        default_scenario = load_filter_config()["scenarios"][0]["value"]
-        scenario = (applied or {}).get("scenario") or default_scenario
+        from ....shared.repositories.filters_config import default_scenario as cfg_default_scenario
+        default_scenario = cfg_default_scenario()
+        # The in-section pick wins: Scenario now lives in MEV Range and changes
+        # without Apply, so the applied scope can be stale by the time of a save.
+        scenario = scenario_store or (applied or {}).get("scenario") or default_scenario
         data_service.save_pd_review_flow_rag(data, reporting_cycle, model, segment, monitoring_point, "scenario", scenario)
 
         from datetime import datetime
