@@ -9,7 +9,20 @@ module rather than to the ~17 call sites scattered across the feature loaders.
 **Logical keys are the sheet names**, and for the MEV tables they are also the
 production table names (``model_names``, ``mev_transformed``, ``mev_raw``,
 ``scenario``) -- so a caller asking for ``read_table("model_names")`` reads the
-same logical thing in either mode.
+same logical thing in either mode. The portfolio tables are the exception: their
+production objects are lowercase snake_case (``PD_Performance_Metrics`` ->
+``[output].[pd_performance_metrics]``), so the real spelling lives in
+``sql_object`` and must not be re-derived from the key.
+
+Two production shapes
+---------------------
+* **Flat** -- one row set in ``STAT_Config`` (the MEV/model configuration).
+* **Per reporting cycle** -- one database per active ``Run For``: the scenario
+  time series in ``STAT_Inputs_<Run For>_BHC.[input].[scenario]`` and every
+  portfolio table in ``STAT_Outputs_<Run For>_BHC.[output].<table>``. The
+  bundled workbooks keep every cycle in one sheet, so these are fanned out and
+  concatenated on read (:attr:`Table.is_per_cycle`). Callers above this line get
+  the same all-cycles frame either way and never learn which backend is live.
 
 Column names line up too: the production tables use the same Title Case column
 names as the workbooks (``Run For``, ``Model Use Case``, ``Reporting Cycle``,
@@ -19,8 +32,14 @@ here on the way out is correct for both backends.
 Switching to SQL
 ----------------
 1. Provide ``get_sql_data(database, query)`` (returns a DataFrame).
-2. Uncomment :func:`_read_sql_table` below and the import it needs.
+2. Uncomment :func:`_read_sql_table` below. It needs three names this module
+   does not import while it stays commented: ``get_sql_data``, a ``log``
+   logger, and ``RUN_FOR_COLUMN`` from ``..domain.constants``.
 3. Point :func:`_read` at it -- or gate on an env flag.
+
+The commented body is kept *inert on purpose*: it cannot run, so it cannot
+fail, and the coordinates above stay plain data until someone deliberately
+turns the backend on.
 
 Error behaviour is deliberately *not* softened here: :func:`read_table` raises
 whatever the backend raises, because each caller already has its own
@@ -59,6 +78,8 @@ class Table:
     ``key``            logical name; also the worksheet name.
     ``workbook``       which bundled workbook holds it today.
     ``sql_database``   production database, or ``None`` where not yet decided.
+                       May be a **template** containing ``{run_for}`` -- see
+                       :attr:`is_per_cycle`.
     ``sql_object``     production ``[schema].[object]``, or ``None``.
     ``normalize``      apply the portfolio column swap (``Run For`` ->
                        ``reporting_cycle`` etc.) to the frame on the way out.
@@ -70,12 +91,45 @@ class Table:
     sql_object: str | None = None
     normalize: bool = False
 
+    @property
+    def is_per_cycle(self) -> bool:
+        """Does this table live in one database *per reporting cycle*?
+
+        Production splits the per-cycle data across one database per active
+        ``Run For`` (``STAT_Inputs_CCAR_2026_BHC``,
+        ``STAT_Outputs_CCAR_2026_BHC``, ...), while the bundled workbooks keep
+        every cycle in one sheet. A table whose ``sql_database`` carries the
+        ``{run_for}`` placeholder is read by fanning out across the active
+        cycles and concatenating, which reproduces the sheet's shape -- so
+        nothing above this seam has to know which backend it came from.
+        """
+        return bool(self.sql_database) and "{run_for}" in self.sql_database
+
+    def database_for(self, run_for: str) -> str:
+        """The database holding this table for one reporting cycle.
+
+        ``CCAR 2026`` -> ``STAT_Outputs_CCAR_2026_BHC``. Spaces become
+        underscores, matching the convention the SAAS loader already uses.
+        """
+        if not self.sql_database:
+            raise KeyError(f"{self.key!r} has no production database mapping yet.")
+        return self.sql_database.format(run_for=run_for.replace(" ", "_"))
+
 
 # --- The registry ----------------------------------------------------------
 # SQL coordinates for the MEV tables are taken from the production loader kept
-# commented in features/saas/repositories/loader.py. The portfolio and rules
-# tables have no confirmed mapping yet, so theirs are left None rather than
-# guessed -- fill them in when the production schema is known.
+# commented in features/saas/repositories/loader.py. The portfolio tables are
+# monitoring *outputs*, one database per active reporting cycle --
+# ``STAT_Outputs_<Run For>_BHC.[output].<table>`` -- mirroring the
+# ``STAT_Inputs_<Run For>_BHC.[input].[scenario]`` fan-out the scenario table
+# already uses. The rules tables are likely to stay file-based config, so
+# theirs stay None rather than being guessed.
+#
+# Production object names are lowercase snake_case, so unlike the MEV tables
+# the logical key is *not* the production table name -- ``sql_object`` carries
+# the real spelling and nothing should re-derive it from the key.
+_PORTFOLIO_DATABASE = "STAT_Outputs_{run_for}_BHC"
+
 _PORTFOLIO_SHEETS = (
     "PD_Performance_Metrics",
     "LGD_Performance_Metrics",
@@ -109,10 +163,21 @@ TABLES: dict[str, Table] = {
     "mev_raw": Table("mev_raw", MEV, "STAT_Config", "[dbo].[mev_raw]"),
     # In production the scenario time series lives per active cycle, in
     # STAT_Inputs_<Run For>_BHC.[input].[scenario]; the workbook keeps all
-    # cycles in one sheet. See _read_sql_table for that fan-out.
-    "scenario": Table("scenario", MEV, None, "[input].[scenario]"),
-    # Aggregated performance metrics + projections.
-    **{name: Table(name, PORTFOLIO, normalize=True) for name in _PORTFOLIO_SHEETS},
+    # cycles in one sheet. The {run_for} placeholder is what marks it per-cycle
+    # -- see Table.is_per_cycle and the fan-out in _read_sql_table.
+    "scenario": Table("scenario", MEV, "STAT_Inputs_{run_for}_BHC", "[input].[scenario]"),
+    # Aggregated performance metrics + projections. Per reporting cycle in
+    # production; one sheet holding every cycle in the workbook.
+    **{
+        name: Table(
+            name,
+            PORTFOLIO,
+            _PORTFOLIO_DATABASE,
+            f"[output].[{name.lower()}]",
+            normalize=True,
+        )
+        for name in _PORTFOLIO_SHEETS
+    },
     # Thresholds and rules. Likely to stay file-based config even in
     # production, hence no SQL coordinates.
     **{name: Table(name, RULES) for name in _RULES_SHEETS},
@@ -144,35 +209,59 @@ def _read_excel_table(spec: Table, usecols: list[str] | None) -> pd.DataFrame:
 # def _read_sql_table(spec: Table, usecols: list[str] | None) -> pd.DataFrame:
 #     """Production twin of :func:`_read_excel_table`.
 #
-#     Mirrors the commented SQL loader in features/saas/repositories/loader.py:
-#     configuration tables come from ``STAT_Config``, while the scenario time
-#     series is per active cycle and must be stitched together -- active cycles
-#     being those with ``run_details.Status == "Y"``.
+#     Two shapes, told apart by :attr:`Table.is_per_cycle`:
+#
+#     * **Flat** -- the configuration tables, one row set in ``STAT_Config``.
+#     * **Per cycle** -- the scenario time series
+#       (``STAT_Inputs_<Run For>_BHC.[input].[scenario]``) and every portfolio
+#       table (``STAT_Outputs_<Run For>_BHC.[output].<table>``). Production
+#       splits these across one database per active reporting cycle, while the
+#       workbook keeps every cycle in one sheet, so they are stitched back
+#       together here. Active cycles are those with ``run_details.Status ==
+#       "Y"``.
+#
+#     Keeping the stitch *here* is the point of the seam: callers above get the
+#     same all-cycles frame either way, so none of them learns which backend is
+#     live. One cycle's database being unreachable degrades to a warning and the
+#     remaining cycles, rather than blanking the whole dashboard.
 #     """
 #     if spec.sql_object is None:
 #         raise KeyError(f"{spec.key!r} has no production mapping yet.")
 #
-#     # Per-cycle fan-out: one database per active Run For.
-#     if spec.key == "scenario":
-#         run_details = get_sql_data("STAT_Config", "SELECT * FROM [dbo].[run_details]")
-#         active = [
-#             str(value).strip()
-#             for value in run_details[run_details["Status"] == "Y"]["Run For"].tolist()
-#             if str(value).strip()
-#         ]
-#         frames: list[pd.DataFrame] = []
-#         for run_for in active:
-#             database = f"STAT_Inputs_{run_for.replace(' ', '_')}_BHC"
-#             try:
-#                 frames.append(get_sql_data(database, f"SELECT * FROM {spec.sql_object}"))
-#             except Exception as exc:  # noqa: BLE001 - one cycle's DB being down shouldn't blank the rest
-#                 log.warning("Failed to load %s from %s: %s", spec.sql_object, database, exc)
-#         if not frames:
-#             return pd.DataFrame()
-#         df = pd.concat(frames, ignore_index=True)
-#     else:
+#     if not spec.is_per_cycle:
 #         df = get_sql_data(spec.sql_database, f"SELECT * FROM {spec.sql_object}")
+#         return df[usecols] if usecols else df
 #
+#     run_details = get_sql_data("STAT_Config", "SELECT * FROM [dbo].[run_details]")
+#     active = [
+#         str(value).strip()
+#         for value in run_details[run_details["Status"] == "Y"]["Run For"].tolist()
+#         if str(value).strip()
+#     ]
+#
+#     frames: list[pd.DataFrame] = []
+#     for run_for in active:
+#         database = spec.database_for(run_for)
+#         try:
+#             cycle_df = get_sql_data(database, f"SELECT * FROM {spec.sql_object}")
+#         except Exception as exc:  # noqa: BLE001 - one cycle's DB being down shouldn't blank the rest
+#             log.warning("Failed to load %s from %s: %s", spec.sql_object, database, exc)
+#             continue
+#         # The cycle is implied by *which database* the rows came from, so a
+#         # per-cycle table need not carry "Run For" as a column -- but every
+#         # portfolio frame above this seam is keyed on it (normalize_portfolio_
+#         # columns turns it into ``reporting_cycle``, the join key behind every
+#         # store, figure and export). Stamp it back on so the concatenated
+#         # frame matches the sheet, and so a table that *does* carry the column
+#         # is left exactly as found.
+#         if RUN_FOR_COLUMN not in cycle_df.columns:
+#             cycle_df = cycle_df.copy()
+#             cycle_df[RUN_FOR_COLUMN] = run_for
+#         frames.append(cycle_df)
+#
+#     if not frames:
+#         return pd.DataFrame()
+#     df = pd.concat(frames, ignore_index=True)
 #     return df[usecols] if usecols else df
 
 

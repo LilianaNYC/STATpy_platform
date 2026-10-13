@@ -158,6 +158,50 @@ bands) live in `shared/domain/constants.py`.
 Each dashboard's `data_access.py` reads its source once at import time (through
 its `services` layer) and exposes the in-memory payload.
 
+### The Excel → SQL seam
+
+Every read goes through `shared/repositories/tables.py`, where each table is
+registered with **both** its workbook coordinates (today) and its production SQL
+coordinates. Because all ~17 call sites funnel through `read_table()`, switching
+the backend is a change to that one module — uncomment `_read_sql_table`, point
+`_read` at it. Never add a `pd.read_excel` to a loader; register the table
+instead, or the switch has to go find it.
+
+Production has two shapes:
+
+| Shape | Tables | Address |
+|---|---|---|
+| Flat | MEV / model configuration | `STAT_Config` · `[dbo].[model_names]`, `[dbo].[mev_raw]`, … |
+| Per reporting cycle | scenario time series | `STAT_Inputs_<Run For>_BHC` · `[input].[scenario]` |
+| Per reporting cycle | **every portfolio table** | `STAT_Outputs_<Run For>_BHC` · `[output].[pd_performance_metrics]`, … |
+
+The per-cycle tables are split across one database per active `Run For`
+(`run_details.Status == "Y"`), while the bundled workbooks keep every cycle in
+one sheet. `read_table` fans out and concatenates, so callers above the seam get
+the same all-cycles frame either way and never learn which backend is live — and
+one cycle's database being unreachable degrades to a warning plus the remaining
+cycles, not a blank dashboard. A table is marked per-cycle by the `{run_for}`
+placeholder in its `sql_database` (`Table.is_per_cycle`).
+
+Two details that are easy to get wrong:
+
+- **Portfolio object names are lowercase snake_case**, so unlike the MEV tables
+  the logical key is *not* the production table name
+  (`PD_Performance_Metrics` → `[output].[pd_performance_metrics]`). The real
+  spelling lives in `sql_object`; nothing should re-derive it from the key.
+- A per-cycle table need not carry `Run For` as a column — the cycle is implied
+  by which database the rows came from — but everything above the seam keys on
+  it (`normalize_portfolio_columns` turns it into `reporting_cycle`, the join
+  key behind every store, figure and export). The fan-out stamps it back on.
+
+The SQL reader is kept **commented and inert**: it cannot run, so it cannot
+fail, and the registered coordinates stay plain data until someone deliberately
+turns the backend on. `tests/test_tables_source.py` pins the coordinates and
+parses the commented block, so it cannot rot unnoticed.
+
+The thresholds in `monitoring_rules.xlsx` have no SQL coordinates: they are
+config rather than run output and are expected to stay file-based.
+
 ### Where each filter's values come from
 
 No option list is hand-maintained; every one is derived from a workbook. The two
