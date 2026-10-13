@@ -186,9 +186,14 @@ def test_build_saas_report_html_toc_counts_segments_not_models():
             # Name, each with its own single segment -> 2 distinct segments.
             "parent_label": "PD Model D",
             "shared_attributes": [],
+            # figures entries are (title, fig, mev_type, monitoring_summary) --
+            # the shape reports.build_model_report_figures actually produces.
+            # mev_type is a label string, monitoring_summary a dict or None.
             "models": [
-                {"model_name": "PD_model_d", "segment_label": "Cyclical", "attributes": [], "figures": [("t", go.Figure())]},
-                {"model_name": "PD_model_e", "segment_label": "Defensive", "attributes": [], "figures": [("t", go.Figure())]},
+                {"model_name": "PD_model_d", "segment_label": "Cyclical", "attributes": [],
+                 "figures": [("t", go.Figure(), "Transformed", None)]},
+                {"model_name": "PD_model_e", "segment_label": "Defensive", "attributes": [],
+                 "figures": [("t", go.Figure(), "Transformed", None)]},
             ],
         },
         {
@@ -238,3 +243,45 @@ def test_build_saas_report_html_model_headings_are_numbered_group_dot_model():
     assert "<h3>1.1. Cyclical</h3>" in html
     assert "<h3>1.2. Defensive</h3>" in html
     assert "<h3>2.1. Cyclical</h3>" in html
+
+
+def test_report_html_accepts_what_build_model_report_figures_produces():
+    """The round trip across the producer/consumer seam.
+
+    ``reports.build_model_report_figures`` emits the ``figures`` tuples and
+    ``exports.build_saas_report_html`` unpacks them. Each side had its own test,
+    and neither noticed when the tuple grew from 2 to 4 fields: the widening and
+    a new consumer-side test were written on parallel branches, each correct
+    alone. git merged them without a textual conflict and the combination raised
+    ``ValueError: not enough values to unpack`` for three months.
+
+    Feeding real producer output to the consumer is what catches that, because
+    no hand-written fixture can drift from the shape.
+    """
+    sections = reports.build_model_report_figures(
+        "Model A",
+        [{"MEV Name": "MEV A", "Scenario": "baseline"}],
+        [{"MEV Name": "MEV A", "Scenario": "baseline", "Run For": "Cycle A",
+          "Quarter": 0, "Date": "2023-06-30", "MEV Value": 2.0}],
+        "family",
+        ["baseline"],
+        "history",
+        None,
+        "monitoring",
+        ["MEV A"],
+        figure_builder=lambda *_args: go.Figure(),
+        primary_run_for="Cycle A",
+    )
+    assert sections, "producer returned nothing -- the round trip would be vacuous"
+
+    html = exports.build_saas_report_html(
+        [{
+            "parent_label": "Model A",
+            "shared_attributes": [],
+            "models": [{"model_name": "Model A", "segment_label": "Cyclical",
+                        "attributes": [], "figures": sections}],
+        }],
+        [],
+    )
+    assert '<nav class="saas-report-toc">' in html
+    assert "Model A" in html
