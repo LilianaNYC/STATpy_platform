@@ -141,6 +141,19 @@ picker. Consequences, all deliberate:
 
 Loss keeps its bar control: it has no MEV Range section to move it into.
 
+**The default is `intsevere`**, from `filters_config.default_scenario()`. The
+option list is alphabetical (the repo-wide ordering rule), so the old
+`scenarios[0]` fallback meant "baseline" by accident of the alphabet; this is a
+stress dashboard, so a reviewer should land on the severe scenario — which is
+what the MEV figure builders already defaulted their own `scenario` argument to.
+Only the *default* moved; the menu still reads alphabetically. Every fallback in
+the app goes through that one helper — Overview's, for rows with no saved
+scenario, and each tab's, for a scope that has not picked one — because if the
+two disagreed a deep link from an escalation card would render under a different
+scenario than the card's RAG was computed under.
+`test_every_fallback_goes_through_the_one_helper` pins that, and the helper
+degrades to the first available value if a data set has no `intsevere` at all.
+
 Overview's row 2 differs because it is the cross-portfolio roll-up: no Segment
 or Scenario, but it is the only tab with a **Model Group** filter. The
 performance tabs each show exactly one group, so the control there could only

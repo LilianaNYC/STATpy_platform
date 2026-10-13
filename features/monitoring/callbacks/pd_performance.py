@@ -654,10 +654,13 @@ def register_callbacks(app) -> None:
         if not applied:
             return layout.build_pd_apply_prompt()
 
-        from ....shared.repositories.filters_config import load_filter_config
+        from ....shared.repositories.filters_config import (
+            default_scenario as cfg_default_scenario,
+            load_filter_config,
+        )
         cfg = load_filter_config()
         default_cycle = cfg["reporting_cycles"][0]["value"]
-        default_scenario = cfg["scenarios"][0]["value"]
+        default_scenario = cfg_default_scenario()
         # From the MEV Range section's own store, not the applied scope: it is a
         # display control for that section, so it re-renders live rather than
         # waiting for Apply.
@@ -838,8 +841,8 @@ def register_callbacks(app) -> None:
         # augment_rows_with_post_subjective in ui/views/overview.py). Not
         # counted in saved_fields/the status message -- it's metadata, not a
         # reviewer-facing field edit.
-        from ....shared.repositories.filters_config import load_filter_config
-        default_scenario = load_filter_config()["scenarios"][0]["value"]
+        from ....shared.repositories.filters_config import default_scenario as cfg_default_scenario
+        default_scenario = cfg_default_scenario()
         # The in-section pick wins: Scenario now lives in MEV Range and changes
         # without Apply, so the applied scope can be stale by the time of a save.
         scenario = scenario_store or (applied or {}).get("scenario") or default_scenario

@@ -185,3 +185,76 @@ def test_loss_keeps_its_bar_control():
     loss = _view("loss")
     assert loss.SCENARIO_ID == "loss-scenario"
     assert not hasattr(loss, "MEV_SCENARIO_ID")
+
+
+# --- which scenario a page opens on ---------------------------------------
+
+def test_the_default_is_the_severe_scenario_not_whatever_sorts_first():
+    """``scenarios`` is alphabetical, so ``[0]`` meant "baseline" by accident of
+    the alphabet. Monitoring is a stress dashboard: the severe scenario is the
+    one to land on, and the MEV figure builders already defaulted to it.
+    """
+    from STATpy_platform.shared.repositories import filters_config
+
+    assert filters_config.default_scenario() == "intsevere"
+    # ... and it is a real workbook value, not a name only this module knows
+    values = [o["value"] for o in filters_config.load_filter_config()["scenarios"]]
+    assert "intsevere" in values
+    assert values[0] == "baseline", "the option list stays alphabetical; only the default moved"
+
+
+def test_the_default_degrades_to_a_real_value_if_the_data_lacks_it():
+    """The options come from the MEV workbook. A data set without "intsevere"
+    must still open on something the figures can resolve rather than on a dead
+    value -- which would render an empty chart, not an error.
+    """
+    from STATpy_platform.shared.repositories import filters_config
+
+    config = dict(filters_config.load_filter_config())
+    config["scenarios"] = [{"value": "adverse", "label": "adverse"}]
+    original = filters_config.load_filter_config
+    filters_config.load_filter_config = lambda: config
+    try:
+        assert filters_config.default_scenario() == "adverse"
+    finally:
+        filters_config.load_filter_config = original
+
+
+def test_the_control_opens_on_the_default():
+    from STATpy_platform.shared.repositories.filters_config import default_scenario
+
+    control = build_mev_scenario_control(
+        {}, id_type="pd-mev-scenario", scenario=None, reporting_cycle="CCAR 2026",
+    )
+    dropdown = next(n for n in _walk(control) if isinstance(n, dcc.Dropdown))
+    assert dropdown.value == default_scenario()
+
+
+def test_every_fallback_goes_through_the_one_helper():
+    """The drift risk. Overview falls back for rows with no saved scenario and
+    the performance tabs for a scope that has not picked one; if those two
+    disagreed, a deep link from an Overview escalation card would render under a
+    different scenario than the RAG on the card was computed under.
+    """
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[3]
+    offenders = []
+    callers = []
+    for path in sorted(root.rglob("*.py")):
+        if ".venv" in path.parts or path.resolve() == pathlib.Path(__file__).resolve():
+            continue
+        text = path.read_text()
+        if '"scenarios"][0]' in text or "'scenarios'][0]" in text:
+            offenders.append(str(path.relative_to(root)))
+        if "default_scenario()" in text:
+            callers.append(str(path.relative_to(root)))
+
+    # Not a vacuous scan: the sites that used to derive it by position are the
+    # ones that must now call the helper.
+    assert len(callers) >= 5, f"the scan found almost nothing -- is it looking in the right place? {callers}"
+
+    assert not offenders, (
+        "these derive the default scenario by position instead of calling "
+        f"filters_config.default_scenario(): {offenders}"
+    )

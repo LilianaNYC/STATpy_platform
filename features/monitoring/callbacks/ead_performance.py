@@ -528,10 +528,13 @@ def register_callbacks(app) -> None:
         if not applied:
             return layout.build_ead_apply_prompt()
 
-        from ....shared.repositories.filters_config import load_filter_config
+        from ....shared.repositories.filters_config import (
+            default_scenario as cfg_default_scenario,
+            load_filter_config,
+        )
         cfg = load_filter_config()
         default_cycle = cfg["reporting_cycles"][0]["value"]
-        default_scenario = cfg["scenarios"][0]["value"]
+        default_scenario = cfg_default_scenario()
 
         reporting_cycle = applied.get("reporting_cycle") or default_cycle
         # In-section pick wins; otherwise the deep link's ?scenario=, which
@@ -670,8 +673,8 @@ def register_callbacks(app) -> None:
         # Also persist the Scenario filter value in effect for this save --
         # see the matching comment in save_pd_review_flow_rag_changes. Not
         # counted in saved_fields/the status message.
-        from ....shared.repositories.filters_config import load_filter_config
-        default_scenario = load_filter_config()["scenarios"][0]["value"]
+        from ....shared.repositories.filters_config import default_scenario as cfg_default_scenario
+        default_scenario = cfg_default_scenario()
         # The in-section pick wins: Scenario now lives in MEV Range and changes
         # without Apply, so the applied scope can be stale by the time of a save.
         scenario = scenario_store or (applied or {}).get("scenario") or default_scenario

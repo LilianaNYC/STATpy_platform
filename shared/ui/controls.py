@@ -803,9 +803,12 @@ def build_mev_scenario_control(
 
     Options are narrowed to the scenarios the MEV workbook actually has for
     ``reporting_cycle``, which is what the old top-bar control did, falling back
-    to the full config list for cycles the sheet does not cover at all.
+    to the full config list for cycles the sheet does not cover at all. With no
+    ``scenario`` picked the control opens on
+    ``filters_config.default_scenario()`` -- the same value every other fallback
+    in the app uses.
     """
-    from ..repositories.filters_config import load_filter_config
+    from ..repositories.filters_config import default_scenario, load_filter_config
 
     options = [
         {"label": option["label"], "value": option["value"]}
@@ -815,8 +818,17 @@ def build_mev_scenario_control(
     if available:
         options = [o for o in options if o["value"] in set(available)] or options
 
+    # Narrowing can drop the caller's scenario (and the configured default) for
+    # a cycle the sheet only partly covers, so fall through: the pick, then the
+    # default, then whatever this cycle does offer. Never a dead value -- the
+    # figure builders resolve the scenario against the MEV data.
     allowed = {option["value"] for option in options}
-    value = scenario if scenario in allowed else (options[0]["value"] if options else None)
+    for candidate in (scenario, default_scenario()):
+        if candidate in allowed:
+            value = candidate
+            break
+    else:
+        value = options[0]["value"] if options else None
     return html.Div(
         className="pd-range-controls",
         children=[

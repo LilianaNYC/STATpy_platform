@@ -318,6 +318,34 @@ def load_filter_config() -> dict:
     }
 
 
+# The scenario a page opens on when nothing has picked one -- a deliberate
+# choice, not an accident of ordering. ``scenarios`` is sorted alphabetically
+# (the repo-wide filter-ordering rule), so taking ``[0]`` used to mean whichever
+# name sorted first, which happened to be "baseline". Monitoring is a stress
+# dashboard: the severe scenario is the one a reviewer wants to land on, and the
+# MEV Range figure builders already defaulted their own ``scenario`` argument to
+# it.
+PREFERRED_DEFAULT_SCENARIO = "intsevere"
+
+
+def default_scenario() -> str:
+    """The scenario to fall back to when nothing has been picked.
+
+    ``PREFERRED_DEFAULT_SCENARIO`` if the MEV workbook actually offers it,
+    otherwise the first available -- the options come from the workbook, so a
+    data set without that scenario must still open on something real rather
+    than on a value no figure can resolve.
+
+    Every fallback goes through here: Overview reads it for rows with no saved
+    scenario, and the performance tabs for a scope that has not picked one. If
+    the two disagreed, a deep link from an Overview escalation card would render
+    under a different scenario than the RAG on the card was computed under.
+    """
+    options = load_filter_config()["scenarios"]
+    values = [option["value"] for option in options]
+    return PREFERRED_DEFAULT_SCENARIO if PREFERRED_DEFAULT_SCENARIO in values else values[0]
+
+
 def monitoring_points_by_cycle(tab: str = "all") -> dict[str, list[str]]:
     """Monitoring point options per reporting cycle for one tab.
 
