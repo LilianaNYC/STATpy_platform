@@ -617,17 +617,6 @@ def load_monitoring_actions() -> list[dict[str, Any]]:
     return records
 
 
-def _build_observations_from_aggregated(agg_df: pd.DataFrame) -> tuple[dict, list[dict], list[str], list[dict]]:
-    """Deprecated facility synthesis.
-
-    PD Performance metrics are now read verbatim from the
-    ``PD_Performance_Metrics`` tab via :func:`_build_metrics_store`; no
-    facility-level data is synthesized or recomputed. Retained as a no-op so
-    existing call sites keep working.
-    """
-    return config.PD_HORIZON_COLUMNS, [], [], []
-
-
 # Metric columns read verbatim from the PD_Performance_Metrics tab.
 _PD_METRIC_COLUMNS = (
     "confidence_interval_test",
@@ -995,29 +984,31 @@ def load_pd_performance_data_from_aggregated() -> dict[str, Any]:
     observations_by_cycle = {}
     for cycle in reporting_cycles:
         cycle_df = agg_df[agg_df["reporting_cycle"] == cycle]
-        obs = _build_observations_from_aggregated(cycle_df)
         cycle_quarters = sorted(cycle_df["quarter"].dropna().unique())
         observations_by_cycle[cycle] = {
-            "performance_horizons": obs[0],
-            "performance_observations": obs[1],
-            "rating_values": obs[2],
-            "rating_migration_observations": obs[3],
+            # Facility-level synthesis is retired: PD metrics are read verbatim
+            # from PD_Performance_Metrics into ``metrics_store`` below. These
+            # three stay as empty lists because every consumer takes them as a
+            # parameter and falls back to the precomputed row when they are
+            # empty -- which is now always. ``performance_horizons`` is the one
+            # live member: it is the horizon->column map the page reads to pick
+            # observed/predicted columns per horizon.
+            "performance_horizons": config.PD_HORIZON_COLUMNS,
+            "performance_observations": [],
+            "rating_values": [],
+            "rating_migration_observations": [],
             "quarters": cycle_quarters,
             "metrics_store": _build_metrics_store(cycle_df),
         }
 
-    # Default to first available cycle for backwards compatibility
-    default_cycle = reporting_cycles[0] if reporting_cycles else None
-    if default_cycle and default_cycle in observations_by_cycle:
-        default_obs = observations_by_cycle[default_cycle]
-        performance_horizons = default_obs["performance_horizons"]
-        performance_observations = default_obs["performance_observations"]
-        rating_values = default_obs["rating_values"]
-        rating_migration_observations = default_obs["rating_migration_observations"]
-    else:
-        performance_horizons, performance_observations, rating_values, rating_migration_observations = (
-            _build_observations_from_aggregated(agg_df)
-        )
+    # Top-level copies, for callers that have not picked a cycle. These used to
+    # be read back out of the first cycle's entry, with a fallback branch for
+    # when there were no cycles at all -- but both arms produced exactly these
+    # constants, so the choice never mattered.
+    performance_horizons = config.PD_HORIZON_COLUMNS
+    performance_observations = []
+    rating_values = []
+    rating_migration_observations = []
 
     mev_catalog, mev_mnemonic_map, mev_description_map, mev_scenarios_by_cycle = load_pd_mev_catalog()
 

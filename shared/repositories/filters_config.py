@@ -75,8 +75,6 @@ _AGGREGATED_SHEET_NAMES = (
 # to hand-maintain (e.g. CCAR 2026 had exactly 4: 2025Q4-2026Q3).
 MONITORING_POINT_WINDOW = 4
 
-_MODEL_TYPE_TO_TAB = {"PD": "pd", "LGD": "lgd", "EAD": "ead"}
-
 # Each tab's monitoring points are sourced from its own sheet only, so a tab
 # never offers a quarter that doesn't actually appear in its own raw data.
 # "all" pools every sheet together for the cross-portfolio Overview page.

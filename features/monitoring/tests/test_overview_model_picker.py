@@ -7,7 +7,6 @@ behave identically: search narrows only what is *visible*, and "All" means
 
 from __future__ import annotations
 
-import pytest
 from dash.development.base_component import Component
 
 from STATpy_platform.features.monitoring.ui.views import overview as layout

@@ -24,6 +24,10 @@ from dash import dcc, html
 
 from ..domain.calculations import get_pd_range_preset, get_pd_range_selection
 from ..domain.quarter_labels import format_pd_compact_quarter_label
+# MONITORING_POINT_WINDOW is unused *in this module*: it is a deliberate
+# re-export, read as ``controls.MONITORING_POINT_WINDOW`` by the PD/LGD/EAD
+# callbacks when they trim a model's quarters to the monitoring window. See
+# the module-attribute re-export convention in CLAUDE.md -- do not 'clean' it.
 from ..repositories.filters_config import MONITORING_POINT_WINDOW, monitoring_points_by_cycle
 
 # ---------------------------------------------------------------------------

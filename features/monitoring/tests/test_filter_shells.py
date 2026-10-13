@@ -5,7 +5,6 @@ from __future__ import annotations
 from dash.development.base_component import Component
 from dash.dcc import Dropdown
 
-from STATpy_platform.features.monitoring.ui import common as filter_shell
 from STATpy_platform.features.monitoring.ui.views import overview as overview_page
 from STATpy_platform.features.monitoring.ui.views import ead_performance as ead_page
 from STATpy_platform.features.monitoring.ui.views import lgd_performance as lgd_page
@@ -164,8 +163,6 @@ def test_every_tab_takes_its_model_list_from_its_own_metrics_sheet():
     which PD's bar listed five models whose panels came back empty and whose
     scope could never enable Apply.
     """
-    import pandas as pd
-    from STATpy_platform.config.settings import settings
     from STATpy_platform.shared.repositories import filters_config as fc
     from STATpy_platform.shared.repositories.tables import read_table
 
