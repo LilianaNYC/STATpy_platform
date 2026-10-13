@@ -54,6 +54,7 @@ from ...config.settings import settings
 from ..domain.filter_order import alphabetical, composite_cycles_newest_first
 from ..domain.reporting_cycle import split_run_for
 from ..domain.constants import (
+    MODEL_KEY,
     DUMMY_MEV_MODEL_CHARACTERISTIC_SHEET_NAME,
     DUMMY_MEV_TIME_SERIES_SHEET_NAME,
     REPORTING_CYCLE_KEY,
@@ -87,10 +88,14 @@ _MONITORING_POINT_SHEETS_BY_TAB = {
     "all": _AGGREGATED_SHEET_NAMES,
 }
 
-# Not a fallback for missing/broken data -- the MEV workbook's model-
-# characteristic sheet has no Loss entries at all by design (Loss has no
-# per-model characteristics), so this is the tab's one permanent value.
-_LOSS_MODEL_NAMES = ["All Models"]
+# Which sheet each tab's Model options come from -- the same sheet that tab's
+# metrics are read out of.
+_METRICS_SHEET_BY_TAB = {
+    "pd": "PD_Performance_Metrics",
+    "lgd": "LGD_Performance_Metrics",
+    "ead": "EAD_Performance_Metrics",
+    "loss": "Loss_Performance_Metrics",
+}
 
 
 def _read_sheet(table_name: str) -> pd.DataFrame | None:
@@ -214,35 +219,39 @@ def _segment_values_from_data() -> list[str]:
     return alphabetical(segments)
 
 
-def _model_names_from_mev_workbook() -> dict[str, list[str]]:
-    df = _read_sheet(DUMMY_MEV_MODEL_CHARACTERISTIC_SHEET_NAME)
-    if df is None or df.empty or "Model Type" not in df.columns or "Model Descriptive Name" not in df.columns:
-        raise RuntimeError(
-            f"Filter config: {DUMMY_MEV_MODEL_CHARACTERISTIC_SHEET_NAME!r} sheet in "
-            f"{settings.dummy_mev_data_file} is missing, empty, or has no 'Model Type' / "
-            f"'Model Descriptive Name' columns -- cannot derive model names."
-        )
+def _model_names_from_portfolio() -> dict[str, list[str]]:
+    """Each tab's Model options, from the sheet whose metrics that tab renders.
 
-    models: dict[str, list[str]] = {"loss": list(_LOSS_MODEL_NAMES)}
-    for model_type, group in df.groupby("Model Type"):
-        tab = _MODEL_TYPE_TO_TAB.get(str(model_type).strip().upper())
-        if not tab:
+    Sourced from portfolio.xlsx rather than the MEV catalogue, so a tab can only
+    ever offer a model it has data for. The two used to be read interchangeably
+    and happened to agree; once portfolio was trimmed they did not, and the bar
+    offered models whose every panel came back empty.
+
+    The values are already **descriptive names**: portfolio stores the raw model
+    code and ``shared.repositories.tables`` resolves it on read. Nothing is
+    hardcoded -- Loss's portfolio-wide "All Models" is simply what its own sheet
+    contains.
+    """
+    models: dict[str, list[str]] = {}
+    for tab, sheet_name in _METRICS_SHEET_BY_TAB.items():
+        df = _read_sheet(sheet_name)
+        if df is None or df.empty or MODEL_KEY not in df.columns:
             continue
-        seen: list[str] = []
-        for name in group["Model Descriptive Name"]:
-            name = str(name).strip()
-            if name and name not in seen:
-                seen.append(name)
-        if seen:
+        found = {
+            text for value in df[MODEL_KEY].dropna().unique()
+            if (text := str(value).strip())
+        }
+        if found:
             # A-Z, not the sheet's row order: where a model sits in the workbook
             # is an authoring artefact, and it surfaced as an apparently random
             # Model dropdown ("PD Model A..D, PD Corp Model, PD Model E, F").
-            models[tab] = alphabetical(seen)
-    missing_tabs = [tab for tab in ("pd", "lgd", "ead") if tab not in models]
+            models[tab] = alphabetical(found)
+    missing_tabs = [tab for tab in _METRICS_SHEET_BY_TAB if tab not in models]
     if missing_tabs:
         raise RuntimeError(
             f"Filter config: no model names found for {', '.join(missing_tabs)} in "
-            f"{DUMMY_MEV_MODEL_CHARACTERISTIC_SHEET_NAME!r} sheet of {settings.dummy_mev_data_file}."
+            f"{settings.portfolio_file} -- expected a 'Model' column on each "
+            f"*_Performance_Metrics sheet."
         )
     return models
 
@@ -304,7 +313,7 @@ def load_filter_config() -> dict:
         "scenarios": _scenario_values_from_mev_workbook(),
         "monitoring_points": _monitoring_points_from_data(),
         "segments": _segment_values_from_data(),
-        "models": _model_names_from_mev_workbook(),
+        "models": _model_names_from_portfolio(),
         "cycle_parts": _cycle_parts_from_data(),
     }
 

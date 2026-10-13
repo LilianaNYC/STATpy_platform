@@ -35,6 +35,7 @@ from dataclasses import dataclass
 import pandas as pd
 
 from ...config.settings import settings
+from ..domain.constants import DUMMY_MEV_MODEL_CHARACTERISTIC_SHEET_NAME, MODEL_KEY
 from ..domain.reporting_cycle import normalize_portfolio_columns
 
 # --- Workbooks -------------------------------------------------------------
@@ -180,17 +181,64 @@ def _read(spec: Table, usecols: list[str] | None) -> pd.DataFrame:
     return _read_excel_table(spec, usecols)
 
 
+def _descriptive_name_by_code() -> dict[str, str]:
+    """``{raw model code: descriptive name}`` from the MEV workbook.
+
+    Read on demand rather than cached: the catalogue is ~20 rows, and a cached
+    handle outliving a monkeypatched workbook has bitten this module before.
+    """
+    try:
+        df = _read(table(DUMMY_MEV_MODEL_CHARACTERISTIC_SHEET_NAME), None)
+    except (FileNotFoundError, ValueError, KeyError):
+        return {}
+    if "Model Name" not in df.columns or "Model Descriptive Name" not in df.columns:
+        return {}
+    return {
+        str(code).strip(): str(name).strip()
+        for code, name in zip(df["Model Name"], df["Model Descriptive Name"])
+        if str(code).strip() and str(name).strip()
+    }
+
+
+def _map_model_codes(df: pd.DataFrame) -> pd.DataFrame:
+    """Swap portfolio's raw model codes for their descriptive names.
+
+    The descriptive name is the model's identity everywhere above this line --
+    ``mev_catalog`` is keyed by it, the metrics store is keyed by it, and it is
+    what the Model filter shows. portfolio.xlsx stores the **code**
+    (``PD_model_a``), mirroring the production table, so the lookup happens once
+    here instead of in each of the half-dozen readers.
+
+    A code with no catalogue entry passes through unchanged rather than being
+    dropped -- Loss's portfolio-wide "All Models" has no entry by design, and a
+    genuinely unknown code should surface in the filter rather than vanish.
+    """
+    if MODEL_KEY not in df.columns:
+        return df
+    lookup = _descriptive_name_by_code()
+    if not lookup:
+        return df
+    df = df.copy()
+    df[MODEL_KEY] = df[MODEL_KEY].map(
+        lambda value: lookup.get(str(value).strip(), value)
+    )
+    return df
+
+
 def read_table(key: str, usecols: list[str] | None = None) -> pd.DataFrame:
     """Read one registered table.
 
     Raises whatever the backend raises (missing file, missing sheet, ...) so
     each caller keeps its own best-effort handling. Portfolio tables come back
     in the internal column shape -- see
-    :func:`shared.domain.reporting_cycle.normalize_portfolio_columns`.
+    :func:`shared.domain.reporting_cycle.normalize_portfolio_columns` -- with
+    their model codes resolved to descriptive names.
     """
     spec = table(key)
     df = _read(spec, usecols)
-    return normalize_portfolio_columns(df) if spec.normalize else df
+    if not spec.normalize:
+        return df
+    return _map_model_codes(normalize_portfolio_columns(df))
 
 
 __all__ = ["PORTFOLIO", "MEV", "RULES", "TABLES", "Table", "read_table", "table"]

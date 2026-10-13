@@ -162,6 +162,34 @@ first filter. Both rows lead with a caption track of the same width
 row above, across the divider. Below 901px the rows stack and the caption
 becomes a plain heading over its group.
 
+### Where the Model options come from
+
+Every tab takes its Model list from **the sheet whose metrics it renders** —
+`PD_/LGD_/EAD_/Loss_Performance_Metrics` — so a tab can only ever offer a model
+it has data for. Nothing is hardcoded, including Loss's `All Models`, which is
+simply what its own sheet contains.
+
+portfolio.xlsx stores the **raw model code** (`PD_model_a`), mirroring the
+production table. `shared.repositories.tables` resolves it to the
+`Model Descriptive Name` from `model_names` on read, because the descriptive
+name is the model's identity everywhere above that line: `mev_catalog` is keyed
+by it, the metrics store is keyed by it, and it is what the filter shows.
+
+Two properties of that lookup are deliberate:
+
+* It is keyed on the **code**, not the descriptive name. Keyed the other way it
+  would be a no-op on production data and quietly leave codes in the filter.
+* An unresolvable code **passes through unchanged** rather than being dropped.
+  Loss's `All Models` has no catalogue entry by design, and an unknown code
+  should surface in the filter rather than empty the tab with no error.
+
+The mapping is **many-to-one** — `PD_model_d` and `PD_model_e` both resolve to
+`PD Model D` — because the descriptive name is a group identity, not a rename.
+
+This used to read the MEV catalogue instead. The two sources agreed until
+portfolio.xlsx was trimmed, after which PD's bar listed five models whose panels
+came back empty and whose scope could never enable Apply.
+
 ### portfolio.xlsx stores only `Run For`
 
 Both parts are derived from it, not stored:

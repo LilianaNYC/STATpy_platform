@@ -154,3 +154,25 @@ def test_pd_monitoring_points_are_the_as_of_dates_not_the_cohort_quarters():
 
     points = monitoring_points_by_cycle("pd")
     assert points["CCAR 2026"] == ["2025Q4", "2026Q1", "2026Q2", "2026Q3"]
+
+
+def test_every_tab_takes_its_model_list_from_its_own_metrics_sheet():
+    """Including Loss, whose "All Models" used to be a hardcoded constant.
+
+    Sourcing from the MEV catalogue instead let a tab offer models it has no
+    metrics for: the two sources agreed until portfolio.xlsx was trimmed, after
+    which PD's bar listed five models whose panels came back empty and whose
+    scope could never enable Apply.
+    """
+    import pandas as pd
+    from STATpy_platform.config.settings import settings
+    from STATpy_platform.shared.repositories import filters_config as fc
+    from STATpy_platform.shared.repositories.tables import read_table
+
+    for tab, sheet_name in fc._METRICS_SHEET_BY_TAB.items():
+        from_sheet = sorted({str(v).strip() for v in read_table(sheet_name)["model"].dropna().unique()})
+        assert fc.model_names(tab) == from_sheet, tab
+
+    # ... and nothing is hardcoded: deleting the constant that used to supply
+    # Loss would not change the answer, because there is no constant.
+    assert not hasattr(fc, "_LOSS_MODEL_NAMES")
