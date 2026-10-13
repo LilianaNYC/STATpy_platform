@@ -118,9 +118,10 @@ The Scope row is the same four filters as every monitoring tab, which required
 splitting the old combined **Model Use Case / Cycle** control. As there,
 `RUN_FOR_ID` keeps its id and its **composite value** (`"CCAR 2026"`) — the
 join key behind the applied store, Compare To and every export — and only its
-label becomes the bare cycle. Both halves are derived from `model_names`, which
-carries `Run For`, `Model Use Case` and `Reporting Cycle`, so the workbook stays
-authoritative rather than the composite being split on a space.
+label becomes the bare cycle. Both halves are derived from the composite
+itself via `shared.domain.reporting_cycle.split_run_for` — `model_names` no
+longer stores them, so there is nothing that can drift out of step with
+`Run For`.
 
 **Only the Scope row opens unanswered**, behind `Select …` placeholders, and
 Apply is gated on those four alone. Focus and View keep their defaults: an
@@ -171,3 +172,22 @@ of their meaning ("History → Projection → History & Projection", "Off → On
 One behavioural consequence: `DEFAULT_RUN_FOR_VALUE` is `RUN_FOR_OPTIONS[0]`, so
 ordering the cycles decides which one the page opens on. It used to be the
 workbook's first row, which was the *oldest* cycle; it is now the most recent.
+
+## Gotchas
+
+These are SAAS-specific traps that are not obvious from the code. They were
+previously kept in the repo-root `CLAUDE.md`; they live here so they sit next to
+the code they describe.
+
+- **The chart hover title is a hidden trace.** It is rendered by a hidden first
+  trace (`legendrank=-1000`, opacity 0) because Plotly's unified-hover header
+  cannot be templated; the native header is blanked with `xaxis.hoverformat=" "`.
+  Unified hover rows are ordered by `legendrank`.
+- **Quarter semantics.** In `dummy_mev_data.xlsx` `scenario`, `Quarter` is
+  relative to each Model Use Case / Cycle's jump-off — the `Quarter == 0` date
+  differs per cycle. `<= 0` is history, `>= 1` is projection. In combined
+  History & Projection charts, Compare-To cycles' projection points are plotted
+  quarter-aligned onto the primary cycle's calendar dates.
+- **Per-row model attribution ignores the workbook's `Model Name` column.** It is
+  derived from the `mev_transformed` sheet (see `repositories/loader.py`); rows
+  for MEVs shared across models are exploded per model.
