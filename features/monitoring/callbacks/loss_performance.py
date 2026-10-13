@@ -48,16 +48,10 @@ def register_callbacks(app) -> None:
         return
 
     data = PD_PERFORMANCE_DATA
-    mev_scenarios_by_cycle = data.get("mev_scenarios_by_cycle") or {}
 
-    from ....shared.repositories.filters_config import load_filter_config as _load_filter_config
     # with_placeholder: every option list a callback writes has to carry the
     # "Select …" entry, or the value "" matches no option and the shell's toggle
     # falls back to a bare "Select" (see _option_label).
-    _cfg_scenario_options = controls.with_placeholder(
-        [{"label": s["label"], "value": s["value"]} for s in _load_filter_config()["scenarios"]],
-        "scenario",
-    )
 
     for value_id, toggle_id, menu_id, filter_key, search_id in (
         (layout.MODEL_USE_CASE_ID, layout.MODEL_USE_CASE_TOGGLE_ID, layout.MODEL_USE_CASE_MENU_ID, layout.MODEL_USE_CASE_FILTER_KEY, None),
@@ -75,7 +69,6 @@ def register_callbacks(app) -> None:
         (layout.PORTFOLIO_ID, layout.PORTFOLIO_TOGGLE_ID, layout.PORTFOLIO_MENU_ID, layout.PORTFOLIO_FILTER_KEY, None),
         # Scenario: net new here (Loss has no Loss_Sensitivity_Projections sheet,
         # so nothing downstream reads it) -- present for bar consistency only.
-        (layout.SCENARIO_ID, layout.SCENARIO_TOGGLE_ID, layout.SCENARIO_MENU_ID, layout.SCENARIO_FILTER_KEY, None),
     ):
         filter_shell.register_single_select_callbacks(
             app,
@@ -86,13 +79,6 @@ def register_callbacks(app) -> None:
             search_id=search_id,
         )
 
-    # -----------------------------------------------------------------
-    # Scenario options come from dummy_mev_data.xlsx's "scenario" sheet: the
-    # distinct "Scenario" values available for the "Run For" cycle matching
-    # the selected Model Use Case / Cycle -- see sync_pd_cycle_to_scenario_options.
-    # Still unwired to anything downstream (see the Scenario registration note
-    # above), but its own options/value now stay consistent with the other tabs.
-    # -----------------------------------------------------------------
     # -----------------------------------------------------------------
     # Model Use Case -> Reporting Cycle. Loss has a single portfolio-wide
     # entity, so unlike the other tabs there is no Model/Segment population to
@@ -110,22 +96,6 @@ def register_callbacks(app) -> None:
         options = controls.with_placeholder(
             cycle_options_for_cycles(None, model_use_case), "reporting-cycle")
         value = controls.keep_or_unselected(options, current_cycle)
-        return options, value
-
-    @app.callback(
-        Output(layout.SCENARIO_ID, "options"),
-        Output(layout.SCENARIO_ID, "value"),
-        Input(layout.REPORTING_CYCLE_ID, "value"),
-        State(layout.SCENARIO_ID, "value"),
-    )
-    def sync_loss_cycle_to_scenario_options(cycle, current_scenario):
-        scenarios = mev_scenarios_by_cycle.get(cycle)
-        if scenarios:
-            options = [option for option in _cfg_scenario_options if option["value"] in set(scenarios)] or _cfg_scenario_options
-        else:
-            options = _cfg_scenario_options
-        allowed_values = {option["value"] for option in options}
-        value = controls.keep_or_unselected(options, current_scenario)
         return options, value
 
     def _install_loss_store(reporting_cycle):
@@ -269,7 +239,6 @@ def register_callbacks(app) -> None:
         Input(layout.MODEL_DROPDOWN_ID, "value"),
         Input(layout.SEGMENT_DROPDOWN_ID, "value"),
         Input(layout.MONITORING_POINT_DROPDOWN_ID, "value"),
-        Input(layout.SCENARIO_ID, "value"),
     )
     def sync_loss_apply_button_availability(*filter_values):
         return not controls.all_selected(*filter_values)

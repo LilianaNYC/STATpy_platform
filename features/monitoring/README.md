@@ -118,10 +118,10 @@ All five tabs present the same filters in the same order, as a two-row bar: a
 within it and applies. Each row is captioned with that word, in a stub column
 down the left of the bar, so the split is visible rather than implied.
 
-| Row | PD / LGD / EAD | Loss | Overview |
-|---|---|---|---|
-| **Scope** | Region · Portfolio · Model Use Case · Reporting Cycle | *same* | *same* |
-| **Focus** | Model · Segment · Monitoring Point → **Apply filters** | Model · Segment · Monitoring Point · Scenario → **Apply filters** | Model Group · Model · Monitoring Point → **Apply filters** |
+| Row | PD / LGD / EAD / Loss | Overview |
+|---|---|---|
+| **Scope** | Region · Portfolio · Model Use Case · Reporting Cycle | *same* |
+| **Focus** | Model · Segment · Monitoring Point → **Apply filters** | Model Group · Model · Monitoring Point → **Apply filters** |
 
 **Scenario is not in the bar on PD/LGD/EAD.** It only ever drove one section —
 **2.5 MEV Range** — so it lives in that section's own *Display filters* row,
@@ -139,7 +139,14 @@ picker. Consequences, all deliberate:
 * saving a review writes the **in-section** value back to `portfolio.xlsx`, not
   the applied scope's, which can now be stale.
 
-Loss keeps its bar control: it has no MEV Range section to move it into.
+**Loss has no Scenario control at all.** It has no MEV Range section to move
+one into, and the filter was doing nothing there: its value was never written
+into Loss's applied store, so answering it changed nothing on screen while still
+being one of the filters that had to be answered before Apply would enable.
+Removing it was free rather than a trade-off — Overview's escalation cards are
+the only producer of `?scenario=`, and only for rows carrying a *MEV Range
+Scenario*, which `augment_rows_with_post_subjective` writes for PD/LGD/EAD only.
+So no Loss deep link ever carried one.
 
 **The default is `intsevere`**, from `filters_config.default_scenario()`. The
 option list is alphabetical (the repo-wide ordering rule), so the old
@@ -192,6 +199,24 @@ first filter. Both rows lead with a caption track of the same width
 — that shared width is what keeps each row's filter columns lined up with the
 row above, across the divider. Below 901px the rows stack and the caption
 becomes a plain heading over its group.
+
+### Scenario is a MEV Range control, not a page-wide one
+
+Despite sitting in the Focus row, Scenario reaches exactly one section. On PD it
+is passed to `_build_mev_range_section` and to nothing else — not to Sensitivity
+Analysis, and not to Scenario Ranking, which despite the name has its own
+in-section multi-select backed by `SCENARIO_RANKING_STORE`. LGD and EAD are the
+same shape.
+
+**Loss has no Scenario filter.** It has no MEV Range section, so its value was
+never written into `APPLIED_FILTERS_STORE_ID` at all — answering it changed
+nothing on screen while still being required before Apply would enable.
+
+Removing it cost no deep links. `?scenario=` is produced only by Overview's
+escalation cards, and only for rows carrying a `MEV Range Scenario`, which
+`augment_rows_with_post_subjective` writes for PD, LGD and EAD only — never
+Loss. `test_no_loss_deep_link_carries_a_scenario` pins that reasoning so it fails
+if Loss ever gains a post-subjective sidecar.
 
 ### Where the filter values come from
 

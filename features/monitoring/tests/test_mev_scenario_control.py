@@ -180,10 +180,13 @@ def test_the_review_flow_write_back_persists_the_pick_not_the_stale_scope(tab, i
     assert "scenario_store or (applied or {}).get(\"scenario\")" in save
 
 
-def test_loss_keeps_its_bar_control():
-    """Loss has no MEV Range section, so there is nowhere to move it to."""
+def test_loss_has_no_scenario_control_at_all():
+    """Loss has no MEV Range section, so there was nowhere to move it to -- it
+    was removed outright instead. Neither the bar id nor the in-section id
+    should exist there; see test_no_tab_has_a_scenario_filter_in_its_bar.
+    """
     loss = _view("loss")
-    assert loss.SCENARIO_ID == "loss-scenario"
+    assert not hasattr(loss, "SCENARIO_ID")
     assert not hasattr(loss, "MEV_SCENARIO_ID")
 
 

@@ -166,11 +166,12 @@ def test_apply_is_gated_on_every_filter_the_tab_empties():
         ead_performance, lgd_performance, loss_performance, pd_performance,
     )
 
-    # Model Group was removed from all four. PD/LGD/EAD are seven: Scenario has
-    # moved into the MEV Range section it was the only consumer of, so the bar
-    # no longer gates on it. Loss has no MEV Range section, so it stays at eight.
+    # Seven on every tab, down from nine. Model Group went first -- these tabs
+    # each show exactly one group. Scenario went second, for two different
+    # reasons: PD/LGD/EAD moved it into their MEV Range section, and Loss, which
+    # has no such section, dropped it outright.
     for module, count in ((pd_performance, 7), (lgd_performance, 7),
-                          (ead_performance, 7), (loss_performance, 8)):
+                          (ead_performance, 7), (loss_performance, 7)):
         source = inspect.getsource(module.register_callbacks)
         decorator = source.split('Output(layout.APPLY_FILTERS_ID, "disabled")')[1]
         decorator = decorator.split("def ")[0]

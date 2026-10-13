@@ -220,7 +220,7 @@ a model's attributes reads the MEV file even on a monitoring tab.
 | **Model** | portfolio **+** MEV | `*_Performance_Metrics` · `Model` → `model_names` · `Model Descriptive Name` | the sheet stores the code (`PD_model_a`); the read seam resolves it to `PD Model A` |
 | Segment | portfolio | `*_Performance_Metrics` · `Segment` | |
 | Monitoring Point | portfolio | `*_Performance_Metrics` · `monitoring_point` (PD) / `Quarter` (others) | PD's `Quarter` is the cohort start, not the as-of |
-| Scenario | MEV | `scenario` · `Scenario` | defaults to `intsevere` (`filters_config.default_scenario()`); **not in the bar** on PD/LGD/EAD — it lives in the 2.5 MEV Range section's own display filters, narrowed to the applied cycle; Loss keeps the bar control |
+| Scenario | MEV | `scenario` · `Scenario` | defaults to `intsevere` (`filters_config.default_scenario()`); **not in the bar** on PD/LGD/EAD — it lives in the 2.5 MEV Range section's own display filters, narrowed to the applied cycle. Loss has none at all — no MEV Range section, and the filter never reached its applied store |
 | Model Group *(Overview only)* | **hardcoded** | `overview.MODEL_GROUPS` | the tab taxonomy, `["PD", "LGD", "EAD", "Loss"]` |
 
 **SAAS**:
