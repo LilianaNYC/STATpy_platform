@@ -63,10 +63,6 @@ PORTFOLIO_ID = "loss-portfolio"
 PORTFOLIO_TOGGLE_ID = "loss-portfolio-toggle"
 PORTFOLIO_MENU_ID = "loss-portfolio-menu"
 PORTFOLIO_FILTER_KEY = "loss-portfolio"
-SCENARIO_ID = "loss-scenario"
-SCENARIO_TOGGLE_ID = "loss-scenario-toggle"
-SCENARIO_MENU_ID = "loss-scenario-menu"
-SCENARIO_FILTER_KEY = "loss-scenario"
 LOSS_SUBNAV_ID = "loss-subnav"
 RANGE_STORE_ID = "loss-range-store"
 PERFORMANCE_SECTION_RANGE_KEY = "loss_performance_section"
@@ -593,13 +589,14 @@ def page_layout(data: dict, initial: dict | None = None) -> list:
     default_use_case = _keep_or_unselected(model_use_case_options, initial.get("model_use_case"))
     # Every cycle, not one use case's: nothing has been chosen to narrow by yet.
     reporting_cycle_options = _with_placeholder(cycle_options_for_cycles(None), "reporting-cycle")
-    scenario_options = _with_placeholder(
-        [{"label": s["label"], "value": s["value"]} for s in cfg["scenarios"]], "scenario")
+    # No Scenario filter on Loss. Scenario only ever drove the MEV Range
+    # section, and Loss has none -- its value was never written into
+    # APPLIED_FILTERS_STORE_ID, so answering it changed nothing while still
+    # being required before Apply would enable.
     # Cosmetic only: Loss's own Apply flow (apply_loss_filters) never reads
     # scenario into APPLIED_FILTERS_STORE_ID (Loss has no MEV Range/sensitivity
     # section that depends on it), so this only pre-selects the dropdown to
     # match a deep link -- it isn't threaded into applied_filters_data below.
-    selected_scenario = _keep_or_unselected(scenario_options, initial.get("scenario"))
     selected_cycle = _keep_or_unselected(reporting_cycle_options, initial.get("cycle"))
     cycle_data = (data.get("loss_observations_by_cycle") or {}).get(selected_cycle)
     if cycle_data:
@@ -764,17 +761,6 @@ def page_layout(data: dict, initial: dict | None = None) -> list:
                                             "monitoring-point",
                                         ),
                                         value=selected_monitoring_point,
-                                    ),
-                                ),
-                                _build_filter(
-                                    "Scenario",
-                                    shared_filters.build_single_select_dropdown(
-                                        value_id=SCENARIO_ID,
-                                        toggle_id=SCENARIO_TOGGLE_ID,
-                                        menu_id=SCENARIO_MENU_ID,
-                                        filter_key=SCENARIO_FILTER_KEY,
-                                        options=scenario_options,
-                                        value=selected_scenario,
                                     ),
                                 ),
                                 _build_loss_apply_button(),

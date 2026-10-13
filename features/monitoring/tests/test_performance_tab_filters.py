@@ -213,6 +213,11 @@ def test_bar_reads_in_the_agreed_order(name, module, prefix):
     """
     expected = ["Region", "Portfolio", "Model Use Case", "Reporting Cycle",
                 "Model", "Segment", "Monitoring Point", "Scenario"]
+    if prefix == "loss":
+        # Loss has no Scenario: it only ever drove the MEV Range section, which
+        # Loss does not have. Its value was never even written into the applied
+        # store, so the filter was a required click that changed nothing.
+        expected = [label for label in expected if label != "Scenario"]
     labels = []
     for node in _nodes(module):
         if type(node).__name__ == "Label":
@@ -290,3 +295,40 @@ def test_overview_keeps_its_model_group():
     control = _by_id(nodes, overview_layout.SEGMENT_MODEL_GROUP_ID)
     assert control is not None
     assert len([o for o in control.options if o["value"] != UNSELECTED]) > 1
+
+
+def test_loss_has_no_scenario_filter():
+    """Scenario only ever drove the MEV Range section, and Loss has none.
+
+    Its value was never written into Loss's applied store, so answering it
+    changed nothing on screen -- while still being one of the filters that had
+    to be answered before Apply would enable. The other three tabs keep theirs
+    until the control moves into the MEV Range section itself.
+    """
+    nodes = _nodes(loss_layout)
+    assert _by_id(nodes, "loss-scenario") is None
+    labels = [n.children for n in nodes
+              if type(n).__name__ == "Label" and isinstance(n.children, str)]
+    assert "Scenario" not in labels
+
+    for name, module, prefix in TABS:
+        if prefix == "loss":
+            continue
+        assert _by_id(_nodes(module), f"{prefix}-scenario") is not None, name
+
+
+def test_no_loss_deep_link_carries_a_scenario():
+    """Why removing it is free rather than a trade-off.
+
+    Overview's escalation cards are the only producer of ``?scenario=``, and
+    only for rows that carry a "MEV Range Scenario" -- which
+    augment_rows_with_post_subjective writes for PD, LGD and EAD only. A Loss
+    card therefore never emitted one, so no existing link breaks.
+    """
+    import inspect
+    from STATpy_platform.features.monitoring.ui.views import overview as overview_layout
+
+    source = inspect.getsource(overview_layout.augment_rows_with_post_subjective)
+    for group in ("PD", "LGD", "EAD"):
+        assert f'"{group}"' in source, group
+    assert '"Loss"' not in source, "Loss gained a post-subjective sidecar -- revisit this"

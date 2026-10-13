@@ -162,6 +162,24 @@ first filter. Both rows lead with a caption track of the same width
 row above, across the divider. Below 901px the rows stack and the caption
 becomes a plain heading over its group.
 
+### Scenario is a MEV Range control, not a page-wide one
+
+Despite sitting in the Focus row, Scenario reaches exactly one section. On PD it
+is passed to `_build_mev_range_section` and to nothing else — not to Sensitivity
+Analysis, and not to Scenario Ranking, which despite the name has its own
+in-section multi-select backed by `SCENARIO_RANKING_STORE`. LGD and EAD are the
+same shape.
+
+**Loss has no Scenario filter.** It has no MEV Range section, so its value was
+never written into `APPLIED_FILTERS_STORE_ID` at all — answering it changed
+nothing on screen while still being required before Apply would enable.
+
+Removing it cost no deep links. `?scenario=` is produced only by Overview's
+escalation cards, and only for rows carrying a `MEV Range Scenario`, which
+`augment_rows_with_post_subjective` writes for PD, LGD and EAD only — never
+Loss. `test_no_loss_deep_link_carries_a_scenario` pins that reasoning so it fails
+if Loss ever gains a post-subjective sidecar.
+
 ### Where the filter values come from
 
 The full provenance table for **both** dashboards — which workbook, sheet and

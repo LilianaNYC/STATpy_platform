@@ -166,9 +166,11 @@ def test_apply_is_gated_on_every_filter_the_tab_empties():
         ead_performance, lgd_performance, loss_performance, pd_performance,
     )
 
-    # Eight, not nine: Model Group was removed from these tabs.
+    # Eight, not nine: Model Group was removed from these tabs. Loss is seven --
+    # it has no Scenario either, because Scenario only ever drove the MEV Range
+    # section and Loss has none.
     for module, count in ((pd_performance, 8), (lgd_performance, 8),
-                          (ead_performance, 8), (loss_performance, 8)):
+                          (ead_performance, 8), (loss_performance, 7)):
         source = inspect.getsource(module.register_callbacks)
         decorator = source.split('Output(layout.APPLY_FILTERS_ID, "disabled")')[1]
         decorator = decorator.split("def ")[0]
