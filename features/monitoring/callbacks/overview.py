@@ -10,7 +10,14 @@ from ....shared.ui import controls
 from ....shared.registration import already_registered
 from ....shared.theme import APP_THEME_ID, URL_ID, normalize_theme_value
 from ..data_access import PD_PERFORMANCE_DATA
-from ..domain.overview import overview_model_cycle_quarters, overview_model_cycles, overview_model_options
+from ..domain.overview import (
+    overview_cycle_options,
+    overview_model_cycle_quarters,
+    overview_model_cycles,
+    overview_model_options,
+    overview_portfolio_options,
+    overview_use_case_options,
+)
 
 _RANGE_PRESET_COUNTS = {"last-4": 4, "last-8": 8, "last-12": 12}
 _OVERVIEW_PATH = "/overview"
@@ -21,8 +28,16 @@ def _overview_filter_snapshot(
     monitoring_point: str | None,
     segment_model_group: str | None,
     selected_models: list[str] | None = None,
+    region: str | None = None,
+    portfolio: str | None = None,
 ) -> dict[str, str]:
-    """Build an applied snapshot that matches the values visible in the top bar."""
+    """Build an applied snapshot that matches the values visible in the top bar.
+
+    ``region``/``portfolio`` scope the content indirectly -- they narrow the Model
+    selection, which is what the charts are built from -- but they are recorded
+    here so the rendered scope chip can state the full applied scope rather than
+    leaving the reader to infer it from the model list.
+    """
     cycle = str(reporting_cycle or "").strip()
     valid_points = controls.ALL_REPORTING_CYCLE_QUARTERS.get(cycle, [])
     resolved_point = filter_shell.resolve_monitoring_point_value(valid_points, monitoring_point)
@@ -31,6 +46,8 @@ def _overview_filter_snapshot(
         "monitoring_point": resolved_point,
         "segment_model_group": str(segment_model_group or "All"),
         "models": list(selected_models or []),
+        "region": str(region or "All"),
+        "portfolio": str(portfolio or "All"),
     }
 
 
@@ -68,10 +85,11 @@ def register_callbacks(app) -> None:
     model_cycles = overview_model_cycles(data)
     model_cycle_quarters = overview_model_cycle_quarters(data)
 
-    from ....shared.repositories.filters_config import load_filter_config as _load_filter_config
-    _cfg_cycle_options = [{"label": c["label"], "value": c["value"]} for c in _load_filter_config()["reporting_cycles"]]
 
     for value_id, toggle_id, menu_id, filter_key in (
+        (layout.REGION_ID, layout.REGION_TOGGLE_ID, layout.REGION_MENU_ID, layout.REGION_FILTER_KEY),
+        (layout.PORTFOLIO_ID, layout.PORTFOLIO_TOGGLE_ID, layout.PORTFOLIO_MENU_ID, layout.PORTFOLIO_FILTER_KEY),
+        (layout.MODEL_USE_CASE_ID, layout.MODEL_USE_CASE_TOGGLE_ID, layout.MODEL_USE_CASE_MENU_ID, layout.MODEL_USE_CASE_FILTER_KEY),
         (layout.REPORTING_CYCLE_ID, layout.REPORTING_CYCLE_TOGGLE_ID, layout.REPORTING_CYCLE_MENU_ID, layout.REPORTING_CYCLE_FILTER_KEY),
         (layout.MONITORING_POINT_ID, layout.MONITORING_POINT_TOGGLE_ID, layout.MONITORING_POINT_MENU_ID, layout.MONITORING_POINT_FILTER_KEY),
         (layout.SEGMENT_MODEL_GROUP_ID, layout.SEGMENT_MODEL_GROUP_TOGGLE_ID, layout.SEGMENT_MODEL_GROUP_MENU_ID, layout.SEGMENT_MODEL_GROUP_FILTER_KEY),
@@ -87,27 +105,68 @@ def register_callbacks(app) -> None:
         )
 
     # -----------------------------------------------------------------
-    # Model Group/Model now come before Model Use Case / Cycle in the top
-    # filter bar, so Cycle narrows to whichever cycles the in-scope models
-    # actually have data for (pooled across every selected model), mirroring
-    # each individual Performance tab's own model-to-cycle narrowing. With no
-    # models selected, the full cycle list shows (unchanged fallback).
+    # The top filter bar narrows strictly left to right:
+    #
+    #   Region -> Portfolio -> Model Use Case -> Reporting Cycle
+    #          -> Model Group -> Model -> Monitoring Point
+    #
+    # So Cycle is narrowed by Model Use Case alone, and Cycle in turn narrows
+    # Model (in sync_overview_model_options below). This REVERSES the previous
+    # model-to-cycle direction, which was correct while Model sat to the left of
+    # Cycle. Keeping both directions would close a dependency loop
+    # (Model -> Cycle -> Model), which is exactly what callback rule 2 forbids,
+    # so the model axis is deliberately gone from this callback.
+    #
+    # ``current_cycle`` stays a State purely to preserve a still-valid pick.
     # -----------------------------------------------------------------
+    def _rescope(options, current, filter_key):
+        """Re-narrowed options, led by their "Select …" placeholder, plus the
+        value to write.
+
+        Keeps a still-valid selection and otherwise leaves the filter
+        **unanswered** -- it must never answer one for the user, which is what
+        taking ``options[0]`` used to do. That mattered more once the page
+        started empty: the cascade runs on first render, so a first-option
+        fallback would have filled the whole bar in before the user touched it.
+        """
+        options = controls.with_placeholder(options, filter_key)
+        return options, controls.keep_or_unselected(options, current)
+
+    @app.callback(
+        Output(layout.PORTFOLIO_ID, "options"),
+        Output(layout.PORTFOLIO_ID, "value"),
+        Input(layout.REGION_ID, "value"),
+        State(layout.PORTFOLIO_ID, "value"),
+    )
+    def sync_overview_portfolio_options(region, current_portfolio):
+        return _rescope(overview_portfolio_options(data, region), current_portfolio, "portfolio")
+
+    @app.callback(
+        Output(layout.MODEL_USE_CASE_ID, "options"),
+        Output(layout.MODEL_USE_CASE_ID, "value"),
+        Input(layout.REGION_ID, "value"),
+        Input(layout.PORTFOLIO_ID, "value"),
+        State(layout.MODEL_USE_CASE_ID, "value"),
+    )
+    def sync_overview_use_case_options(region, portfolio, current_use_case):
+        return _rescope(
+            overview_use_case_options(data, region, portfolio), current_use_case, "model-use-case"
+        )
+
     @app.callback(
         Output(layout.REPORTING_CYCLE_ID, "options"),
         Output(layout.REPORTING_CYCLE_ID, "value"),
-        Input(layout.SEGMENT_MODEL_GROUP_ID, "value"),
-        Input(layout.OVERVIEW_MODEL_ID, "value"),
+        Input(layout.REGION_ID, "value"),
+        Input(layout.PORTFOLIO_ID, "value"),
+        Input(layout.MODEL_USE_CASE_ID, "value"),
         State(layout.REPORTING_CYCLE_ID, "value"),
     )
-    def sync_overview_cycle_options(_model_group, selected_models, current_cycle):
-        cycles: set[str] = set()
-        for model in selected_models or []:
-            cycles.update(model_cycles.get(model, set()))
-        options = ([option for option in _cfg_cycle_options if option["value"] in cycles] or _cfg_cycle_options) if cycles else _cfg_cycle_options
-        allowed_values = {option["value"] for option in options}
-        value = current_cycle if current_cycle in allowed_values else (options[0]["value"] if options else "")
-        return options, value
+    def sync_overview_cycle_options(region, portfolio, model_use_case, current_cycle):
+        return _rescope(
+            overview_cycle_options(data, region, portfolio, model_use_case),
+            current_cycle,
+            "reporting-cycle",
+        )
 
     @app.callback(
         Output(layout.MONITORING_POINT_ID, "options"),
@@ -120,9 +179,14 @@ def register_callbacks(app) -> None:
         quarters: set[str] = set()
         for model in selected_models or []:
             quarters.update(model_cycle_quarters.get((model, reporting_cycle), set()))
-        options = sorted(quarters) if quarters else controls.ALL_REPORTING_CYCLE_QUARTERS.get(reporting_cycle, [])
-        value = filter_shell.resolve_monitoring_point_value(options, selected_monitoring_point)
-        return [{"label": option, "value": option} for option in options], value
+        ascending = sorted(quarters) if quarters else controls.ALL_REPORTING_CYCLE_QUARTERS.get(reporting_cycle, [])
+        # Display most-recent-first, matching Reporting Cycle above it. No
+        # resolve_monitoring_point_value here any more: it picks the latest
+        # quarter when the current value does not fit, which would answer the
+        # filter for the user on the very first render.
+        options = controls.with_placeholder(
+            [{"label": option, "value": option} for option in reversed(ascending)], "monitoring-point")
+        return options, controls.keep_or_unselected(options, selected_monitoring_point)
 
     # -----------------------------------------------------------------
     # Model checkbox dropdown: open/close, options narrowed by Model Group
@@ -143,16 +207,40 @@ def register_callbacks(app) -> None:
     @app.callback(
         Output(layout.OVERVIEW_MODEL_ID, "options"),
         Output(layout.OVERVIEW_MODEL_ID, "value"),
+        Input(layout.REGION_ID, "value"),
+        Input(layout.PORTFOLIO_ID, "value"),
+        Input(layout.REPORTING_CYCLE_ID, "value"),
         Input(layout.SEGMENT_MODEL_GROUP_ID, "value"),
+        Input(layout.OVERVIEW_MODEL_SEARCH_ID, "value"),
         State(layout.OVERVIEW_MODEL_ID, "value"),
     )
-    def sync_overview_model_options(segment_model_group, current_value):
-        options = overview_model_options(data, segment_model_group)
+    def sync_overview_model_options(region, portfolio, reporting_cycle, segment_model_group,
+                                    model_search, current_value):
+        options = overview_model_options(
+            data,
+            segment_model_group,
+            region=region,
+            portfolio=portfolio,
+            reporting_cycle=reporting_cycle,
+        )
+        # Keep whatever survives the narrowing, and nothing more. This used to
+        # select *every* model when the survivors were empty, which on the
+        # now-empty first render meant the Model filter answered itself.
+        #
+        # The kept selection is computed against the *unsearched* list: the
+        # search box only hides options, so a model checked before searching
+        # stays selected while hidden -- matching SAAS.
         option_values = {option["value"] for option in options}
-        value = [v for v in (current_value or []) if v in option_values]
-        if not value:
-            value = list(option_values)
-        return options, value
+        kept = [v for v in (current_value or []) if v in option_values]
+
+        search_text = str(model_search or "").strip().lower()
+        if search_text:
+            options = [
+                option for option in options
+                if search_text in str(option.get("label", "")).lower()
+                or search_text in str(option.get("value", "")).lower()
+            ]
+        return options, kept
 
     @app.callback(
         Output(layout.OVERVIEW_MODEL_TOGGLE_ID, "children"),
@@ -171,13 +259,17 @@ def register_callbacks(app) -> None:
         prevent_initial_call=True,
     )
     def sync_overview_model_select_all(select_all_value, models_value, options):
-        option_values = [option["value"] for option in (options or [])]
+        # Options may be narrowed by the search box, so "All" only adds or
+        # removes the models currently visible and leaves hidden selections
+        # untouched -- "all of these", not "everything". Same rule as SAAS's
+        # sync_saas_model_selection.
+        visible_names = [option["value"] for option in (options or []) if option.get("value")]
         current_values = list(models_value or [])
         if ctx.triggered_id == layout.OVERVIEW_MODEL_SELECT_ALL_ID:
             if "all" in (select_all_value or []):
-                return list(option_values), no_update
-            return [], no_update
-        select_all = ["all"] if option_values and set(option_values).issubset(current_values) else []
+                return current_values + [n for n in visible_names if n not in current_values], no_update
+            return [v for v in current_values if v not in set(visible_names)], no_update
+        select_all = ["all"] if visible_names and set(visible_names).issubset(current_values) else []
         return no_update, select_all
 
     # -----------------------------------------------------------------
@@ -250,6 +342,8 @@ def register_callbacks(app) -> None:
         Output(layout.APPLIED_FILTERS_STORE_ID, "data"),
         Input(layout.APPLY_FILTERS_ID, "n_clicks"),
         Input(URL_ID, "pathname"),
+        State(layout.REGION_ID, "value"),
+        State(layout.PORTFOLIO_ID, "value"),
         State(layout.REPORTING_CYCLE_ID, "value"),
         State(layout.MONITORING_POINT_ID, "value"),
         State(layout.SEGMENT_MODEL_GROUP_ID, "value"),
@@ -274,6 +368,8 @@ def register_callbacks(app) -> None:
     def apply_overview_filters(
         _n_clicks,
         pathname,
+        region,
+        portfolio,
         reporting_cycle,
         monitoring_point,
         segment_model_group,
@@ -298,7 +394,50 @@ def register_callbacks(app) -> None:
             checked_monitoring_point,
             segment_model_group,
             selected_models,
+            region=region,
+            portfolio=portfolio,
         )
+
+    # -----------------------------------------------------------------
+    # Apply button dirty state: the page is Apply-gated, so the button says
+    # whether the top bar still matches what is rendered below. Purely
+    # presentational -- it only ever writes the button's own className, and
+    # nothing reads that back, so it adds no edge to the filter cascade.
+    # -----------------------------------------------------------------
+    # The same callback also owns the Apply **gate**. The page opens with every
+    # filter unanswered, so Apply stays disabled until all seven have a real
+    # value -- nothing can be applied against a half-specified scope. Folded in
+    # here rather than split out because it reads exactly the same Inputs, and
+    # both outputs are the button's own props.
+    @app.callback(
+        Output(layout.APPLY_FILTERS_ID, "className"),
+        Output(layout.APPLY_FILTERS_ID, "disabled"),
+        Input(layout.REGION_ID, "value"),
+        Input(layout.PORTFOLIO_ID, "value"),
+        Input(layout.MODEL_USE_CASE_ID, "value"),
+        Input(layout.REPORTING_CYCLE_ID, "value"),
+        Input(layout.SEGMENT_MODEL_GROUP_ID, "value"),
+        Input(layout.OVERVIEW_MODEL_ID, "value"),
+        Input(layout.MONITORING_POINT_ID, "value"),
+        Input(layout.APPLIED_FILTERS_STORE_ID, "data"),
+    )
+    def sync_overview_apply_state(
+        region, portfolio, use_case, reporting_cycle, segment_model_group,
+        selected_models, monitoring_point, applied,
+    ):
+        class_name = layout.apply_button_class(
+            _overview_filter_snapshot(
+                reporting_cycle, monitoring_point, segment_model_group,
+                selected_models, region=region, portfolio=portfolio,
+            ),
+            applied,
+        )
+        # ``selected_models`` is a list -- a non-empty one counts as answered.
+        complete = controls.all_selected(
+            region, portfolio, use_case, reporting_cycle,
+            segment_model_group, monitoring_point,
+        ) and bool(selected_models)
+        return class_name, not complete
 
     # -----------------------------------------------------------------
     # Master re-render: applied store + theme -> content.
@@ -340,6 +479,8 @@ def register_callbacks(app) -> None:
             theme_value=theme_value,
             segment_model_group=applied.get("segment_model_group") or "All",
             selected_models=applied.get("models"),
+            region=applied.get("region") or "All",
+            portfolio=applied.get("portfolio") or "All",
         )
         return children, scoped_rows, segment_scoped_rows
 

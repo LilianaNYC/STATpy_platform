@@ -14,6 +14,7 @@ from collections import Counter
 from typing import Any
 
 from ....shared.domain import constants as pd_config
+from ....shared.domain.filter_order import alphabetical
 from ....shared.domain.calculations import (
     PdFilterContext,
     calculate_pd_calibration_assignment_rag,
@@ -684,7 +685,14 @@ def build_overview_rows(data: dict, reporting_cycle: str) -> tuple[list[dict[str
     return rows, exclusions
 
 
-def overview_model_options(data: dict, model_group: str = "All") -> list[dict[str, str]]:
+def overview_model_options(
+    data: dict,
+    model_group: str = "All",
+    *,
+    region: str | None = None,
+    portfolio: str | None = None,
+    reporting_cycle: str | None = None,
+) -> list[dict[str, str]]:
     """Every (Model Group, Model) pair Overview's Models chapter can ever
     produce, optionally narrowed to one Model Group -- source for the top
     filter bar's Model checkbox dropdown. LGD/EAD/Loss come from the same
@@ -700,7 +708,124 @@ def overview_model_options(data: dict, model_group: str = "All") -> list[dict[st
     )
     if model_group and model_group != "All":
         groups = [(group, model) for group, model in groups if group == model_group]
-    return [{"label": model, "value": model} for group, model in groups]
+
+    # Region/Portfolio are per-model attributes from the MEV catalog. A model
+    # with a blank value stays in scope rather than being filtered out: Loss's
+    # "All Models" is portfolio-wide and carries neither, so excluding blanks
+    # would silently drop the whole Loss workstream the moment a region is
+    # picked.
+    catalog = data.get("mev_catalog") or {}
+    for field, wanted in (("region", region), ("portfolio", portfolio)):
+        value = str(wanted or "").strip()
+        if not value or value == "All":
+            continue
+        groups = [
+            (group, model) for group, model in groups
+            if (str((catalog.get(model) or {}).get(field, "")).strip() or value) == value
+        ]
+
+    # Reporting Cycle sits before Model in the filter bar, so it narrows Model
+    # rather than the other way round -- keeping the cascade one-way (see
+    # callback rule 2). Models with no recorded cycles are left alone.
+    cycle = str(reporting_cycle or "").strip()
+    if cycle:
+        model_cycles = overview_model_cycles(data)
+        groups = [
+            (group, model) for group, model in groups
+            if not model_cycles.get(model) or cycle in model_cycles[model]
+        ]
+
+    # A flat A-Z list: the dropdown shows bare model names, so assembling it
+    # group-by-group made it look unordered ("PD Model A..F, LGD Model A, ...").
+    # Safe to re-sort -- every chart and table that cares keys on MODEL_GROUPS
+    # itself rather than on this list's order.
+    return [{"label": model, "value": model}
+            for model in alphabetical({model for _group, model in groups})]
+
+
+def _model_attribute(data: dict, model: str, field: str) -> str:
+    """One model's ``region``/``portfolio`` from the MEV catalog ("" if absent)."""
+    return str(((data.get("mev_catalog") or {}).get(model) or {}).get(field, "")).strip()
+
+
+def models_in_scope(data: dict, region: str | None = None, portfolio: str | None = None) -> list[str]:
+    """Overview models left after the Region/Portfolio scope.
+
+    A model with a blank attribute stays in scope for every value of it: Loss's
+    "All Models" is portfolio-wide and carries neither, so excluding blanks
+    would drop the whole Loss workstream from every selection.
+    """
+    models = [option["value"] for option in overview_model_options(data, "All")]
+    for field, wanted in (("region", region), ("portfolio", portfolio)):
+        value = str(wanted or "").strip()
+        if not value or value == "All":
+            continue
+        models = [m for m in models if (_model_attribute(data, m, field) or value) == value]
+    return models
+
+
+def _distinct_values(data: dict, field: str, models: list[str]) -> list[str]:
+    """Distinct non-blank values of ``field``, A-Z.
+
+    Previously ordered by how many models carried each value, so the default
+    (these filters have no "All") landed on the most-covered slice. That left
+    Overview opening on a different Region from the performance tabs, whose
+    Region list has always been a plain sort -- so A-Z here both follows the
+    one ordering rule and makes the five tabs agree on where they start.
+    """
+    values = {value for model in models if (value := _model_attribute(data, model, field))}
+    return alphabetical(values)
+
+
+def overview_region_options(data: dict) -> list[dict[str, str]]:
+    """Regions that actually have models. No "All": the scope is always concrete."""
+    models = [option["value"] for option in overview_model_options(data, "All")]
+    return [{"label": value, "value": value} for value in _distinct_values(data, "region", models)]
+
+
+def overview_portfolio_options(data: dict, region: str | None = None) -> list[dict[str, str]]:
+    """Portfolios with models in the selected region."""
+    models = models_in_scope(data, region=region)
+    return [{"label": value, "value": value} for value in _distinct_values(data, "portfolio", models)]
+
+
+def _cycles_available(data: dict, region: str | None, portfolio: str | None) -> set[str]:
+    model_cycles = overview_model_cycles(data)
+    return {
+        cycle
+        for model in models_in_scope(data, region=region, portfolio=portfolio)
+        for cycle in model_cycles.get(model, set())
+    }
+
+
+def overview_use_case_options(
+    data: dict, region: str | None = None, portfolio: str | None = None,
+) -> list[dict[str, str]]:
+    """Model Use Cases with data inside the Region/Portfolio scope."""
+    from ....shared.repositories.filters_config import model_use_case_options, use_case_of
+
+    covered = {use_case_of(cycle) for cycle in _cycles_available(data, region, portfolio)}
+    return [option for option in model_use_case_options() if option["value"] in covered]
+
+
+def overview_cycle_options(
+    data: dict,
+    region: str | None = None,
+    portfolio: str | None = None,
+    use_case: str | None = None,
+) -> list[dict[str, str]]:
+    """Reporting Cycles with data inside the Region/Portfolio/Use Case scope.
+
+    Labels are the bare cycle; values stay the composite, which is the join key
+    everything downstream uses.
+    """
+    from ....shared.repositories.filters_config import reporting_cycle_options
+
+    available = _cycles_available(data, region, portfolio)
+    return [
+        option for option in reporting_cycle_options(use_case)
+        if option["value"] in available
+    ]
 
 
 def overview_model_cycles(data: dict) -> dict[str, set[str]]:

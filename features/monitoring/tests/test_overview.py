@@ -582,17 +582,24 @@ def test_overview_initial_filter_snapshot_matches_visible_monitoring_point():
     snapshot = _overview_filter_snapshot("CCAR 2026", "2026Q3", "All")
     invalid_snapshot = _overview_filter_snapshot("CCAR 2026", "2024Q4", "PD")
 
+    # region/portfolio default to "All" -- they were added when those two
+    # filters joined the top bar, and callers that omit them still get a
+    # complete snapshot.
     assert snapshot == {
         "reporting_cycle": "CCAR 2026",
         "monitoring_point": "2026Q3",
         "segment_model_group": "All",
         "models": [],
+        "region": "All",
+        "portfolio": "All",
     }
     assert invalid_snapshot == {
         "reporting_cycle": "CCAR 2026",
         "monitoring_point": "2026Q3",
         "segment_model_group": "PD",
         "models": [],
+        "region": "All",
+        "portfolio": "All",
     }
 
 

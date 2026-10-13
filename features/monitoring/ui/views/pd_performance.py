@@ -1999,7 +1999,7 @@ def _build_mev_range_section(
                     "show_rag": False,
                     "tooltip": (
                         "MEV Range charts, scenario date, and post-scenario RAG are based on the selected "
-                        "Model Use Case / Cycle value. The Monitoring Point controls the PD performance snapshot, "
+                        "Reporting Cycle value. The Monitoring Point controls the PD performance snapshot, "
                         "but it does not move the MEV scenario Q0 date."
                     ),
                 },
@@ -3648,7 +3648,7 @@ def build_pd_apply_prompt() -> html.Section:
                                         className="saas-getting-started-highlights",
                                         children=[
                                             html.Span("1. Narrow by Region/Portfolio/Model Group, then Model and/or Segment (each narrows the other).", className="saas-getting-started-highlight"),
-                                            html.Span("2. Choose Model Use Case / Cycle, Monitoring Point, and Scenario.", className="saas-getting-started-highlight"),
+                                            html.Span("2. Choose Model Use Case, Reporting Cycle, Monitoring Point, and Scenario.", className="saas-getting-started-highlight"),
                                             html.Span("3. Click Apply filters to load the dashboard.", className="saas-getting-started-highlight"),
                                         ],
                                     ),
@@ -3676,7 +3676,7 @@ def build_pd_apply_prompt() -> html.Section:
                                         ),
                                     ]),
                                     html.Li([
-                                        html.Strong("Pick a Model Use Case / Cycle. "),
+                                        html.Strong("Pick a Model Use Case, then a Reporting Cycle. "),
                                         "Choose the cycle to review (e.g. CCAR 2026). This sets which monitoring points and "
                                         "precomputed metrics are available for every section.",
                                     ]),

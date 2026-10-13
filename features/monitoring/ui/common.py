@@ -33,10 +33,29 @@ def build_single_select_options(*, options: list[dict] | None, value: str | None
     ]
 
 
-def build_single_select_shell(*, options: list[dict] | None, value: str | None, filter_key: str) -> tuple[str, list]:
-    """Return the current toggle label + option buttons for a single-select shell."""
+def filter_options_by_search(options: list[dict] | None, search: str | None) -> list[dict]:
+    """``options`` narrowed to those matching ``search`` (label or value)."""
+    text = str(search or "").strip().lower()
+    if not text:
+        return list(options or [])
+    return [
+        option for option in (options or [])
+        if text in str(option.get("label", "")).lower()
+        or text in str(option.get("value", "")).lower()
+    ]
+
+
+def build_single_select_shell(
+    *, options: list[dict] | None, value: str | None, filter_key: str, search: str | None = None,
+) -> tuple[str, list]:
+    """Return the current toggle label + option buttons for a single-select shell.
+
+    ``search`` hides options; it never removes them. The toggle label is resolved
+    against the **full** list, so a selection stays readable while filtered out
+    of view -- the same rule the SAAS/Overview model checklists follow.
+    """
     return _option_label(options, value), build_single_select_options(
-        options=options,
+        options=filter_options_by_search(options, search),
         value=value,
         filter_key=filter_key,
     )
@@ -54,8 +73,15 @@ def register_single_select_callbacks(
     toggle_id: str,
     menu_id: str,
     filter_key: str,
+    search_id: str | None = None,
 ) -> None:
-    """Wire a PD-style custom dropdown shell to a hidden ``dcc.Dropdown`` value."""
+    """Wire a PD-style custom dropdown shell to a hidden ``dcc.Dropdown`` value.
+
+    Pass ``search_id`` for a menu built with a search box. The rebuilt children
+    then go to the menu's inner option-list container rather than to the menu
+    itself, so the search input stays mounted while you type -- see
+    ``controls.single_select_option_list_id``.
+    """
 
     @app.callback(
         Output(menu_id, "className"),
@@ -96,15 +122,31 @@ def register_single_select_callbacks(
             return no_update, no_update
         return triggered["value"], _MENU_CLASS
 
-    @app.callback(
-        Output(toggle_id, "children"),
-        Output(menu_id, "children"),
-        Input(value_id, "value"),
-        Input(value_id, "options"),
-    )
-    def sync_single_select_shell(value, options):
-        return build_single_select_shell(
-            options=options,
-            value=value,
-            filter_key=filter_key,
+    if search_id is None:
+        @app.callback(
+            Output(toggle_id, "children"),
+            Output(menu_id, "children"),
+            Input(value_id, "value"),
+            Input(value_id, "options"),
         )
+        def sync_single_select_shell(value, options):
+            return build_single_select_shell(
+                options=options,
+                value=value,
+                filter_key=filter_key,
+            )
+    else:
+        @app.callback(
+            Output(toggle_id, "children"),
+            Output(controls.single_select_option_list_id(menu_id), "children"),
+            Input(value_id, "value"),
+            Input(value_id, "options"),
+            Input(search_id, "value"),
+        )
+        def sync_searchable_single_select_shell(value, options, search):
+            return build_single_select_shell(
+                options=options,
+                value=value,
+                filter_key=filter_key,
+                search=search,
+            )

@@ -28,6 +28,50 @@ DUMMY_MEV_MODEL_CHARACTERISTIC_SHEET_NAME = "model_names"
 DUMMY_MEV_MODEL_NAME_COLUMN = "Model Name"
 
 # ---------------------------------------------------------------------------
+# Model use case / reporting cycle columns
+# ---------------------------------------------------------------------------
+# Spelled identically in both workbooks -- portfolio.xlsx (every sheet) and
+# dummy_mev_data.xlsx's model_names sheet -- so the same three names mean the
+# same three things wherever they appear:
+#
+#   Run For         the composite, e.g. "CCAR 2026" / "CECL 2025Q1"
+#   Model Use Case  the use case part, e.g. "ST - CCAR" / "CECL"
+#   Reporting Cycle the bare cycle part, e.g. "2026" / "2025Q1"
+RUN_FOR_COLUMN = "Run For"
+MODEL_USE_CASE_COLUMN = "Model Use Case"
+REPORTING_CYCLE_COLUMN = "Reporting Cycle"
+
+# The grain columns on portfolio.xlsx's metrics/projection sheets. Named
+# METRICS_* to stay clear of ``SEGMENT_COLUMN`` above, which is the *facility*
+# sheet's segment column ("Portfolio") and a different thing entirely.
+METRICS_QUARTER_COLUMN = "Quarter"
+# The as-of reporting date a metrics row belongs to. Only PD has it, because
+# only PD has a ``horizon`` dimension: its ``Quarter`` is the *cohort start*,
+# which sits one year back for 1y/nco_1y rows and two years back for 2y rows,
+# so the three horizons of one monitoring point carry three different quarters.
+# LGD/EAD/Loss have no horizon, so their ``Quarter`` is already the as-of and
+# they have no separate column -- readers fall back to it.
+MONITORING_POINT_COLUMN = "monitoring_point"
+
+
+# Where PD's cohort-start quarter lands after the read seam promotes
+# ``monitoring_point`` into ``quarter`` -- see
+# ``shared.domain.reporting_cycle._promote_monitoring_point``.
+COHORT_QUARTER_KEY = "cohort_quarter"
+METRICS_MODEL_COLUMN = "Model"
+METRICS_SEGMENT_COLUMN = "Segment"
+
+# Internal frame/store keys -- NOT workbook column names. ``reporting_cycle``
+# has always meant the *composite* here and is the join key behind every store,
+# figure, export and Dash element ID, so portfolio frames are swapped into this
+# shape on read; see ``shared.domain.reporting_cycle.normalize_portfolio_columns``.
+REPORTING_CYCLE_KEY = "reporting_cycle"
+CYCLE_KEY = "cycle"
+QUARTER_KEY = "quarter"
+MODEL_KEY = "model"
+SEGMENT_KEY = "segment"
+
+# ---------------------------------------------------------------------------
 # Portfolio column names (from monitoring_config.yaml -> data:)
 # ---------------------------------------------------------------------------
 DATE_COLUMN = "MONTH END-SNAPSHOT DATE"
@@ -151,11 +195,3 @@ PD_RAG_COLOR = {
 def pd_rag_color(rag: str) -> str:
     return PD_RAG_COLOR.get(rag, PD_RAG_COLOR["N/A"])
 
-
-# ---------------------------------------------------------------------------
-# MEV palette (from PD_MEV_PALETTE)
-# ---------------------------------------------------------------------------
-PD_MEV_PALETTE = [
-    "#0f766e", "#2563eb", "#7c3aed", "#ea580c",
-    "#0891b2", "#be123c", "#a16207", "#334155",
-]

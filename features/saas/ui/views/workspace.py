@@ -10,8 +10,19 @@ from .....shared.ui import controls as shared_filters
 from .....shared.ui.charts import SAAS_SCENARIO_LABEL_MAP
 from .....shared.ui.loading import build_dashboard_loading_shell
 from .....shared.domain.calculations import get_pd_range_preset, get_pd_range_selection
+from .....shared.domain.filter_order import alphabetical, composite_cycles_newest_first
 from ...data_access import SAAS_PAGE_DATA
 from ...domain import selectors
+
+# The combined "Model Use Case / Cycle" control is split in two, as on the
+# monitoring tabs. RUN_FOR_ID keeps its id and its **composite value**
+# ("CCAR 2026") -- that is the join key behind every store, export and
+# comparison -- and only its label becomes the bare cycle. The Model Use Case
+# half is a new control that narrows it.
+MODEL_USE_CASE_ID = "saas-model-use-case"
+MODEL_USE_CASE_TOGGLE_ID = "saas-model-use-case-toggle"
+MODEL_USE_CASE_MENU_ID = "saas-model-use-case-menu"
+MODEL_USE_CASE_FILTER_KEY = "saas-model-use-case"
 
 RUN_FOR_ID = "saas-run-for"
 RUN_FOR_TOGGLE_ID = "saas-run-for-toggle"
@@ -109,11 +120,11 @@ HISTORICAL_STATS_ID = "saas-historical-stats"
 SEGMENT_ALL_VALUE = "all"
 DEFAULT_SEGMENT_VALUES = [SEGMENT_ALL_VALUE]
 REGION_ALL_VALUE = "all"
-DEFAULT_REGION = REGION_ALL_VALUE
+DEFAULT_REGION = shared_filters.UNSELECTED
 MODEL_GROUP_ALL_VALUE = "all"
 DEFAULT_MODEL_GROUP = MODEL_GROUP_ALL_VALUE
 PORTFOLIO_ALL_VALUE = "all"
-DEFAULT_PORTFOLIO = PORTFOLIO_ALL_VALUE
+DEFAULT_PORTFOLIO = shared_filters.UNSELECTED
 SUBNAV_VIEW_OPTIONS = [
     {"label": "History", "value": "history"},
     {"label": "Projection", "value": "projection"},
@@ -180,9 +191,59 @@ def format_segment_label(segment_value: str | None) -> str:
     return segment_value
 
 
-def _build_run_for_options() -> list[dict]:
-    values = SAAS_PAGE_DATA.get("run_for_values") or []
-    return [{"label": value, "value": value} for value in values if value]
+def _run_fors_in_scope(region: str | None = None, portfolio: str | None = None) -> set[str]:
+    """Composite cycles that have at least one model in the Region/Portfolio.
+
+    An unanswered ("") or "all" filter narrows nothing. A model with a blank
+    attribute stays in scope for every value of it, the same rule the model
+    filters already use -- so a portfolio-less model never disappears the
+    moment a portfolio is picked.
+    """
+    rows = SAAS_PAGE_DATA.get("scope_run_fors") or []
+    wanted_region = "" if not selectors.is_region_active(region) else str(region)
+    wanted_portfolio = "" if not selectors.is_portfolio_active(portfolio) else str(portfolio)
+    out = set()
+    for row_region, row_portfolio, composite in rows:
+        if wanted_region and row_region and row_region != wanted_region:
+            continue
+        if wanted_portfolio and row_portfolio and row_portfolio != wanted_portfolio:
+            continue
+        out.add(composite)
+    return out
+
+
+def _model_use_case_options(region: str | None = None, portfolio: str | None = None) -> list[dict]:
+    """Model Use Case options, A-Z, for the cycles the scope actually has."""
+    parts = SAAS_PAGE_DATA.get("run_for_parts") or {}
+    in_scope = _run_fors_in_scope(region, portfolio)
+    use_cases = {parts[c]["use_case"] for c in in_scope if c in parts}
+    return [{"label": value, "value": value} for value in alphabetical(use_cases)]
+
+
+def _build_run_for_options(region: str | None = None,
+                           portfolio: str | None = None,
+                           use_case: str | None = None) -> list[dict]:
+    """Reporting Cycle options, most recent first.
+
+    **Label is the bare cycle, value stays the composite** -- everything
+    downstream (the applied store, Compare To, every export) joins on the
+    composite, so only the label changes. Narrowed by Region/Portfolio and by
+    the selected Model Use Case, so the bar cannot offer a cycle with no models
+    behind it.
+    """
+    parts = SAAS_PAGE_DATA.get("run_for_parts") or {}
+    values = [v for v in (SAAS_PAGE_DATA.get("run_for_values") or []) if v]
+    in_scope = _run_fors_in_scope(region, portfolio)
+    wanted = str(use_case or "").strip()
+    out = []
+    for composite in composite_cycles_newest_first(values):
+        if composite not in in_scope:
+            continue
+        part = parts.get(composite)
+        if wanted and (not part or part["use_case"] != wanted):
+            continue
+        out.append({"label": part["cycle"] if part else composite, "value": composite})
+    return out
 
 
 def _build_segment_options() -> list[dict]:
@@ -196,11 +257,11 @@ def _build_segment_options() -> list[dict]:
 
 def _build_region_options() -> list[dict]:
     values = SAAS_PAGE_DATA.get("region_values") or []
-    return [{"label": "All", "value": REGION_ALL_VALUE}] + [
-        {"label": value, "value": value}
-        for value in values
-        if value
-    ]
+    return shared_filters.with_placeholder(
+        [{"label": "All", "value": REGION_ALL_VALUE}]
+        + [{"label": value, "value": value} for value in values if value],
+        "region",
+    )
 
 
 def _build_model_group_options() -> list[dict]:
@@ -214,17 +275,37 @@ def _build_model_group_options() -> list[dict]:
 
 def _build_portfolio_options() -> list[dict]:
     values = SAAS_PAGE_DATA.get("portfolio_values") or []
-    return [{"label": "All", "value": PORTFOLIO_ALL_VALUE}] + [
-        {"label": value, "value": value}
-        for value in values
-        if value
-    ]
+    return shared_filters.with_placeholder(
+        [{"label": "All", "value": PORTFOLIO_ALL_VALUE}]
+        + [{"label": value, "value": value} for value in values if value],
+        "portfolio",
+    )
 
 
-RUN_FOR_OPTIONS = _build_run_for_options()
-DEFAULT_RUN_FOR_VALUE = RUN_FOR_OPTIONS[0]["value"] if RUN_FOR_OPTIONS else ""
+# --- Scope row: opens with nothing answered --------------------------------
+# Region, Portfolio, Model Use Case and Reporting Cycle each lead with a
+# "Select ..." placeholder and hold no value; Apply stays disabled until all
+# four are answered. "All" survives as a *real* option on Region/Portfolio --
+# unlike the monitoring tabs, an all-models run is a normal SAAS analysis -- so
+# the two readings stay distinct: "Select region" is unanswered, "All" is
+# answered with every region.
+#
+# The Focus and View rows keep their defaults. They are the model picture and
+# the presentation, both of which have a sensible starting point; requiring
+# someone to answer "MEV Label" before any chart appears would be friction
+# with no analytic meaning.
+RUN_FOR_OPTIONS = shared_filters.with_placeholder(_build_run_for_options(), "reporting-cycle")
+DEFAULT_RUN_FOR_VALUE = shared_filters.UNSELECTED
+MODEL_USE_CASE_OPTIONS = shared_filters.with_placeholder(_model_use_case_options(), "model-use-case")
+DEFAULT_MODEL_USE_CASE = shared_filters.UNSELECTED
+# Compare To labels each cycle with its **composite** ("CCAR 2026"), not the
+# bare cycle the Reporting Cycle filter shows. Two reasons: it names a cycle
+# other than the one on screen, so the family matters; and
+# selectors.build_compare_against_options -- which replaces this list the
+# moment Reporting Cycle is answered -- labels them that way, so matching it
+# here avoids the labels changing under the user on first interaction.
 COMPARE_AGAINST_OPTIONS = [{"label": "None", "value": COMPARE_AGAINST_NONE_VALUE}] + [
-    {"label": option["label"], "value": option["value"]}
+    {"label": option["value"], "value": option["value"]}
     for option in RUN_FOR_OPTIONS
     if option.get("value") and option["value"] != DEFAULT_RUN_FOR_VALUE
 ]
@@ -462,7 +543,7 @@ def _build_model_name_options() -> list[dict]:
             continue
         seen.add(label)
         options.append({"label": label, "value": label})
-    return options
+    return alphabetical(options, key=lambda option: option["label"])
 
 
 def _default_model_selection() -> list[str]:
@@ -547,9 +628,14 @@ def _build_top_bar() -> html.Div:
                 style={"flex": "1"},
                 children=[
                     html.Div("Scenario Analysis as a Service (SAAS)", className="monitoring-dashboard-title"),
+                    # Three captioned rows, mirroring the monitoring tabs:
+                    # Scope (which data) over Focus (which models) over View
+                    # (how to draw it). Three rather than two because SAAS has
+                    # 11 controls to a monitoring tab's 8.
                     html.Div(
-                        className="monitoring-controls saas-top-filter-row saas-primary-filter-row",
+                        className="monitoring-controls saas-top-filter-row saas-scope-filter-row",
                         children=[
+                            shared_filters.build_scope_caption(),
                             _build_single_select_filter(
                                 "Region",
                                 value_id=REGION_ID,
@@ -568,6 +654,31 @@ def _build_top_bar() -> html.Div:
                                 options=PORTFOLIO_OPTIONS,
                                 value=DEFAULT_PORTFOLIO,
                             ),
+                            _build_single_select_filter(
+                                "Model Use Case",
+                                value_id=MODEL_USE_CASE_ID,
+                                toggle_id=MODEL_USE_CASE_TOGGLE_ID,
+                                menu_id=MODEL_USE_CASE_MENU_ID,
+                                filter_key=MODEL_USE_CASE_FILTER_KEY,
+                                options=MODEL_USE_CASE_OPTIONS,
+                                value=DEFAULT_MODEL_USE_CASE,
+                            ),
+                            _build_single_select_filter(
+                                "Reporting Cycle",
+                                value_id=RUN_FOR_ID,
+                                toggle_id=RUN_FOR_TOGGLE_ID,
+                                menu_id=RUN_FOR_MENU_ID,
+                                filter_key=RUN_FOR_FILTER_KEY,
+                                options=RUN_FOR_OPTIONS,
+                                value=DEFAULT_RUN_FOR_VALUE,
+                            ),
+                        ],
+                    ),
+                    # --- FOCUS: which models, within that scope --------------
+                    html.Div(
+                        className="monitoring-controls saas-top-filter-row saas-focus-filter-row",
+                        children=[
+                            shared_filters.build_focus_caption(),
                             _build_single_select_filter(
                                 "Model Group",
                                 value_id=MODEL_GROUP_ID,
@@ -597,34 +708,6 @@ def _build_top_bar() -> html.Div:
                                 value=DEFAULT_SEGMENT_VALUES,
                                 button_label="All",
                             ),
-                            _build_single_select_filter(
-                                "Model Use Case / Cycle",
-                                value_id=RUN_FOR_ID,
-                                toggle_id=RUN_FOR_TOGGLE_ID,
-                                menu_id=RUN_FOR_MENU_ID,
-                                filter_key=RUN_FOR_FILTER_KEY,
-                                options=RUN_FOR_OPTIONS,
-                                value=DEFAULT_RUN_FOR_VALUE,
-                                min_width="260px",
-                            ),
-                            html.Div(
-                                className="monitoring-filter saas-top-filter-action",
-                                children=[
-                                    html.Div(
-                                        className="pd-mev-filter-actions",
-                                        children=[
-                                            html.Button(
-                                                "Apply filters",
-                                                id=APPLY_FILTERS_ID,
-                                                className="btn pd-mev-filter-reset saas-top-filter-reset saas-top-filter-apply",
-                                                n_clicks=0,
-                                                type="button",
-                                                title="Load the SAAS charts using the selected filters.",
-                                            ),
-                                        ],
-                                    ),
-                                ],
-                            ),
                         ],
                     ),
                     html.Div(
@@ -632,9 +715,14 @@ def _build_top_bar() -> html.Div:
                         id=FILTER_HELP_ID,
                         className="monitoring-filter-help",
                     ),
+                    # --- VIEW: how the scope is drawn ------------------------
+                    # Apply closes this row rather than the Scope row, matching
+                    # the monitoring tabs, so the controls and their action read
+                    # as one sequence top to bottom.
                     html.Div(
-                        className="monitoring-controls saas-top-filter-row saas-secondary-filter-row",
+                        className="monitoring-controls saas-top-filter-row saas-secondary-filter-row saas-view-filter-row",
                         children=[
+                            shared_filters.build_view_caption(),
                             _build_checklist_filter(
                                 "Compare To",
                                 toggle_id=COMPARE_AGAINST_TOGGLE_ID,
@@ -712,6 +800,24 @@ def _build_top_bar() -> html.Div:
                                 value=DEFAULT_HISTORICAL_STATS_VALUE,
                                 min_width="220px",
                                 wrapper_class_name="monitoring-filter saas-historical-stats-filter is-hidden",
+                            ),
+                            html.Div(
+                                className="monitoring-filter saas-top-filter-action",
+                                children=[
+                                    html.Div(
+                                        className="pd-mev-filter-actions",
+                                        children=[
+                                            html.Button(
+                                                "Apply filters",
+                                                id=APPLY_FILTERS_ID,
+                                                className="btn pd-mev-filter-reset saas-top-filter-reset saas-top-filter-apply",
+                                                n_clicks=0,
+                                                type="button",
+                                                title="Load the SAAS charts using the selected filters.",
+                                            ),
+                                        ],
+                                    ),
+                                ],
                             ),
                         ],
                     ),

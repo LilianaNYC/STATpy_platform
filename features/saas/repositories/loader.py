@@ -19,9 +19,12 @@ import pandas as pd
 
 from ....shared.domain import constants as config
 from ....config.settings import settings
+from ....shared.domain.filter_order import alphabetical
+from ....shared.domain.reporting_cycle import split_run_for
 from ....shared.text import cell_str as _cell_str
 from ....shared.text import normalize_model_name as _normalize_model_name
 from ....shared.text import ordered_unique_strings as _ordered_unique_strings
+from ....shared.repositories.tables import read_table
 from ...monitoring.repositories.loader import load_pd_mev_catalog
 
 log = logging.getLogger(__name__)
@@ -30,9 +33,8 @@ log = logging.getLogger(__name__)
 def load_saas_model_names() -> list[str]:
     """Load SAAS model-name filter options from the dummy MEV workbook."""
     try:
-        df = pd.read_excel(
-            settings.dummy_mev_data_file,
-            sheet_name=config.DUMMY_MEV_TRANSFORMED_DESCRIPTION_SHEET_NAME,
+        df = read_table(
+            config.DUMMY_MEV_TRANSFORMED_DESCRIPTION_SHEET_NAME,
             usecols=[config.DUMMY_MEV_MODEL_NAME_COLUMN],
         )
         model_names: list[str] = []
@@ -110,6 +112,8 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
         "model_group_values": [],
         "portfolio_values": [],
         "run_for_values": [],
+        "run_for_parts": {},
+        "scope_run_fors": [],
         "transformed_mev_names": set(),
         "raw_mev_names": set(),
         "mev_label_map": {},
@@ -121,22 +125,10 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
     }
 
     try:
-        transformed_df = pd.read_excel(
-            settings.dummy_mev_data_file,
-            sheet_name=config.DUMMY_MEV_TRANSFORMED_DESCRIPTION_SHEET_NAME,
-        )
-        raw_df = pd.read_excel(
-            settings.dummy_mev_data_file,
-            sheet_name=config.DUMMY_MEV_RAW_DESCRIPTION_SHEET_NAME,
-        )
-        time_series_df = pd.read_excel(
-            settings.dummy_mev_data_file,
-            sheet_name=config.DUMMY_MEV_TIME_SERIES_SHEET_NAME,
-        )
-        model_characteristic_df = pd.read_excel(
-            settings.dummy_mev_data_file,
-            sheet_name=config.DUMMY_MEV_MODEL_CHARACTERISTIC_SHEET_NAME,
-        )
+        transformed_df = read_table(config.DUMMY_MEV_TRANSFORMED_DESCRIPTION_SHEET_NAME)
+        raw_df = read_table(config.DUMMY_MEV_RAW_DESCRIPTION_SHEET_NAME)
+        time_series_df = read_table(config.DUMMY_MEV_TIME_SERIES_SHEET_NAME)
+        model_characteristic_df = read_table(config.DUMMY_MEV_MODEL_CHARACTERISTIC_SHEET_NAME)
     except Exception as exc:  # noqa: BLE001 - keep the page available if workbook loading fails
         log.warning("Unable to load SAAS MEV workbook data from %s: %s", settings.dummy_mev_data_file, exc)
         return empty_payload
@@ -257,18 +249,20 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
             portfolios_for_model = model_portfolio_map.setdefault(model_name, [])
             if portfolio not in portfolios_for_model:
                 portfolios_for_model.append(portfolio)
-    segment_values = _ordered_unique_strings(
+    # A-Z rather than the workbook's row order, which is an authoring artefact
+    # and surfaced as an apparently random menu ("All, HBUS, EU").
+    segment_values = alphabetical(_ordered_unique_strings(
         model_characteristic_df.get("Segment Name", pd.Series(dtype=object)).tolist()
-    )
-    region_values = _ordered_unique_strings(
+    ))
+    region_values = alphabetical(_ordered_unique_strings(
         model_characteristic_df.get("Region", pd.Series(dtype=object)).tolist()
-    )
-    model_group_values = _ordered_unique_strings(
+    ))
+    model_group_values = alphabetical(_ordered_unique_strings(
         model_characteristic_df.get("Model Type", pd.Series(dtype=object)).tolist()
-    )
-    portfolio_values = _ordered_unique_strings(
+    ))
+    portfolio_values = alphabetical(_ordered_unique_strings(
         model_characteristic_df.get("Portfolio", pd.Series(dtype=object)).tolist()
-    )
+    ))
     model_characteristic_df["Development Date"] = pd.to_datetime(
         model_characteristic_df.get("Development Date"),
         dayfirst=False,
@@ -293,6 +287,32 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
     run_for_values = _ordered_unique_strings(
         time_series_df.get("Run For", pd.Series(dtype=object)).tolist()
     )
+
+    # The Model Use Case / Reporting Cycle split needs each composite cycle
+    # broken into its two parts, and needs to know which Region/Portfolio a
+    # composite actually has models for -- otherwise the bar can offer a cycle
+    # with nothing behind it. Both come from model_names, which carries all
+    # five columns, so the workbook stays authoritative rather than the
+    # composite being split on a space.
+    run_for_parts: dict[str, dict[str, str]] = {}
+    scope_run_fors: list[tuple[str, str, str]] = []
+    if config.RUN_FOR_COLUMN in model_characteristic_df.columns:
+        _seen: set[tuple[str, str, str]] = set()
+        for row in model_characteristic_df.to_dict(orient="records"):
+            composite = _cell_str(row.get(config.RUN_FOR_COLUMN))
+            # Derived from the composite, like the monitoring tabs, rather than
+            # read from this sheet's own Model Use Case column -- that column
+            # says "ST - CCAR" where Run For says "CCAR", so reading it would
+            # have the two dashboards label the same cycle differently.
+            split = split_run_for(composite)
+            if not composite or split is None:
+                continue
+            use_case, cycle = split
+            run_for_parts.setdefault(composite, {"use_case": use_case, "cycle": cycle})
+            key = (_cell_str(row.get("Region")), _cell_str(row.get("Portfolio")), composite)
+            if key not in _seen:
+                _seen.add(key)
+                scope_run_fors.append(key)
     transformed_mev_names = {
         value for value in _ordered_unique_strings(
             transformed_df.get("US Mnemonic", pd.Series(dtype=object)).tolist()
@@ -328,6 +348,8 @@ def load_saas_mev_workbook_data() -> dict[str, Any]:
         "model_group_values": model_group_values,
         "portfolio_values": portfolio_values,
         "run_for_values": run_for_values,
+        "run_for_parts": run_for_parts,
+        "scope_run_fors": scope_run_fors,
         "transformed_mev_names": transformed_mev_names,
         "raw_mev_names": raw_mev_names,
         "mev_label_map": mev_label_map,

@@ -211,7 +211,7 @@ def build_getting_started_prompt(label: str, full_name: str) -> html.Section:
                                         className="saas-getting-started-highlights",
                                         children=[
                                             html.Span("1. Narrow by Region/Portfolio/Model Group, then Model and/or Segment (each narrows the other).", className="saas-getting-started-highlight"),
-                                            html.Span("2. Choose Model Use Case / Cycle, Monitoring Point, and Scenario.", className="saas-getting-started-highlight"),
+                                            html.Span("2. Choose Model Use Case, Reporting Cycle, Monitoring Point, and Scenario.", className="saas-getting-started-highlight"),
                                             html.Span("3. Click Apply filters to load the dashboard.", className="saas-getting-started-highlight"),
                                         ],
                                     ),
@@ -239,7 +239,7 @@ def build_getting_started_prompt(label: str, full_name: str) -> html.Section:
                                         ),
                                     ]),
                                     html.Li([
-                                        html.Strong("Pick a Model Use Case / Cycle. "),
+                                        html.Strong("Pick a Model Use Case, then a Reporting Cycle. "),
                                         "Choose the cycle to review (e.g. CCAR 2026). This sets which monitoring points and "
                                         "precomputed metrics are available for every section.",
                                     ]),

@@ -14,6 +14,11 @@ from .....shared.ui.charts import (
     build_ead_discrimination_rag_trend_figure,
     build_ead_metric_trend_figure,
 )
+from .....shared.ui.controls import (
+    UNSELECTED as _UNSELECTED,
+    keep_or_unselected as _keep_or_unselected,
+    with_placeholder as _with_placeholder,
+)
 from .....shared.ui import controls as shared_filters
 from .....shared.ui.controls import build_chart_header, build_section_filter_bar, build_section_filter_item
 from .....shared.ui.loading import build_dashboard_loading_shell
@@ -67,6 +72,13 @@ from .post_subjective import (
 CONTENT_ID = "ead-dashboard-content"
 APPLY_FILTERS_ID = "ead-apply-filters"
 APPLIED_FILTERS_STORE_ID = "ead-applied-filters-store"
+MODEL_USE_CASE_ID = "ead-model-use-case"
+MODEL_USE_CASE_TOGGLE_ID = "ead-model-use-case-toggle"
+MODEL_USE_CASE_MENU_ID = "ead-model-use-case-menu"
+MODEL_USE_CASE_FILTER_KEY = "ead-model-use-case"
+# Reporting Cycle keeps its element IDs: the *value* stays the composite
+# ("CCAR 2026"), which is the join key downstream. Only the label is now
+# the bare cycle from the workbook's Reporting Cycle column.
 REPORTING_CYCLE_ID = "ead-reporting-cycle"
 REPORTING_CYCLE_TOGGLE_ID = "ead-reporting-cycle-toggle"
 REPORTING_CYCLE_MENU_ID = "ead-reporting-cycle-menu"
@@ -80,6 +92,7 @@ SEGMENT_DROPDOWN_ID = "ead-segment-dropdown"
 MONITORING_POINT_DROPDOWN_ID = "ead-monitoring-point-dropdown"
 MODEL_TOGGLE_ID = "ead-model-toggle"
 MODEL_MENU_ID = "ead-model-menu"
+MODEL_SEARCH_ID = "ead-model-search"
 SEGMENT_TOGGLE_ID = "ead-segment-toggle"
 SEGMENT_MENU_ID = "ead-segment-menu"
 MONITORING_POINT_TOGGLE_ID = "ead-monitoring-point-toggle"
@@ -95,10 +108,6 @@ PORTFOLIO_ID = "ead-portfolio"
 PORTFOLIO_TOGGLE_ID = "ead-portfolio-toggle"
 PORTFOLIO_MENU_ID = "ead-portfolio-menu"
 PORTFOLIO_FILTER_KEY = "ead-portfolio"
-MODEL_GROUP_ID = "ead-model-group"
-MODEL_GROUP_TOGGLE_ID = "ead-model-group-toggle"
-MODEL_GROUP_MENU_ID = "ead-model-group-menu"
-MODEL_GROUP_FILTER_KEY = "ead-model-group"
 EAD_SUBNAV_ID = "ead-subnav"
 RANGE_STORE_ID = "ead-range-store"
 SCENARIO_RANKING_STORE_ID = "ead-scenario-ranking-store"
@@ -2042,7 +2051,13 @@ def page_layout(search: str = "") -> list:
     """
     from .....shared.domain.mev_range import model_field_values
     from .....shared.deep_link import parse_deep_link_params
-    from .....shared.repositories.filters_config import load_filter_config, model_names, segment_values
+    from .....shared.repositories.filters_config import (
+        cycle_options_for_cycles,
+        load_filter_config,
+        model_names,
+        segment_values,
+        use_case_options_for_cycles,
+    )
     from ...domain.ead import resolve_ead_segment, set_ead_metrics
     initial = parse_deep_link_params(search)
     data = PD_PERFORMANCE_DATA
@@ -2051,18 +2066,31 @@ def page_layout(search: str = "") -> list:
     segment_values_list = segment_values()
     segment_options = ["All", *segment_values_list]
     mev_catalog = data.get("mev_catalog") or {}
-    region_options = [{"label": "All", "value": "All"}] + [
+    # Region/Portfolio/Model Use Case/Reporting Cycle carry no "All": each offers
+    # only values with data, so the bar can never show a combination without rows
+    # behind it. Ordered by coverage so the default lands on the widest slice.
+    region_options = [
         {"label": value, "value": value} for value in model_field_values(mev_catalog, "region", model_options)
     ]
-    portfolio_options = [{"label": "All", "value": "All"}] + [
+    portfolio_options = [
         {"label": value, "value": value} for value in model_field_values(mev_catalog, "portfolio", model_options)
     ]
-    reporting_cycle_options = [{"label": c["label"], "value": c["value"]} for c in cfg["reporting_cycles"]]
-    scenario_options = [{"label": s["label"], "value": s["value"]} for s in cfg["scenarios"]]
-    default_cycle = reporting_cycle_options[0]["value"]
-    default_scenario = scenario_options[0]["value"]
-    selected_scenario = initial.get("scenario") if initial.get("scenario") in {s["value"] for s in scenario_options} else default_scenario
-    selected_cycle = initial.get("cycle") if initial.get("cycle") in {c["value"] for c in reporting_cycle_options} else default_cycle
+    # The bar opens with nothing answered: each filter leads with its "Select …"
+    # placeholder and only a deep link (``initial``) pre-fills anything. See the
+    # UNSELECTED note in shared.ui.controls before reintroducing any first-option
+    # fallback here.
+    region_options = _with_placeholder(region_options, "region")
+    portfolio_options = _with_placeholder(portfolio_options, "portfolio")
+    default_region = _keep_or_unselected(region_options, initial.get("region"))
+    default_portfolio = _keep_or_unselected(portfolio_options, initial.get("portfolio"))
+    model_use_case_options = _with_placeholder(use_case_options_for_cycles(None), "model-use-case")
+    default_use_case = _keep_or_unselected(model_use_case_options, initial.get("model_use_case"))
+    # Every cycle, not one use case's: nothing has been chosen to narrow by yet.
+    reporting_cycle_options = _with_placeholder(cycle_options_for_cycles(None), "reporting-cycle")
+    scenario_options = _with_placeholder(
+        [{"label": s["label"], "value": s["value"]} for s in cfg["scenarios"]], "scenario")
+    selected_scenario = _keep_or_unselected(scenario_options, initial.get("scenario"))
+    selected_cycle = _keep_or_unselected(reporting_cycle_options, initial.get("cycle"))
     cycle_data = (data.get("ead_observations_by_cycle") or {}).get(selected_cycle)
     if cycle_data:
         set_ead_metrics(cycle_data.get("metrics_store"), cycle_data.get("quarters"))
@@ -2073,7 +2101,7 @@ def page_layout(search: str = "") -> list:
     selected_monitoring_point = (
         initial.get("monitoring_point")
         if initial.get("monitoring_point") in set(monitoring_options)
-        else shared_filters.resolve_monitoring_point_value(monitoring_options, None)
+        else _UNSELECTED
     )
     selected_model = initial.get("model", "") if initial.get("model") in model_options else ""
     if selected_model:
@@ -2086,7 +2114,8 @@ def page_layout(search: str = "") -> list:
     else:
         selected_segment = initial.get("segment", "") if initial.get("segment") in segment_values_list else ""
 
-    model_select_options = [{"label": "Select model", "value": ""}] + [{"label": name, "value": name} for name in model_options]
+    model_select_options = _with_placeholder(
+        [{"label": name, "value": name} for name in model_options], "specific-models")
 
     applied_filters_data = None
     if selected_model or selected_segment:
@@ -2116,6 +2145,7 @@ def page_layout(search: str = "") -> list:
                         html.Div(
                             className="monitoring-controls saas-top-filter-row monitoring-primary-filter-row",
                             children=[
+                                shared_filters.build_scope_caption(),
                                 _build_filter(
                                     "Region",
                                     shared_filters.build_single_select_dropdown(
@@ -2124,7 +2154,7 @@ def page_layout(search: str = "") -> list:
                                         menu_id=REGION_MENU_ID,
                                         filter_key=REGION_FILTER_KEY,
                                         options=region_options,
-                                        value="All",
+                                        value=default_region,
                                     ),
                                 ),
                                 _build_filter(
@@ -2135,49 +2165,22 @@ def page_layout(search: str = "") -> list:
                                         menu_id=PORTFOLIO_MENU_ID,
                                         filter_key=PORTFOLIO_FILTER_KEY,
                                         options=portfolio_options,
-                                        value="All",
+                                        value=default_portfolio,
                                     ),
                                 ),
                                 _build_filter(
-                                    "Model Group",
+                                    "Model Use Case",
                                     shared_filters.build_single_select_dropdown(
-                                        value_id=MODEL_GROUP_ID,
-                                        toggle_id=MODEL_GROUP_TOGGLE_ID,
-                                        menu_id=MODEL_GROUP_MENU_ID,
-                                        filter_key=MODEL_GROUP_FILTER_KEY,
-                                        options=[{"label": "EAD", "value": "EAD"}],
-                                        value="EAD",
+                                        value_id=MODEL_USE_CASE_ID,
+                                        toggle_id=MODEL_USE_CASE_TOGGLE_ID,
+                                        menu_id=MODEL_USE_CASE_MENU_ID,
+                                        filter_key=MODEL_USE_CASE_FILTER_KEY,
+                                        options=model_use_case_options,
+                                        value=default_use_case,
                                     ),
                                 ),
                                 _build_filter(
-                                    "Model",
-                                    shared_filters.build_single_select_dropdown(
-                                        value_id=MODEL_DROPDOWN_ID,
-                                        toggle_id=MODEL_TOGGLE_ID,
-                                        menu_id=MODEL_MENU_ID,
-                                        filter_key=MODEL_FILTER_KEY,
-                                        options=model_select_options,
-                                        value=selected_model,
-                                    ),
-                                ),
-                                _build_filter(
-                                    "Segment",
-                                    shared_filters.build_single_select_dropdown(
-                                        value_id=SEGMENT_DROPDOWN_ID,
-                                        toggle_id=SEGMENT_TOGGLE_ID,
-                                        menu_id=SEGMENT_MENU_ID,
-                                        filter_key=SEGMENT_FILTER_KEY,
-                                        options=_dropdown_options(segment_options),
-                                        value=selected_segment,
-                                    ),
-                                ),
-                            ],
-                        ),
-                        html.Div(
-                            className="monitoring-controls saas-top-filter-row saas-secondary-filter-row",
-                            children=[
-                                _build_filter(
-                                    "Model Use Case / Cycle",
+                                    "Reporting Cycle",
                                     shared_filters.build_single_select_dropdown(
                                         value_id=REPORTING_CYCLE_ID,
                                         toggle_id=REPORTING_CYCLE_TOGGLE_ID,
@@ -2187,6 +2190,52 @@ def page_layout(search: str = "") -> list:
                                         value=selected_cycle,
                                     ),
                                 ),
+                            ],
+                        ),
+                        html.Div(
+                            className="monitoring-controls saas-top-filter-row saas-secondary-filter-row monitoring-focus-filter-row",
+                            children=[
+                                shared_filters.build_focus_caption(),
+                                # No Model Group filter: this tab shows exactly
+                                # one group, so the control could only ever
+                                # return "EAD". Its value drove nothing (the
+                                # group is hardcoded at every models_matching
+                                # call site), and once the bar started empty it
+                                # became a required click with a foregone
+                                # answer. Overview keeps its Model Group -- a
+                                # real choice there.
+                                html.Div(
+                                    # monitoring-model-filter widens the menu to
+                                    # fit the search placeholder (styles.css).
+                                    className="monitoring-filter monitoring-model-filter",
+                                    children=[
+                                        html.Label("Model"),
+                                        shared_filters.build_single_select_dropdown(
+                                            value_id=MODEL_DROPDOWN_ID,
+                                            toggle_id=MODEL_TOGGLE_ID,
+                                            menu_id=MODEL_MENU_ID,
+                                            filter_key=MODEL_FILTER_KEY,
+                                            options=model_select_options,
+                                            value=selected_model,
+                                            search_id=MODEL_SEARCH_ID,
+                                            search_placeholder="Type to search models…",
+                                        ),
+                                    ],
+                                ),
+                                _build_filter(
+                                    "Segment",
+                                    shared_filters.build_single_select_dropdown(
+                                        value_id=SEGMENT_DROPDOWN_ID,
+                                        toggle_id=SEGMENT_TOGGLE_ID,
+                                        menu_id=SEGMENT_MENU_ID,
+                                        filter_key=SEGMENT_FILTER_KEY,
+                                        options=_with_placeholder(
+                                            _dropdown_options(segment_options),
+                                            "portfolio-segment",
+                                        ),
+                                        value=selected_segment,
+                                    ),
+                                ),
                                 _build_filter(
                                     "Monitoring Point",
                                     shared_filters.build_single_select_dropdown(
@@ -2194,7 +2243,10 @@ def page_layout(search: str = "") -> list:
                                         toggle_id=MONITORING_POINT_TOGGLE_ID,
                                         menu_id=MONITORING_POINT_MENU_ID,
                                         filter_key=MONITORING_POINT_FILTER_KEY,
-                                        options=[{"label": q, "value": q} for q in monitoring_options],
+                                        options=_with_placeholder(
+                                            [{"label": q, "value": q} for q in reversed(monitoring_options)],
+                                            "monitoring-point",
+                                        ),
                                         value=selected_monitoring_point,
                                     ),
                                 ),

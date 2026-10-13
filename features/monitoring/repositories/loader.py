@@ -35,6 +35,8 @@ import openpyxl
 import pandas as pd
 
 from ....shared.domain import constants as config
+from ....shared.domain.filter_order import alphabetical
+from ....shared.repositories.tables import read_table
 from ....config.settings import settings
 from ....shared.text import normalize_model_name as _normalize_model_name
 
@@ -64,7 +66,7 @@ def load_portfolio() -> pd.DataFrame:
     log.info("Loading portfolio from %s [%s]", settings.portfolio_file, config.PORTFOLIO_SHEET_NAME)
 
     try:
-        df = pd.read_excel(settings.portfolio_file, sheet_name=config.PORTFOLIO_SHEET_NAME)
+        df = read_table(config.PORTFOLIO_SHEET_NAME)
     except (ValueError, KeyError):
         log.info("Portfolio sheet '%s' not found; using empty portfolio.", config.PORTFOLIO_SHEET_NAME)
         return pd.DataFrame(columns=[config.DATE_COLUMN, "_quarter", "_snapshot_date"])
@@ -116,7 +118,7 @@ def load_monitoring_thresholds() -> dict[str, list[dict[str, Any]]]:
         ("fallback_amber_rules", "fallback_amber_rules"),
     ):
         try:
-            df = pd.read_excel(settings.monitoring_thresholds_file, sheet_name=sheet_name)
+            df = read_table(sheet_name)
             thresholds[key] = _records(df)
             log.info("Loaded thresholds sheet '%s' as %s (%d rows)", sheet_name, key, len(df))
         except Exception as exc:  # noqa: BLE001 - mirror original best-effort loading
@@ -169,17 +171,13 @@ def load_pd_mev_catalog() -> dict[str, Any]:
     to each model's development date.
     """
     path = settings.dummy_mev_data_file
+
+    # -- model_names: development dates, segments, descriptive names
     try:
-        xls = pd.ExcelFile(path)
+        mc_df = read_table(config.DUMMY_MEV_MODEL_CHARACTERISTIC_SHEET_NAME).dropna(how="all")
     except FileNotFoundError:
         log.warning("MEV workbook not found: %s", path)
         return {}, {}, {}, {}
-
-    # -- model_names: development dates, segments, descriptive names
-    mc_df = pd.read_excel(
-        xls,
-        sheet_name=config.DUMMY_MEV_MODEL_CHARACTERISTIC_SHEET_NAME,
-    ).dropna(how="all")
 
     dev_dates: dict[str, str] = {}
     descriptive_names: dict[str, str] = {}
@@ -207,10 +205,7 @@ def load_pd_mev_catalog() -> dict[str, Any]:
             portfolios[model_key] = str(portfolio_val).strip()
 
     # -- mev_transformed: model→segment and model→MEV mapping
-    desc_df = pd.read_excel(
-        xls,
-        sheet_name=config.DUMMY_MEV_TRANSFORMED_DESCRIPTION_SHEET_NAME,
-    ).dropna(how="all")
+    desc_df = read_table(config.DUMMY_MEV_TRANSFORMED_DESCRIPTION_SHEET_NAME).dropna(how="all")
 
     model_segments: dict[str, list[str]] = {}
     mev_long_names: dict[str, str] = {}
@@ -257,10 +252,7 @@ def load_pd_mev_catalog() -> dict[str, Any]:
                     model_mev_segment_contributions.setdefault(model_key, {}).setdefault(segment, {})[mnemonic] = contribution_value
 
     # -- scenario (all scenarios): time series per model+MEV+scenario
-    ts_df = pd.read_excel(
-        xls,
-        sheet_name=config.DUMMY_MEV_TIME_SERIES_SHEET_NAME,
-    ).dropna(how="all")
+    ts_df = read_table(config.DUMMY_MEV_TIME_SERIES_SHEET_NAME).dropna(how="all")
     ts_df["Date"] = pd.to_datetime(ts_df["Date"], errors="coerce")
     ts_df["Quarter"] = pd.to_numeric(ts_df.get("Quarter"), errors="coerce")
     ts_df["Run For"] = ts_df.get("Run For").map(lambda value: str(value).strip() if value is not None else "")
@@ -269,7 +261,7 @@ def load_pd_mev_catalog() -> dict[str, Any]:
     ts_df["MEV Value"] = pd.to_numeric(ts_df["MEV Value"], errors="coerce")
     ts_df = ts_df.dropna(subset=["Date", "MEV Value"])
 
-    xls.close()
+    # (the workbook handle is owned and cached by shared.repositories.tables)
 
     # -- assemble the catalog keyed by descriptive model name
     all_model_keys = sorted(
@@ -375,7 +367,7 @@ def load_pd_mev_catalog() -> dict[str, Any]:
     # the distinct "Scenario" values available for the selected "Run For"
     # cycle in this same scenario sheet (not from any config list).
     scenarios_by_cycle: dict[str, list[str]] = {
-        str(run_for).strip(): sorted({
+        str(run_for).strip(): alphabetical({
             str(scenario).strip()
             for scenario in group["Scenario"].dropna().unique()
             if str(scenario).strip()
@@ -456,7 +448,7 @@ def _build_metric_rows_store(sheet_name: str, column_map: dict[str, str]) -> dic
     Values are taken verbatim from the sheet — no metric is recomputed.
     """
     try:
-        df = pd.read_excel(settings.portfolio_file, sheet_name=sheet_name)
+        df = read_table(sheet_name)
     except (FileNotFoundError, ValueError, KeyError):
         return {}
     df = df.dropna(how="all")
@@ -517,7 +509,7 @@ def load_sensitivity_projections(sheet_name: str, value_col: str) -> list[dict[s
     builders and Post-Subjective section helpers stay tab-agnostic.
     """
     try:
-        df = pd.read_excel(settings.portfolio_file, sheet_name=sheet_name)
+        df = read_table(sheet_name)
     except (FileNotFoundError, ValueError, KeyError):
         return []
 
@@ -605,7 +597,7 @@ def load_monitoring_actions() -> list[dict[str, Any]]:
     Conclusion section then simply renders without a Required Actions panel).
     """
     try:
-        df = pd.read_excel(settings.monitoring_thresholds_file, sheet_name=MONITORING_ACTIONS_SHEET_NAME)
+        df = read_table(MONITORING_ACTIONS_SHEET_NAME)
     except (FileNotFoundError, ValueError, KeyError):
         log.warning(
             "Monitoring actions sheet '%s' not readable in %s; playbook disabled",
@@ -780,7 +772,12 @@ def _update_review_flow_field(
 
     header_row = next(sheet.iter_rows(min_row=1, max_row=1))
     col_index = {cell.value: cell.column for cell in header_row if cell.value}
-    base_columns = ("reporting_cycle", "quarter", "model", "segment")
+    base_columns = (
+        config.RUN_FOR_COLUMN,
+        config.METRICS_QUARTER_COLUMN,
+        config.METRICS_MODEL_COLUMN,
+        config.METRICS_SEGMENT_COLUMN,
+    )
     if any(name not in col_index for name in base_columns):
         log.warning("%s is missing a required column for the RAG write-back; skipped.", sheet_name)
         return 0
@@ -800,10 +797,10 @@ def _update_review_flow_field(
     updated = 0
     for row in sheet.iter_rows(min_row=2):
         if (
-            _cell_text(row, "reporting_cycle") == reporting_cycle
-            and _cell_text(row, "quarter") == quarter
-            and _cell_text(row, "model") == model
-            and _cell_text(row, "segment") == segment
+            _cell_text(row, config.RUN_FOR_COLUMN) == reporting_cycle
+            and _cell_text(row, config.METRICS_QUARTER_COLUMN) == quarter
+            and _cell_text(row, config.METRICS_MODEL_COLUMN) == model
+            and _cell_text(row, config.METRICS_SEGMENT_COLUMN) == segment
         ):
             row[col_index[field] - 1].value = new_value
             updated += 1
@@ -861,7 +858,7 @@ def _build_model_segment_cycle_map(agg_df: pd.DataFrame) -> dict[tuple[str, str]
 
     Some models have less cycle history for specific segments than for their
     own "All" aggregate row (e.g. PD Model B's Cyclical/Defensive breakdown
-    only starts at CCAR 2025, while its All row also has BAU 2025Q1) -- this
+    only starts at CCAR 2025, while its All row also has CECL 2025Q1) -- this
     lets the Model Use Case / Cycle filter narrow to what the currently
     selected model/segment population actually has, instead of always
     showing the full global cycle list.
@@ -885,7 +882,7 @@ def _build_model_segment_cycle_map_from_sheet(sheet_name: str) -> dict[tuple[str
     normalization needed, unlike PD's).
     """
     try:
-        df = pd.read_excel(settings.portfolio_file, sheet_name=sheet_name)
+        df = read_table(sheet_name)
     except (FileNotFoundError, ValueError, KeyError):
         return {}
     df = df.dropna(how="all")
@@ -912,7 +909,7 @@ def _build_model_segment_map(agg_df: pd.DataFrame) -> dict[str, list[str]]:
     instead of offering every segment in the portfolio regardless of model.
     """
     return {
-        model: sorted({
+        model: alphabetical({
             s for s in group["segment"].dropna().astype(str).str.strip().unique()
             if s and s.lower() != "all"
         })
@@ -927,14 +924,14 @@ def _build_model_segment_map_from_sheet(sheet_name: str) -> dict[str, list[str]]
     normalization needed, unlike PD's).
     """
     try:
-        df = pd.read_excel(settings.portfolio_file, sheet_name=sheet_name)
+        df = read_table(sheet_name)
     except (FileNotFoundError, ValueError, KeyError):
         return {}
     df = df.dropna(how="all")
     if df.empty or "model" not in df.columns or "segment" not in df.columns:
         return {}
     return {
-        model: sorted({
+        model: alphabetical({
             s for s in group["segment"].dropna().astype(str).str.strip().unique()
             if s and s.lower() != "all"
         })
@@ -959,7 +956,7 @@ def load_pd_performance_data_from_aggregated() -> dict[str, Any]:
     """Load from the PD_Performance_Metrics sheet instead of facility-level data."""
     log.info("Loading PD aggregated metrics from %s [%s]", settings.portfolio_file, PD_AGGREGATED_SHEET_NAME)
 
-    agg_df = pd.read_excel(settings.portfolio_file, sheet_name=PD_AGGREGATED_SHEET_NAME)
+    agg_df = read_table(PD_AGGREGATED_SHEET_NAME)
     agg_df = agg_df.dropna(how="all")
 
     portfolio = load_portfolio()
@@ -971,11 +968,11 @@ def load_pd_performance_data_from_aggregated() -> dict[str, Any]:
     # Every row now names both a model and a segment ("All" for the model's
     # aggregate row). We still ignore any legacy "All Models" rows if they
     # exist in older files.
-    data_model_names = sorted({
+    data_model_names = alphabetical({
         m for m in agg_df["model"].dropna().map(_normalize_model_name).unique()
         if m and m != "All Models"
     })
-    data_segment_values = sorted({
+    data_segment_values = alphabetical({
         s for s in agg_df["segment"].dropna().astype(str).str.strip().unique()
         if s and s.lower() != "all"
     })

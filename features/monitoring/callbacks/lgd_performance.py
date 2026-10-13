@@ -14,7 +14,6 @@ from ..domain.lgd import (
     lgd_store_key,
     resolve_lgd_models,
     resolve_lgd_monitoring_point,
-    resolve_lgd_segment,
 )
 from ....shared.registration import already_registered
 from ....shared.repositories.filters_config import cycle_family
@@ -32,7 +31,7 @@ def _dropdown_options(values: list[str]) -> list[dict[str, str]]:
 def _merge_same_family_lgd_cycle_data(observations_by_cycle: dict, reporting_cycle: str) -> dict:
     """Pool ``lgd_observations_by_cycle`` across every cycle in the same
     family as ``reporting_cycle`` (e.g. "CCAR 2024" + "CCAR 2025" +
-    "CCAR 2026", never "BAU 2025Q1") so trend charts can show history from
+    "CCAR 2026", never "CECL 2025Q1") so trend charts can show history from
     prior same-family cycles, not just the selected one. The merged rows
     still need capping to "<= monitoring point" downstream (see
     ``build_lgd_period_summary``), since -- unlike a single cycle's own
@@ -90,15 +89,17 @@ def register_callbacks(app) -> None:
 
     data = PD_PERFORMANCE_DATA
 
-    for value_id, toggle_id, menu_id, filter_key in (
-        (layout.REPORTING_CYCLE_ID, layout.REPORTING_CYCLE_TOGGLE_ID, layout.REPORTING_CYCLE_MENU_ID, layout.REPORTING_CYCLE_FILTER_KEY),
-        (layout.SCENARIO_ID, layout.SCENARIO_TOGGLE_ID, layout.SCENARIO_MENU_ID, layout.SCENARIO_FILTER_KEY),
-        (layout.MONITORING_POINT_DROPDOWN_ID, layout.MONITORING_POINT_TOGGLE_ID, layout.MONITORING_POINT_MENU_ID, layout.MONITORING_POINT_FILTER_KEY),
-        (layout.SEGMENT_DROPDOWN_ID, layout.SEGMENT_TOGGLE_ID, layout.SEGMENT_MENU_ID, layout.SEGMENT_FILTER_KEY),
-        (layout.MODEL_DROPDOWN_ID, layout.MODEL_TOGGLE_ID, layout.MODEL_MENU_ID, layout.MODEL_FILTER_KEY),
-        (layout.REGION_ID, layout.REGION_TOGGLE_ID, layout.REGION_MENU_ID, layout.REGION_FILTER_KEY),
-        (layout.PORTFOLIO_ID, layout.PORTFOLIO_TOGGLE_ID, layout.PORTFOLIO_MENU_ID, layout.PORTFOLIO_FILTER_KEY),
-        (layout.MODEL_GROUP_ID, layout.MODEL_GROUP_TOGGLE_ID, layout.MODEL_GROUP_MENU_ID, layout.MODEL_GROUP_FILTER_KEY),
+    for value_id, toggle_id, menu_id, filter_key, search_id in (
+        (layout.MODEL_USE_CASE_ID, layout.MODEL_USE_CASE_TOGGLE_ID, layout.MODEL_USE_CASE_MENU_ID, layout.MODEL_USE_CASE_FILTER_KEY, None),
+        (layout.REPORTING_CYCLE_ID, layout.REPORTING_CYCLE_TOGGLE_ID, layout.REPORTING_CYCLE_MENU_ID, layout.REPORTING_CYCLE_FILTER_KEY, None),
+        (layout.SCENARIO_ID, layout.SCENARIO_TOGGLE_ID, layout.SCENARIO_MENU_ID, layout.SCENARIO_FILTER_KEY, None),
+        (layout.MONITORING_POINT_DROPDOWN_ID, layout.MONITORING_POINT_TOGGLE_ID, layout.MONITORING_POINT_MENU_ID, layout.MONITORING_POINT_FILTER_KEY, None),
+        (layout.SEGMENT_DROPDOWN_ID, layout.SEGMENT_TOGGLE_ID, layout.SEGMENT_MENU_ID, layout.SEGMENT_FILTER_KEY, None),
+        # Only Model carries a search box; the rest keep the plain menu.
+        (layout.MODEL_DROPDOWN_ID, layout.MODEL_TOGGLE_ID, layout.MODEL_MENU_ID,
+         layout.MODEL_FILTER_KEY, layout.MODEL_SEARCH_ID),
+        (layout.REGION_ID, layout.REGION_TOGGLE_ID, layout.REGION_MENU_ID, layout.REGION_FILTER_KEY, None),
+        (layout.PORTFOLIO_ID, layout.PORTFOLIO_TOGGLE_ID, layout.PORTFOLIO_MENU_ID, layout.PORTFOLIO_FILTER_KEY, None),
     ):
         filter_shell.register_single_select_callbacks(
             app,
@@ -106,6 +107,7 @@ def register_callbacks(app) -> None:
             toggle_id=toggle_id,
             menu_id=menu_id,
             filter_key=filter_key,
+            search_id=search_id,
         )
 
     mev_catalog = data.get("mev_catalog") or {}
@@ -126,17 +128,27 @@ def register_callbacks(app) -> None:
             lgd_model_cycle_quarters.setdefault((model, cycle), set()).update(quarters)
             lgd_model_segment_cycle_quarters.setdefault((model, segment, cycle), set()).update(quarters)
 
-    from ....shared.repositories.filters_config import load_filter_config as _load_filter_config
+    from ....shared.repositories.filters_config import (
+        cycle_options_for_cycles,
+        load_filter_config as _load_filter_config,
+        use_case_options_for_cycles,
+    )
     _cfg = _load_filter_config()
     _cfg_cycle_options = [{"label": c["label"], "value": c["value"]} for c in _cfg["reporting_cycles"]]
-    _cfg_scenario_options = [{"label": s["label"], "value": s["value"]} for s in _cfg["scenarios"]]
+    # Every option list a callback writes has to carry the "Select …"
+    # placeholder too. Without it the value "" matches no option, and the
+    # shell's toggle falls back to a bare "Select" -- see _option_label.
+    _cfg_scenario_options = controls.with_placeholder(
+        [{"label": s["label"], "value": s["value"]} for s in _cfg["scenarios"]], "scenario")
 
-    def _narrow_lgd_cycle_options(cycles: list[str] | None) -> list[dict[str, str]]:
-        if cycles is None:
-            return _cfg_cycle_options
-        allowed = set(cycles)
-        narrowed = [option for option in _cfg_cycle_options if option["value"] in allowed]
-        return narrowed or _cfg_cycle_options
+    def _narrow_lgd_cycle_options(cycles: list[str] | None, use_case: str | None = None) -> list[dict[str, str]]:
+        """Cycle options for a population, scoped to the selected Model Use Case.
+
+        Labels are the bare cycle; values stay the composite, which is what every
+        store, figure and export downstream keys on.
+        """
+        return controls.with_placeholder(
+            cycle_options_for_cycles(cycles, use_case), "reporting-cycle")
 
     @app.callback(
         Output(layout.PORTFOLIO_ID, "options"),
@@ -147,8 +159,12 @@ def register_callbacks(app) -> None:
     def sync_lgd_region_to_portfolio_options(region, current_portfolio):
         matches = models_matching(mev_catalog, "LGD", region, None, lgd_model_options)
         portfolios = model_field_values(mev_catalog, "portfolio", matches)
-        options = [{"label": "All", "value": "All"}] + [{"label": p, "value": p} for p in portfolios]
-        value = current_portfolio if current_portfolio in portfolios or current_portfolio == "All" else "All"
+        # No "All": Portfolio is always a concrete slice of the chosen Region.
+        # with_placeholder on every rewrite: the value "" must match an option,
+        # or the shell's toggle falls back to a bare "Select" (see _option_label).
+        options = controls.with_placeholder(
+            [{"label": p, "value": p} for p in portfolios], "portfolio")
+        value = controls.keep_or_unselected(options, current_portfolio)
         return options, value
 
     # Segment narrows Model, and sync_lgd_segment_dropdown below narrows Segment
@@ -166,6 +182,7 @@ def register_callbacks(app) -> None:
         Output(layout.MODEL_DROPDOWN_ID, "value"),
         Input(layout.REGION_ID, "value"),
         Input(layout.PORTFOLIO_ID, "value"),
+        Input(layout.REPORTING_CYCLE_ID, "value"),
         Input(
             {
                 "type": controls.SINGLE_SELECT_OPTION_ID,
@@ -177,7 +194,7 @@ def register_callbacks(app) -> None:
         State(layout.SEGMENT_DROPDOWN_ID, "value"),
         State(layout.MODEL_DROPDOWN_ID, "value"),
     )
-    def sync_lgd_region_portfolio_to_model_options(region, portfolio, segment_clicks, segment, current_model):
+    def sync_lgd_region_portfolio_to_model_options(region, portfolio, reporting_cycle, segment_clicks, segment, current_model):
         triggered = ctx.triggered_id
         if isinstance(triggered, dict) and triggered.get("type") == controls.SINGLE_SELECT_OPTION_ID:
             # Option buttons are re-created whenever the Segment menu is rebuilt,
@@ -191,8 +208,19 @@ def register_callbacks(app) -> None:
         if segment and segment not in ("All", ""):
             segment_models = set(lgd_segment_models.get(segment, []))
             matches = [m for m in matches if m in segment_models]
-        options = [{"label": "Select model", "value": ""}] + [{"label": m, "value": m} for m in matches]
-        value = current_model if current_model in matches else ""
+        # Reporting Cycle sits to the LEFT of Model in the bar, so it narrows
+        # Model -- drop models with no rows for the chosen cycle. It was already
+        # an Input here but went unused, which let the bar offer a model/cycle
+        # pair with no data behind it. Harmless while Apply only needed a Model;
+        # now that Apply also needs a Monitoring Point it was a dead end, since
+        # such a pair leaves the Monitoring Point list empty and Apply can never
+        # enable. Skipped while the cycle is unanswered -- nothing to narrow by.
+        if reporting_cycle:
+            matches = [m for m in matches if lgd_model_cycle_quarters.get((m, reporting_cycle))]
+
+        options = controls.with_placeholder(
+            [{"label": m, "value": m} for m in matches], "specific-models")
+        value = controls.keep_or_unselected(options, current_model)
         return options, value
 
     def _install_lgd_store(reporting_cycle):
@@ -264,11 +292,9 @@ def register_callbacks(app) -> None:
 
         return range_store
 
-    # Segment is never disabled/blocked by Model. With no model chosen, its
-    # options still show every real segment plus a "Select segment"
-    # placeholder (mirroring Model's own "Select model" placeholder); with a
-    # model chosen, options/value resolve via get_lgd_segments_for_model /
-    # resolve_lgd_segment as before.
+    # Segment is never disabled/blocked by Model: picking a Model narrows its
+    # options to that model's own segments, but never answers it. See the note
+    # in the body.
     @app.callback(
         Output(layout.SEGMENT_DROPDOWN_ID, "options"),
         Output(layout.SEGMENT_DROPDOWN_ID, "value"),
@@ -276,14 +302,19 @@ def register_callbacks(app) -> None:
         State(layout.SEGMENT_DROPDOWN_ID, "value"),
     )
     def sync_lgd_segment_dropdown(selected_model, selected_segment):
-        has_model = bool(resolve_lgd_models(data, selected_model))
         segments = get_lgd_segments_for_model(data, selected_model)
-        options = _dropdown_options(segments)
-        if has_model:
-            value = resolve_lgd_segment(data, selected_model, selected_segment)
-        else:
-            options = [{"label": "Select segment", "value": ""}] + options
-            value = selected_segment if selected_segment in segments else ""
+        options = controls.with_placeholder(_dropdown_options(segments), "portfolio-segment")
+        # Segment stays unanswered until the user answers it, exactly like every
+        # other filter -- matching PD. Picking a Model used to run
+        # resolve_lgd_segment here, which never returns empty: it falls back to
+        # "All", or to ``segments[0]`` when the model has no "All" aggregate row.
+        # For a single-segment model that was harmless, but a model with five
+        # segments had the choice made for it (LGD Model A silently became
+        # "Cyclical"), which is the auto-selection the empty start removes.
+        #
+        # resolve_lgd_segment is still the right call elsewhere -- the page
+        # layout uses it for deep links, which name a scope deliberately.
+        value = controls.keep_or_unselected(options, selected_segment)
         return options, value
 
     # -----------------------------------------------------------------
@@ -291,32 +322,85 @@ def register_callbacks(app) -> None:
     # have data for the selected Model/Segment population -- see
     # sync_pd_population_to_cycle_options for the rationale.
     # -----------------------------------------------------------------
-    @app.callback(
-        Output(layout.REPORTING_CYCLE_ID, "options"),
-        Output(layout.REPORTING_CYCLE_ID, "value"),
-        Input(layout.MODEL_DROPDOWN_ID, "value"),
-        Input(layout.SEGMENT_DROPDOWN_ID, "value"),
-        State(layout.REPORTING_CYCLE_ID, "value"),
-    )
-    def sync_lgd_population_to_cycle_options(selected_model, selected_segment, current_cycle):
+    def _lgd_population_cycles(selected_model, selected_segment) -> list[str] | None:
+        """Cycles the selected Model/Segment population has data for.
+
+        ``None`` means "no population narrowing", which the option builders read
+        as the full list. Shared by the Model Use Case and Reporting Cycle
+        callbacks so the two can never disagree about what is available.
+        """
         has_model = bool(resolve_lgd_models(data, selected_model))
         segment_key = selected_segment if selected_segment and selected_segment not in ("", "all", "All") else "All"
         if has_model:
             cycles = lgd_model_segment_cycles.get((selected_model, segment_key))
             if cycles is None:
                 cycles = lgd_model_segment_cycles.get((selected_model, "All"), [])
-        elif selected_segment and selected_segment not in ("", "all", "All"):
-            cycles = sorted({
+            return cycles
+        if selected_segment and selected_segment not in ("", "all", "All"):
+            return sorted({
                 cycle
                 for (population_model, population_segment), population_cycles in lgd_model_segment_cycles.items()
                 if population_segment == selected_segment
                 for cycle in population_cycles
             })
-        else:
-            cycles = None
-        options = _narrow_lgd_cycle_options(cycles)
+        return None
+
+    # -----------------------------------------------------------------
+    # The bar narrows left to right: Region -> Portfolio -> Model Use Case ->
+    # Reporting Cycle -> Model Group -> Model -> Segment -> Monitoring Point ->
+    # Scenario. Reporting Cycle now sits LEFT of Model/Segment, so it is scoped
+    # by the Use Case alone and in turn narrows the Model list below. Reading
+    # the population back here would write a filter to the left of its own
+    # inputs and close the loop callback rule 2 forbids.
+    # -----------------------------------------------------------------
+    # Model Use Case is narrowed by Region/Portfolio too, matching Overview.
+    # Without it the bar offered a programme the chosen region/portfolio has no
+    # data for, and picking it emptied Reporting Cycle -- a dead end now that
+    # Apply requires the whole scope. Region and Portfolio sit to the LEFT of
+    # Model Use Case, so this stays a one-way cascade (callback rule 2).
+    @app.callback(
+        Output(layout.MODEL_USE_CASE_ID, "options"),
+        Output(layout.MODEL_USE_CASE_ID, "value"),
+        Input(layout.REGION_ID, "value"),
+        Input(layout.PORTFOLIO_ID, "value"),
+        State(layout.MODEL_USE_CASE_ID, "value"),
+    )
+    def sync_lgd_scope_to_use_case_options(region, portfolio, current_use_case):
+        in_scope = models_matching(mev_catalog, "LGD", region, portfolio, lgd_model_options)
+        cycles_with_data = {
+            cycle for (model, cycle) in lgd_model_cycle_quarters
+            if model in in_scope and lgd_model_cycle_quarters[(model, cycle)]
+        }
+        options = controls.with_placeholder(
+            use_case_options_for_cycles(cycles_with_data or None), "model-use-case")
+        return options, controls.keep_or_unselected(options, current_use_case)
+
+    @app.callback(
+        Output(layout.REPORTING_CYCLE_ID, "options"),
+        Output(layout.REPORTING_CYCLE_ID, "value"),
+        Input(layout.REGION_ID, "value"),
+        Input(layout.PORTFOLIO_ID, "value"),
+        Input(layout.MODEL_USE_CASE_ID, "value"),
+        State(layout.REPORTING_CYCLE_ID, "value"),
+    )
+    def sync_lgd_use_case_to_cycle_options(region, portfolio, model_use_case, current_cycle):
+        # Also narrowed by Region/Portfolio, matching Overview. Without it the
+        # bar offered cycles with no model behind them for the chosen
+        # region/portfolio, and picking one emptied the Model list -- a dead
+        # end now that Apply requires both a Model and a Monitoring Point.
+        # Region and Portfolio sit to the LEFT of Reporting Cycle, so reading
+        # them here keeps the cascade one-way (callback rule 2).
+        in_scope = models_matching(mev_catalog, "LGD", region, portfolio, lgd_model_options)
+        cycles_with_data = {
+            cycle for (model, cycle) in lgd_model_cycle_quarters
+            if model in in_scope and lgd_model_cycle_quarters[(model, cycle)]
+        }
+        options = [
+            option for option in _narrow_lgd_cycle_options(None, model_use_case)
+            if not option["value"] or option["value"] in cycles_with_data
+        ]
         allowed_values = {option["value"] for option in options}
-        value = current_cycle if current_cycle in allowed_values else (options[0]["value"] if options else "")
+        value = controls.keep_or_unselected(options, current_cycle)
         return options, value
 
     # -----------------------------------------------------------------
@@ -337,7 +421,7 @@ def register_callbacks(app) -> None:
         else:
             options = _cfg_scenario_options
         allowed_values = {option["value"] for option in options}
-        value = current_scenario if current_scenario in allowed_values else (options[0]["value"] if options else "")
+        value = controls.keep_or_unselected(options, current_scenario)
         return options, value
 
     @app.callback(
@@ -358,8 +442,12 @@ def register_callbacks(app) -> None:
             options = sorted(model_quarters)[-controls.MONITORING_POINT_WINDOW:] if model_quarters else []
         else:
             options = controls.LGD_REPORTING_CYCLE_QUARTERS.get(reporting_cycle, [])
-        value = filter_shell.resolve_monitoring_point_value(options, selected_monitoring_point)
-        return _dropdown_options(options), value
+        # Display most-recent-first, matching Reporting Cycle. Not
+        # resolve_monitoring_point_value: it answers the filter with the latest
+        # quarter, which on the empty first render fills it in unasked.
+        point_options = controls.with_placeholder(
+            _dropdown_options(list(reversed(options))), "monitoring-point")
+        return point_options, controls.keep_or_unselected(point_options, selected_monitoring_point)
 
     # -----------------------------------------------------------------
     # Scenario Ranking selector -> lgd-scenario-ranking-store
@@ -377,12 +465,28 @@ def register_callbacks(app) -> None:
     # freely with no model chosen, but the dashboard itself always needs one
     # explicit model to resolve data against -- see apply_pd_filters.
     # -----------------------------------------------------------------
+    # -----------------------------------------------------------------
+    # Apply gate: the page opens with every filter unanswered, so Apply stays
+    # disabled until all of them have a real value -- nothing can be applied
+    # against a half-specified scope. Model Group is included for completeness;
+    # on this tab it has a single fixed value and is therefore always satisfied.
+    #
+    # This only ever writes the button's own ``disabled`` prop, and nothing
+    # reads that back, so it adds no edge to the filter cascade.
+    # -----------------------------------------------------------------
     @app.callback(
         Output(layout.APPLY_FILTERS_ID, "disabled"),
+        Input(layout.REGION_ID, "value"),
+        Input(layout.PORTFOLIO_ID, "value"),
+        Input(layout.MODEL_USE_CASE_ID, "value"),
+        Input(layout.REPORTING_CYCLE_ID, "value"),
         Input(layout.MODEL_DROPDOWN_ID, "value"),
+        Input(layout.SEGMENT_DROPDOWN_ID, "value"),
+        Input(layout.MONITORING_POINT_DROPDOWN_ID, "value"),
+        Input(layout.SCENARIO_ID, "value"),
     )
-    def sync_lgd_apply_button_availability(selected_model):
-        return not bool(selected_model)
+    def sync_lgd_apply_button_availability(*filter_values):
+        return not controls.all_selected(*filter_values)
 
     # -----------------------------------------------------------------
     # Apply filters: snapshot current filter values into the applied store
