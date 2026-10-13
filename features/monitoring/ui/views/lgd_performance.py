@@ -15,7 +15,12 @@ from .....shared.ui.controls import (
     with_placeholder as _with_placeholder,
 )
 from .....shared.ui import controls as shared_filters
-from .....shared.ui.controls import build_chart_header, build_section_filter_bar, build_section_filter_item
+from .....shared.ui.controls import (
+    build_chart_header,
+    build_mev_scenario_control,
+    build_section_filter_bar,
+    build_section_filter_item,
+)
 from .....shared.ui.loading import build_dashboard_loading_shell
 from .....shared.domain.calculations import pd_tone_class
 from .....shared.domain.mev_range import (
@@ -77,10 +82,13 @@ REPORTING_CYCLE_ID = "lgd-reporting-cycle"
 REPORTING_CYCLE_TOGGLE_ID = "lgd-reporting-cycle-toggle"
 REPORTING_CYCLE_MENU_ID = "lgd-reporting-cycle-menu"
 REPORTING_CYCLE_FILTER_KEY = "lgd-reporting-cycle"
-SCENARIO_ID = "lgd-scenario"
-SCENARIO_TOGGLE_ID = "lgd-scenario-toggle"
-SCENARIO_MENU_ID = "lgd-scenario-menu"
-SCENARIO_FILTER_KEY = "lgd-scenario"
+# Scenario lives in the MEV Range section, not the top bar: it only ever drove
+# that section. Pattern-matching like the range controls beside it, because it
+# is rendered *inside* the content container -- a plain id would make the
+# callback fail to gather its Input on the first render, before the section
+# exists (callback rule 3).
+MEV_SCENARIO_ID = "lgd-mev-scenario"
+SCENARIO_STORE_ID = "lgd-scenario-store"
 MODEL_DROPDOWN_ID = "lgd-model-dropdown"
 SEGMENT_DROPDOWN_ID = "lgd-segment-dropdown"
 MONITORING_POINT_DROPDOWN_ID = "lgd-monitoring-point-dropdown"
@@ -699,6 +707,10 @@ def _build_lgd_mev_range_section(
                     range_key="mev",
                     periods=mev_periods,
                     range_value=range_store.get("mev"),
+                    extra_controls=build_mev_scenario_control(
+                        data, id_type=MEV_SCENARIO_ID, scenario=scenario,
+                        reporting_cycle=reporting_cycle,
+                    ),
                 ),
             ])
         )
@@ -2069,9 +2081,11 @@ def page_layout(data: dict, initial: dict | None = None) -> list:
     default_use_case = _keep_or_unselected(model_use_case_options, initial.get("model_use_case"))
     # Every cycle, not one use case's: nothing has been chosen to narrow by yet.
     reporting_cycle_options = _with_placeholder(cycle_options_for_cycles(None), "reporting-cycle")
-    scenario_options = _with_placeholder(
-        [{"label": s["label"], "value": s["value"]} for s in cfg["scenarios"]], "scenario")
-    selected_scenario = _keep_or_unselected(scenario_options, initial.get("scenario"))
+    # No Scenario option list for the bar any more -- the control moved into the
+    # MEV Range section (build_mev_scenario_control). The deep link's
+    # ?scenario= still rides into the applied store below, so an Overview
+    # escalation card lands on the scenario its RAG was computed under.
+    selected_scenario = initial.get("scenario") or ""
     selected_cycle = _keep_or_unselected(reporting_cycle_options, initial.get("cycle"))
     cycle_data = (data.get("lgd_observations_by_cycle") or {}).get(selected_cycle)
     if cycle_data:
@@ -2111,6 +2125,10 @@ def page_layout(data: dict, initial: dict | None = None) -> list:
 
     return [
         dcc.Store(id=RANGE_STORE_ID, data={}),
+        # Lives outside the content container so it survives each re-render.
+        # Starts empty; the render falls back to the applied scope's scenario
+        # (where the deep link's ?scenario= lands) and then to the default.
+        dcc.Store(id=SCENARIO_STORE_ID, data=""),
         dcc.Store(id=SCENARIO_RANKING_STORE_ID, data={}),
         dcc.Store(id=APPLIED_FILTERS_STORE_ID, data=applied_filters_data),
         dcc.Store(id=CONCLUSIONS_NOTES_STORE_ID, storage_type="session", data=""),
@@ -2230,17 +2248,6 @@ def page_layout(data: dict, initial: dict | None = None) -> list:
                                             "monitoring-point",
                                         ),
                                         value=selected_monitoring_point,
-                                    ),
-                                ),
-                                _build_filter(
-                                    "Scenario",
-                                    shared_filters.build_single_select_dropdown(
-                                        value_id=SCENARIO_ID,
-                                        toggle_id=SCENARIO_TOGGLE_ID,
-                                        menu_id=SCENARIO_MENU_ID,
-                                        filter_key=SCENARIO_FILTER_KEY,
-                                        options=scenario_options,
-                                        value=selected_scenario,
                                     ),
                                 ),
                                 _build_lgd_apply_button(),

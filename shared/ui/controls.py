@@ -24,6 +24,10 @@ from dash import dcc, html
 
 from ..domain.calculations import get_pd_range_preset, get_pd_range_selection
 from ..domain.quarter_labels import format_pd_compact_quarter_label
+# MONITORING_POINT_WINDOW is unused *in this module*: it is a deliberate
+# re-export, read as ``controls.MONITORING_POINT_WINDOW`` by the PD/LGD/EAD
+# callbacks when they trim a model's quarters to the monitoring window. See
+# the module-attribute re-export convention in CLAUDE.md -- do not 'clean' it.
 from ..repositories.filters_config import MONITORING_POINT_WINDOW, monitoring_points_by_cycle
 
 # ---------------------------------------------------------------------------
@@ -48,9 +52,6 @@ LGD_REPORTING_CYCLE_QUARTERS = monitoring_points_by_cycle("lgd")
 EAD_REPORTING_CYCLE_QUARTERS = monitoring_points_by_cycle("ead")
 LOSS_REPORTING_CYCLE_QUARTERS = monitoring_points_by_cycle("loss")
 ALL_REPORTING_CYCLE_QUARTERS = monitoring_points_by_cycle("all")
-SCENARIO_ID = "pd-scenario"
-SCENARIO_TOGGLE_ID = "pd-scenario-toggle"
-SCENARIO_MENU_ID = "pd-scenario-menu"
 
 MONITORING_POINT_ID = "pd-monitoring-point"
 PORTFOLIO_SEGMENT_ID = "pd-portfolio-segment"
@@ -399,8 +400,9 @@ def build_global_filters(data: dict, extra_controls=None, initial: dict | None =
     # Every cycle, not just one use case's: with no use case chosen yet there is
     # nothing to narrow by, and the cascade re-narrows the moment one is picked.
     reporting_cycle_options = with_placeholder(cycle_options_for_cycles(None), "reporting-cycle")
-    scenario_options = with_placeholder(
-        [{"label": s["label"], "value": s["value"]} for s in cfg["scenarios"]], "scenario")
+    # No Scenario in the bar: it only ever drove the MEV Range section, so it
+    # now lives beside that section's own display filters (see
+    # pd_performance._build_mev_scenario_control).
 
     # ``initial`` restores a previously applied scope (the router re-enters the
     # page with it). Anything it does not carry stays UNSELECTED rather than
@@ -421,7 +423,6 @@ def build_global_filters(data: dict, extra_controls=None, initial: dict | None =
         initial.get("monitoring_point") if initial.get("monitoring_point") in set(quarters_asc)
         else UNSELECTED
     )
-    initial_scenario = keep_or_unselected(scenario_options, initial.get("scenario"))
 
     primary_row = html.Div(
         className="monitoring-controls saas-top-filter-row monitoring-primary-filter-row",
@@ -538,20 +539,6 @@ def build_global_filters(data: dict, extra_controls=None, initial: dict | None =
                     filter_key="monitoring-point",
                     options=monitoring_point_options,
                     value=initial_monitoring_point,
-                ),
-            ],
-        ),
-        html.Div(
-            className="monitoring-filter",
-            children=[
-                html.Label("Scenario", htmlFor=SCENARIO_TOGGLE_ID),
-                build_single_select_dropdown(
-                    value_id=SCENARIO_ID,
-                    toggle_id=SCENARIO_TOGGLE_ID,
-                    menu_id=SCENARIO_MENU_ID,
-                    filter_key="scenario",
-                    options=scenario_options,
-                    value=initial_scenario,
                 ),
             ],
         ),
@@ -789,6 +776,76 @@ def build_section_filter_item(
     return html.Div(
         className="pd-section-filter-item",
         children=children,
+    )
+
+
+def build_mev_scenario_control(
+    data: dict,
+    *,
+    id_type: str,
+    scenario: str | None,
+    reporting_cycle: str | None,
+) -> html.Div:
+    """The MEV Range Scenario picker, for the section's own display-filter row.
+
+    Scenario lives here rather than in the top filter bar because MEV Range is
+    the only section it affects -- not Sensitivity Analysis, and not Scenario
+    Ranking, which has its own in-section picker. Passed to
+    ``build_section_filter_item`` as ``extra_controls`` it shares the row with
+    Window/From/To and, like them, re-renders immediately instead of waiting
+    for Apply.
+
+    Two shape requirements, both of which fail quietly if missed:
+
+    * ``build_section_filter_item`` merges ``extra_controls`` by splicing in its
+      *children*, so this must be the same ``.pd-range-controls`` wrapper the
+      range builders return. A bare ``html.Label`` loses its label element and
+      renders as a stray caption next to an unlabelled dropdown.
+    * The id is **pattern-matching** because the control lives inside
+      callback-rendered content; a plain id would make the renderer fail to
+      gather the Input before the section exists (callback rule 3).
+
+    Options are narrowed to the scenarios the MEV workbook actually has for
+    ``reporting_cycle``, which is what the old top-bar control did, falling back
+    to the full config list for cycles the sheet does not cover at all. With no
+    ``scenario`` picked the control opens on
+    ``filters_config.default_scenario()`` -- the same value every other fallback
+    in the app uses.
+    """
+    from ..repositories.filters_config import default_scenario, load_filter_config
+
+    options = [
+        {"label": option["label"], "value": option["value"]}
+        for option in load_filter_config()["scenarios"]
+    ]
+    available = (data.get("mev_scenarios_by_cycle") or {}).get(reporting_cycle)
+    if available:
+        options = [o for o in options if o["value"] in set(available)] or options
+
+    # Narrowing can drop the caller's scenario (and the configured default) for
+    # a cycle the sheet only partly covers, so fall through: the pick, then the
+    # default, then whatever this cycle does offer. Never a dead value -- the
+    # figure builders resolve the scenario against the MEV data.
+    allowed = {option["value"] for option in options}
+    for candidate in (scenario, default_scenario()):
+        if candidate in allowed:
+            value = candidate
+            break
+    else:
+        value = options[0]["value"] if options else None
+    return html.Div(
+        className="pd-range-controls",
+        children=[
+            html.Label([
+                html.Span("Scenario"),
+                dcc.Dropdown(
+                    id={"type": id_type, "key": "mev"},
+                    options=options,
+                    value=value,
+                    clearable=False,
+                ),
+            ]),
+        ],
     )
 
 

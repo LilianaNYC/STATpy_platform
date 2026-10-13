@@ -87,7 +87,6 @@ def register_callbacks(app) -> None:
     for value_id, toggle_id, menu_id, filter_key, search_id in (
         (layout.MODEL_USE_CASE_ID, layout.MODEL_USE_CASE_TOGGLE_ID, layout.MODEL_USE_CASE_MENU_ID, layout.MODEL_USE_CASE_FILTER_KEY, None),
         (layout.REPORTING_CYCLE_ID, layout.REPORTING_CYCLE_TOGGLE_ID, layout.REPORTING_CYCLE_MENU_ID, layout.REPORTING_CYCLE_FILTER_KEY, None),
-        (layout.SCENARIO_ID, layout.SCENARIO_TOGGLE_ID, layout.SCENARIO_MENU_ID, layout.SCENARIO_FILTER_KEY, None),
         (layout.MONITORING_POINT_DROPDOWN_ID, layout.MONITORING_POINT_TOGGLE_ID, layout.MONITORING_POINT_MENU_ID, layout.MONITORING_POINT_FILTER_KEY, None),
         (layout.SEGMENT_DROPDOWN_ID, layout.SEGMENT_TOGGLE_ID, layout.SEGMENT_MENU_ID, layout.SEGMENT_FILTER_KEY, None),
         # Only Model carries a search box; the rest keep the plain menu.
@@ -109,7 +108,6 @@ def register_callbacks(app) -> None:
     ead_model_options = get_ead_model_options(data)
     ead_model_segment_cycles = data.get("ead_model_segment_cycles") or {}
     ead_segment_models = data.get("ead_segment_models") or {}
-    mev_scenarios_by_cycle = data.get("mev_scenarios_by_cycle") or {}
     # A model's own quarters for a cycle, pooled across its segments -- see
     # the equivalent pd_model_cycle_quarters note in pd_performance.py.
     ead_model_cycle_quarters: dict[tuple[str, str], set[str]] = {}
@@ -130,11 +128,6 @@ def register_callbacks(app) -> None:
     )
     _cfg = _load_filter_config()
     _cfg_cycle_options = [{"label": c["label"], "value": c["value"]} for c in _cfg["reporting_cycles"]]
-    # Every option list a callback writes has to carry the "Select …"
-    # placeholder too. Without it the value "" matches no option, and the
-    # shell's toggle falls back to a bare "Select" -- see _option_label.
-    _cfg_scenario_options = controls.with_placeholder(
-        [{"label": s["label"], "value": s["value"]} for s in _cfg["scenarios"]], "scenario")
 
     def _narrow_ead_cycle_options(cycles: list[str] | None, use_case: str | None = None) -> list[dict[str, str]]:
         """Cycle options for a population, scoped to the selected Model Use Case.
@@ -398,27 +391,6 @@ def register_callbacks(app) -> None:
         value = controls.keep_or_unselected(options, current_cycle)
         return options, value
 
-    # -----------------------------------------------------------------
-    # Scenario options come from dummy_mev_data.xlsx's "scenario" sheet: the
-    # distinct "Scenario" values available for the "Run For" cycle matching
-    # the selected Model Use Case / Cycle -- see sync_pd_cycle_to_scenario_options.
-    # -----------------------------------------------------------------
-    @app.callback(
-        Output(layout.SCENARIO_ID, "options"),
-        Output(layout.SCENARIO_ID, "value"),
-        Input(layout.REPORTING_CYCLE_ID, "value"),
-        State(layout.SCENARIO_ID, "value"),
-    )
-    def sync_ead_cycle_to_scenario_options(cycle, current_scenario):
-        scenarios = mev_scenarios_by_cycle.get(cycle)
-        if scenarios:
-            options = [option for option in _cfg_scenario_options if option["value"] in set(scenarios)] or _cfg_scenario_options
-        else:
-            options = _cfg_scenario_options
-        allowed_values = {option["value"] for option in options}
-        value = controls.keep_or_unselected(options, current_scenario)
-        return options, value
-
     @app.callback(
         Output(layout.MONITORING_POINT_DROPDOWN_ID, "options"),
         Output(layout.MONITORING_POINT_DROPDOWN_ID, "value"),
@@ -478,7 +450,6 @@ def register_callbacks(app) -> None:
         Input(layout.MODEL_DROPDOWN_ID, "value"),
         Input(layout.SEGMENT_DROPDOWN_ID, "value"),
         Input(layout.MONITORING_POINT_DROPDOWN_ID, "value"),
-        Input(layout.SCENARIO_ID, "value"),
     )
     def sync_ead_apply_button_availability(*filter_values):
         return not controls.all_selected(*filter_values)
@@ -494,13 +465,12 @@ def register_callbacks(app) -> None:
         Output(layout.EAD_REVIEW_FLOW_STATUS_STORE_ID, "data", allow_duplicate=True),
         Input(layout.APPLY_FILTERS_ID, "n_clicks"),
         State(layout.REPORTING_CYCLE_ID, "value"),
-        State(layout.SCENARIO_ID, "value"),
         State(layout.MODEL_DROPDOWN_ID, "value"),
         State(layout.SEGMENT_DROPDOWN_ID, "value"),
         State(layout.MONITORING_POINT_DROPDOWN_ID, "value"),
         prevent_initial_call=True,
     )
-    def apply_ead_filters(_n_clicks, reporting_cycle, scenario, selected_model, selected_segment, selected_monitoring_point):
+    def apply_ead_filters(_n_clicks, reporting_cycle, selected_model, selected_segment, selected_monitoring_point):
         """Snapshot the current top filters so the content renders only on Apply.
 
         Also discards the scope-specific review-flow state (unsaved reviewer sign-off draft, unsaved
@@ -510,11 +480,27 @@ def register_callbacks(app) -> None:
             return no_update, no_update, no_update, no_update, no_update
         return {
             "reporting_cycle": reporting_cycle,
-            "scenario": scenario,
             "model": selected_model,
             "segment": selected_segment,
             "monitoring_point": selected_monitoring_point,
         }, "", "", {}, ""
+
+    # -----------------------------------------------------------------
+    # MEV Range's own Scenario picker -> its store. Pattern-matching because
+    # the control lives inside the callback-rendered content: a plain id would
+    # make the renderer fail to gather this Input before the section exists.
+    # Writes only the store, which the master render reads, so changing it
+    # re-renders immediately -- the same live behaviour as the Window/From/To
+    # controls it sits beside.
+    # -----------------------------------------------------------------
+    @app.callback(
+        Output(layout.SCENARIO_STORE_ID, "data"),
+        Input({"type": layout.MEV_SCENARIO_ID, "key": ALL}, "value"),
+        prevent_initial_call=True,
+    )
+    def update_ead_mev_scenario_store(values):
+        picked = next((value for value in (values or []) if value), None)
+        return picked if picked else no_update
 
     # -----------------------------------------------------------------
     # Master re-render: applied store + range store -> ead-dashboard-content
@@ -523,6 +509,7 @@ def register_callbacks(app) -> None:
         Output(layout.CONTENT_ID, "children"),
         Input(layout.APPLIED_FILTERS_STORE_ID, "data"),
         Input(layout.RANGE_STORE_ID, "data"),
+        Input(layout.SCENARIO_STORE_ID, "data"),
         Input(layout.SCENARIO_RANKING_STORE_ID, "data"),
         Input(layout.EAD_REVIEW_FLOW_PENDING_STORE_ID, "data"),
         Input(APP_THEME_ID, "value"),
@@ -535,19 +522,24 @@ def register_callbacks(app) -> None:
         # and needs this callback's first ("initial call") batch to fire.
     )
     def render_ead_content(
-        applied, range_store, scenario_ranking_store, review_flow_pending_edits, theme_value,
+        applied, range_store, scenario_store, scenario_ranking_store, review_flow_pending_edits, theme_value,
         conclusions_notes, compensating_controls, review_flow_save_status,
     ):
         if not applied:
             return layout.build_ead_apply_prompt()
 
-        from ....shared.repositories.filters_config import load_filter_config
+        from ....shared.repositories.filters_config import (
+            default_scenario as cfg_default_scenario,
+            load_filter_config,
+        )
         cfg = load_filter_config()
         default_cycle = cfg["reporting_cycles"][0]["value"]
-        default_scenario = cfg["scenarios"][0]["value"]
+        default_scenario = cfg_default_scenario()
 
         reporting_cycle = applied.get("reporting_cycle") or default_cycle
-        scenario = applied.get("scenario") or default_scenario
+        # In-section pick wins; otherwise the deep link's ?scenario=, which
+        # still rides in the applied store; otherwise the default.
+        scenario = scenario_store or applied.get("scenario") or default_scenario
 
         _install_ead_store(reporting_cycle)
 
@@ -629,9 +621,10 @@ def register_callbacks(app) -> None:
         State(layout.APPLIED_FILTERS_STORE_ID, "data"),
         State(layout.CONCLUSIONS_NOTES_STORE_ID, "data"),
         State(layout.COMPENSATING_CONTROLS_STORE_ID, "data"),
+        State(layout.SCENARIO_STORE_ID, "data"),
         prevent_initial_call=True,
     )
-    def save_ead_review_flow_rag_changes(n_clicks, pending, applied, conclusions_notes, compensating_controls):
+    def save_ead_review_flow_rag_changes(n_clicks, pending, applied, conclusions_notes, compensating_controls, scenario_store):
         # Same dynamic-mount quirk as the picker above: the Save button only exists once there's a
         # pending edit or commentary change, so it "just appeared" at least once and could fire
         # without a real click.
@@ -680,9 +673,11 @@ def register_callbacks(app) -> None:
         # Also persist the Scenario filter value in effect for this save --
         # see the matching comment in save_pd_review_flow_rag_changes. Not
         # counted in saved_fields/the status message.
-        from ....shared.repositories.filters_config import load_filter_config
-        default_scenario = load_filter_config()["scenarios"][0]["value"]
-        scenario = (applied or {}).get("scenario") or default_scenario
+        from ....shared.repositories.filters_config import default_scenario as cfg_default_scenario
+        default_scenario = cfg_default_scenario()
+        # The in-section pick wins: Scenario now lives in MEV Range and changes
+        # without Apply, so the applied scope can be stale by the time of a save.
+        scenario = scenario_store or (applied or {}).get("scenario") or default_scenario
         data_service.save_ead_review_flow_rag(data, reporting_cycle, model, segment, monitoring_point, "scenario", scenario)
 
         from datetime import datetime

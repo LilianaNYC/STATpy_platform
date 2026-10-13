@@ -161,7 +161,8 @@ _FILTER_RANK = {
     "MODELS_ID": 4, "MODEL_DROPDOWN_ID": 4,
     "PORTFOLIO_SEGMENT_ID": 5, "SEGMENT_DROPDOWN_ID": 5,
     "MONITORING_POINT_ID": 6, "MONITORING_POINT_DROPDOWN_ID": 6,
-    "SCENARIO_ID": 7,
+    # No SCENARIO_ID: no tab has one in its bar any more, so it can no longer
+    # be an edge in the cascade this map orders.
 }
 
 # (module holding register_callbacks, the namespace its decorators use)
@@ -205,19 +206,20 @@ def test_cascade_only_flows_left_to_right(tab, namespace):
 @pytest.mark.parametrize("name,module,prefix", TABS)
 def test_bar_reads_in_the_agreed_order(name, module, prefix):
     """Region | Portfolio | Model Use Case | Reporting Cycle || Model | Segment
-    | Monitoring Point | Scenario.
+    | Monitoring Point.
 
     No Model Group: each of these tabs shows exactly one group, so the control
     could only ever return its own name. Overview keeps its Model Group, where
     it is a real choice -- see test_overview_use_case_filter.py.
+
+    No Scenario either, on any tab, for two different reasons that landed
+    together: PD/LGD/EAD moved it into their 2.5 MEV Range section, the only
+    section it ever affected (see test_mev_scenario_control.py), and Loss --
+    which has no MEV Range section -- dropped it outright, since its value was
+    never even written into the applied store.
     """
     expected = ["Region", "Portfolio", "Model Use Case", "Reporting Cycle",
-                "Model", "Segment", "Monitoring Point", "Scenario"]
-    if prefix == "loss":
-        # Loss has no Scenario: it only ever drove the MEV Range section, which
-        # Loss does not have. Its value was never even written into the applied
-        # store, so the filter was a required click that changed nothing.
-        expected = [label for label in expected if label != "Scenario"]
+                "Model", "Segment", "Monitoring Point"]
     labels = []
     for node in _nodes(module):
         if type(node).__name__ == "Label":
@@ -297,13 +299,15 @@ def test_overview_keeps_its_model_group():
     assert len([o for o in control.options if o["value"] != UNSELECTED]) > 1
 
 
-def test_loss_has_no_scenario_filter():
-    """Scenario only ever drove the MEV Range section, and Loss has none.
+def test_no_tab_has_a_scenario_filter_in_its_bar():
+    """Two changes with the same end state, for different reasons.
 
-    Its value was never written into Loss's applied store, so answering it
-    changed nothing on screen -- while still being one of the filters that had
-    to be answered before Apply would enable. The other three tabs keep theirs
-    until the control moves into the MEV Range section itself.
+    Loss removed Scenario outright: it only ever drove the MEV Range section,
+    and Loss has none, so its value was never written into the applied store --
+    answering it changed nothing on screen while still being a filter that had
+    to be answered before Apply would enable. PD/LGD/EAD did have that section,
+    so theirs moved *into* it rather than going away (test_mev_scenario_control
+    covers where they landed). Either way, no bar has one now.
     """
     nodes = _nodes(loss_layout)
     assert _by_id(nodes, "loss-scenario") is None
@@ -312,9 +316,7 @@ def test_loss_has_no_scenario_filter():
     assert "Scenario" not in labels
 
     for name, module, prefix in TABS:
-        if prefix == "loss":
-            continue
-        assert _by_id(_nodes(module), f"{prefix}-scenario") is not None, name
+        assert _by_id(_nodes(module), f"{prefix}-scenario") is None, name
 
 
 def test_no_loss_deep_link_carries_a_scenario():

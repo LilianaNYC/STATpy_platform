@@ -66,7 +66,6 @@ METRICS_SEGMENT_COLUMN = "Segment"
 # figure, export and Dash element ID, so portfolio frames are swapped into this
 # shape on read; see ``shared.domain.reporting_cycle.normalize_portfolio_columns``.
 REPORTING_CYCLE_KEY = "reporting_cycle"
-CYCLE_KEY = "cycle"
 QUARTER_KEY = "quarter"
 MODEL_KEY = "model"
 SEGMENT_KEY = "segment"

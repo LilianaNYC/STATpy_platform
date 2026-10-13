@@ -107,6 +107,88 @@ def test_registry_records_production_coordinates_for_the_config_tables():
     assert tables.TABLES["scenario"].sql_object == "[input].[scenario]"
 
 
+# --- production coordinates for the portfolio tables -----------------------
+#
+# The whole point of the seam is that the Excel -> SQL switch is a change to
+# one module. That only holds if every table carries its production address
+# *before* the switch, so these pin the portfolio half of it.
+
+_PORTFOLIO_KEYS = [key for key, spec in tables.TABLES.items() if spec.workbook == tables.PORTFOLIO]
+
+
+def test_every_portfolio_table_has_production_coordinates():
+    """Left as None, a portfolio table would raise "no production mapping yet"
+    on the day the backend is switched -- one blank dashboard per sheet nobody
+    filled in."""
+    assert len(_PORTFOLIO_KEYS) >= 8, _PORTFOLIO_KEYS
+    missing = [k for k in _PORTFOLIO_KEYS
+               if not tables.TABLES[k].sql_object or not tables.TABLES[k].sql_database]
+    assert missing == []
+
+
+def test_portfolio_tables_are_per_cycle_outputs():
+    """One database per active Run For, mirroring the inputs fan-out. The
+    workbook keeps every cycle in one sheet, so read_table has to stitch them
+    back together -- which is what the placeholder marks."""
+    for key in _PORTFOLIO_KEYS:
+        spec = tables.TABLES[key]
+        assert spec.is_per_cycle, key
+        assert spec.sql_database == "STAT_Outputs_{run_for}_BHC", key
+        assert spec.database_for("CCAR 2026") == "STAT_Outputs_CCAR_2026_BHC", key
+
+
+def test_portfolio_objects_are_lowercase_snake_case_in_the_output_schema():
+    """Unlike the MEV tables, the logical key is *not* the production table
+    name here. Anything re-deriving the object from the key would ask SQL for
+    a table that does not exist."""
+    for key in _PORTFOLIO_KEYS:
+        assert tables.TABLES[key].sql_object == f"[output].[{key.lower()}]", key
+    assert tables.TABLES["PD_Performance_Metrics"].sql_object == "[output].[pd_performance_metrics]"
+
+
+def test_the_scenario_fan_out_uses_the_same_mechanism():
+    """One rule for both per-cycle families, rather than a hardcoded special
+    case for ``scenario`` that the portfolio tables would not benefit from."""
+    scenario = tables.TABLES["scenario"]
+    assert scenario.is_per_cycle
+    assert scenario.database_for("CCAR 2026") == "STAT_Inputs_CCAR_2026_BHC"
+    # ... and the flat config tables are not swept into it
+    assert tables.TABLES["model_names"].is_per_cycle is False
+
+
+def test_rules_tables_stay_file_based():
+    """Thresholds are config, not run output -- coordinates would be a guess."""
+    for key, spec in tables.TABLES.items():
+        if spec.workbook == tables.RULES:
+            assert spec.sql_object is None, key
+
+
+def test_the_commented_sql_reader_is_still_valid_python():
+    """It is kept inert so it cannot fail -- but commented code rots silently.
+    Uncommenting it in-memory and parsing catches a stale signature or a typo
+    on the day someone actually flips the backend.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    # the contiguous commented block starting at the function
+    lines = inspect.getsource(tables).splitlines()
+    start = next(i for i, l in enumerate(lines) if l.startswith("# def _read_sql_table"))
+    end = start
+    while end < len(lines) and (lines[end].startswith("#") or not lines[end].strip()):
+        end += 1
+    uncommented = textwrap.dedent("\n".join(
+        l[2:] if l.startswith("# ") else l[1:] if l.startswith("#") else l
+        for l in lines[start:end]
+    ))
+    ast.parse(uncommented)
+
+    # and it must reference the names the module docstring promises it needs
+    for name in ("get_sql_data", "RUN_FOR_COLUMN", "spec.is_per_cycle", "spec.database_for"):
+        assert name in uncommented, f"the commented reader no longer uses {name}"
+
+
 def test_normalize_flag_matches_workbook():
     """Only portfolio tables get the column swap."""
     for spec in tables.TABLES.values():
