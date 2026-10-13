@@ -192,9 +192,47 @@ def test_the_cohort_quarter_sits_one_or_two_years_behind_the_monitoring_point():
 def test_abs_delta_mm_is_the_absolute_margin_gap():
     df = pd.read_excel(settings.portfolio_file, sheet_name="PD_Performance_Metrics")
     both = df.dropna(subset=["MM_P0", "MM_Pm", "abs_delta_MM"])
-    assert len(both) > 100, len(both)
+    assert len(both) > 50, len(both)
     assert ((both["abs_delta_MM"] - (both["MM_Pm"] - both["MM_P0"]).abs()).abs() < 1e-9).all()
     # Where a model has no sensitivity projections, all three stay blank
     # together rather than one of them reading as a real zero.
     missing = df[df["MM_P0"].isna()]
     assert missing["MM_Pm"].isna().all() and missing["abs_delta_MM"].isna().all()
+
+
+def test_the_mm_margins_sit_at_model_segment_grain_on_the_horizon_blank_row():
+    """The margins do not vary by horizon -- they are a property of the
+    model/segment at a monitoring point -- so they are carried once, on the row
+    whose ``horizon`` is blank, rather than repeated down the 1y/2y/nco_1y rows.
+
+    Repeating them was not merely redundant: a reader summing or averaging the
+    column would have counted each margin four times, and nothing in the sheet
+    said which copy was authoritative.
+    """
+    df = pd.read_excel(settings.portfolio_file, sheet_name="PD_Performance_Metrics")
+    margins = ["MM_P0", "MM_Pm", "abs_delta_MM"]
+    horizon_rows = df[df["horizon"].notna()]
+    assert not horizon_rows[margins].notna().any().any(), (
+        "MM margins must be blank on the 1y/2y/nco_1y rows; found "
+        f"{int(horizon_rows[margins].notna().sum().sum())} values"
+    )
+
+    # One row per (cycle, monitoring point, model, segment) carries them, and
+    # that row exists for every such key.
+    blank = df[df["horizon"].isna()]
+    key = ["Run For", config.MONITORING_POINT_COLUMN, "Model", "Segment"]
+    assert (blank.groupby(key, dropna=False).size() == 1).all()
+    assert set(map(tuple, blank[key].astype(str).values)) == \
+        set(map(tuple, df[key].astype(str).values)), \
+        "a key with no horizon-blank row would have nowhere to carry its margins"
+
+
+def test_the_unused_pd_metric_columns_are_gone():
+    """``brier_score`` and ``rating_migration_index`` fed only
+    ``PD_RAG_GROUPS["performance"]``, and the PD page only ever renders the
+    ``calibration`` group -- so they reached no chart, card or export. Dropped
+    from the sheet rather than left as columns nothing reads.
+    """
+    columns = _columns(settings.portfolio_file, "PD_Performance_Metrics")
+    assert "brier_score" not in columns
+    assert "rating_migration_index" not in columns

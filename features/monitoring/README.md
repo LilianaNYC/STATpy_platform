@@ -286,8 +286,28 @@ back — `test_the_read_seam_promotes_pd_monitoring_point_into_quarter` pins it.
 PD also carries `MM_P0`, `MM_Pm` and `abs_delta_MM`, joined from
 `PD_Sensitivity_Projections` on `(Run For, Model, Segment, monitoring_point)`.
 `abs_delta_MM` is `|MM_Pm − MM_P0|`. All three are blank where a model has no
-projections — PD Model E and F have none at all, and CECL has none for any model —
-and they are blank *together*, so a missing margin never reads as a real zero.
+projections — CECL has none for any model — and they are blank *together*, so a
+missing margin never reads as a real zero.
+
+**They sit at model/segment grain, on the `horizon`-blank row.** The margins are
+a property of the model/segment at a monitoring point and do not vary by
+horizon, so they are carried once rather than repeated down the 1y/2y/nco_1y
+rows. Repeating them was not merely redundant: anything summing or averaging the
+column counted each margin four times, and nothing in the sheet said which copy
+was authoritative. Exactly one `horizon`-blank row exists per
+`(Run For, monitoring_point, Model, Segment)`, which is what gives the margins
+somewhere to live;
+`test_the_mm_margins_sit_at_model_segment_grain_on_the_horizon_blank_row` pins
+both halves. Nothing in the app reads these columns from this sheet today —
+the Transition Matrix chart takes its margins from `PD_Sensitivity_Projections`
+— so the grain is a contract with the production table, not a render input.
+
+`brier_score` and `rating_migration_index` are **not** on this sheet. They fed
+only `PD_RAG_GROUPS["performance"]`, and the PD page renders the `calibration`
+group alone (`group_rag` is never called with anything else), so they reached no
+chart, card or export. `calculate_pd_brier_score` and
+`calculate_pd_rating_migration_index` still compute them live for the RAG-metrics
+dict; there is simply nothing precomputed to read.
 
 ### One model, except on Overview
 

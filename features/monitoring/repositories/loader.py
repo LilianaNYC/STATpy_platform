@@ -642,9 +642,12 @@ _PD_METRIC_COLUMNS = (
     "gini_coefficient",
     "ks_statistic",
     "kendall_tau",
-    "brier_score",
+    # No brier_score / rating_migration_index: they fed only
+    # PD_RAG_GROUPS["performance"], which the PD page never renders (group_rag
+    # is called with "calibration" alone), so the columns were dropped from the
+    # sheet. calculate_pd_brier_score / calculate_pd_rating_migration_index
+    # still compute them live for the RAG-metrics dict; nothing is precomputed.
     "population_stability_index",
-    "rating_migration_index",
     "ead",
     "ead_share",
     "total_defaults",
