@@ -162,6 +162,13 @@ first filter. Both rows lead with a caption track of the same width
 row above, across the divider. Below 901px the rows stack and the caption
 becomes a plain heading over its group.
 
+### Where the filter values come from
+
+The full provenance table for **both** dashboards — which workbook, sheet and
+column backs every filter — is in the root `README.md`, under
+"Where each filter's values come from". The rest of this section covers the
+monitoring-specific details behind it.
+
 ### Where the Model options come from
 
 Every tab takes its Model list from **the sheet whose metrics it renders** —

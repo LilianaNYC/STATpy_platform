@@ -140,19 +140,79 @@ Source data lives in `source_data/`, bundled with the app. File *locations* are
 resolved in `config/settings.py`; data-domain constants (column/sheet names, RAG
 bands) live in `shared/domain/constants.py`.
 
-- `portfolio.xlsx` – the monitoring metric tabs
-  (`PD/LGD/EAD/Loss_Performance_Metrics`), the `Filters` config sheet, and
-  `PD_Sensitivity_Projections` (with `MM_P0` / `MM_Pm` transition margins).
+- `portfolio.xlsx` – what was **measured**: the monitoring metric sheets
+  (`PD/LGD/EAD/Loss_Performance_Metrics`) and the sensitivity projections
+  (`PD/LGD/EAD_Sensitivity_Projections`, carrying the `MM_P0` / `MM_Pm`
+  transition margins). There is no longer a `Filters` config sheet — every
+  option list is derived from the data.
 - `monitoring_rules.xlsx` – PD / CRR-master-scale / RAG-assignment /
   LGD / Loss / scenario-test threshold tables, plus the governance action
   playbook (`monitoring_actions` sheet): one required-action row per stage/RAG,
   surfaced in the Conclusion's Required Actions panel and keyed off the
   review-flow RAGs.
-- `dummy_mev_data.xlsx` – the MEV catalog (descriptions, time series, model
-  characteristics) used by the PD MEV Range section and the SAAS workspace.
+- `dummy_mev_data.xlsx` – what the models **are**: the MEV catalog
+  (`model_names` characteristics, `mev_transformed` / `mev_raw` descriptions,
+  `scenario` time series), used by the PD MEV Range section and by the whole
+  SAAS workspace.
 
 Each dashboard's `data_access.py` reads its source once at import time (through
 its `services` layer) and exposes the in-memory payload.
+
+### Where each filter's values come from
+
+No option list is hand-maintained; every one is derived from a workbook. The two
+files split along a clean line — `portfolio.xlsx` holds what was *measured*,
+`dummy_mev_data.xlsx` holds what the models *are* — which is why a filter about
+a model's attributes reads the MEV file even on a monitoring tab.
+
+**Monitoring** (Overview, PD, LGD, EAD, Loss):
+
+| Filter | File | Sheet · column | How |
+|---|---|---|---|
+| Region | MEV | `model_names` · `Region` | via `mev_catalog`, narrowed to the tab's models |
+| Portfolio | MEV | `model_names` · `Portfolio` | same, then narrowed by Region |
+| Model Use Case | portfolio | `*_Performance_Metrics` · `Run For` | derived — leading token (`CCAR 2026` → `CCAR`) |
+| Reporting Cycle | portfolio | `*_Performance_Metrics` · `Run For` | derived — text after the space (→ `2026`) |
+| **Model** | portfolio **+** MEV | `*_Performance_Metrics` · `Model` → `model_names` · `Model Descriptive Name` | the sheet stores the code (`PD_model_a`); the read seam resolves it to `PD Model A` |
+| Segment | portfolio | `*_Performance_Metrics` · `Segment` | |
+| Monitoring Point | portfolio | `*_Performance_Metrics` · `monitoring_point` (PD) / `Quarter` (others) | PD's `Quarter` is the cohort start, not the as-of |
+| Scenario | MEV | `scenario` · `Scenario` | |
+| Model Group *(Overview only)* | **hardcoded** | `overview.MODEL_GROUPS` | the tab taxonomy, `["PD", "LGD", "EAD", "Loss"]` |
+
+**SAAS**:
+
+| Filter | File | Sheet · column | How |
+|---|---|---|---|
+| Region | MEV | `model_names` · `Region` | |
+| Portfolio | MEV | `model_names` · `Portfolio` | |
+| Model Use Case | MEV | `scenario` · `Run For` | derived, same helper as monitoring |
+| Reporting Cycle | MEV | `scenario` · `Run For` | derived |
+| Model Group | MEV | `model_names` · `Model Type` | |
+| Model | MEV | `mev_transformed` · `Model Name` → `model_names` · `Model Descriptive Name` | deduplicated by descriptive name |
+| Segment | MEV | `model_names` · `Segment Name` | |
+| Compare To | MEV | derived from the cycle list | excludes the currently selected cycle |
+| Snapshot Period, Reference Lines, MEV Label, Historical Statistics | **hardcoded** | view constants | mode selectors, not data values |
+
+Three consequences worth knowing:
+
+- **SAAS never reads `portfolio.xlsx`.** Every value it offers comes from the MEV
+  workbook, which is why its Model list can show models the monitoring tabs do
+  not — a different file, not a bug.
+- **The two dashboards take cycles from different sheets** —
+  `*_Performance_Metrics.Run For` versus `scenario.Run For`. They agree only
+  because both workbooks happen to carry the same cycles; SAAS has no CECL data,
+  so its Model Use Case filter shows only `CCAR`.
+- **Monitoring's Region and Portfolio come from the MEV workbook**, so a model's
+  attributes live in a different file from its metrics. That is why trimming the
+  PD metrics sheet to two models silently reduced the Region filter to one value:
+  the regions are read from `model_names`, then narrowed to the models that
+  survive in `portfolio.xlsx`.
+
+The only hardcoded option lists left are the two marked above: Overview's Model
+Group (the tab taxonomy, matching the sidebar and the loss-decomposition order)
+and SAAS's four mode selectors, whose order carries meaning that sorting would
+destroy. No model, cycle, region, portfolio, segment or quarter is hardcoded
+anywhere.
 
 ## Design notes
 

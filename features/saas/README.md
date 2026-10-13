@@ -138,6 +138,26 @@ monitoring tabs get — the Export panel shares SAAS's line. The row templates a
 defined *after* `.saas-secondary-filter-row` on purpose, because the View row
 carries that class too and an equally specific rule later in the file wins.
 
+## Where the filter values come from
+
+SAAS reads **only** `dummy_mev_data.xlsx` — it never touches `portfolio.xlsx`.
+That is why its Model list can show models the monitoring tabs do not, and why
+its Model Use Case filter offers only the cycles present in `scenario`.
+
+| Filter | Sheet · column |
+|---|---|
+| Region, Portfolio, Segment, Model Group | `model_names` · `Region` / `Portfolio` / `Segment Name` / `Model Type` |
+| Model | `mev_transformed` · `Model Name`, resolved to `model_names` · `Model Descriptive Name` and deduplicated by it |
+| Model Use Case, Reporting Cycle | `scenario` · `Run For`, derived — see below |
+| Compare To | the cycle list, minus the selected cycle |
+| Snapshot Period, Reference Lines, MEV Label, Historical Statistics | hardcoded view constants: these are modes, not data |
+
+Both parts of the cycle are derived from `Run For` through
+`shared.domain.reporting_cycle.split_run_for`, the same helper the monitoring
+tabs use, so the two dashboards cannot disagree about what a cycle is called.
+
+The full cross-dashboard table is in the root `README.md`.
+
 ## Filter option ordering
 
 The bar follows the same rule as the monitoring tabs (see
