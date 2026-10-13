@@ -117,7 +117,9 @@ def test_apply_filters_clears_the_reviewer_signoff_draft(monkeypatch):
     cb.register_callbacks(StubApp())
 
     apply_fn = captured["apply_pd_filters"]
-    applied, notes, compensating, pending, save_status = apply_fn(1, "2026Q3", "all", "PD Model A", "CCAR 2026", "intsevere")
+    # No scenario argument: it is no longer part of the applied scope, having
+    # moved into the MEV Range section's own store.
+    applied, notes, compensating, pending, save_status = apply_fn(1, "2026Q3", "all", "PD Model A", "CCAR 2026")
     assert applied["monitoring_point"] == "2026Q3"
     assert notes == "", "an Apply click must discard the unsaved sign-off draft"
     assert compensating == "", "an Apply click must discard the unsaved compensating-controls draft"
@@ -125,12 +127,12 @@ def test_apply_filters_clears_the_reviewer_signoff_draft(monkeypatch):
     assert save_status == "", "an Apply click must discard the stale save-status message"
 
     # Apply requires a Model even on a real click -- Segment alone isn't enough.
-    assert apply_fn(1, "2026Q3", "Cyclical", "", "CCAR 2026", "intsevere") == (
+    assert apply_fn(1, "2026Q3", "Cyclical", "", "CCAR 2026") == (
         no_update, no_update, no_update, no_update, no_update,
     )
 
     # Spurious fire (router re-insert, n_clicks=0) must touch no store.
-    assert apply_fn(0, "2026Q3", "all", "", "CCAR 2026", "intsevere") == (
+    assert apply_fn(0, "2026Q3", "all", "", "CCAR 2026") == (
         no_update, no_update, no_update, no_update, no_update,
     )
 
@@ -196,6 +198,10 @@ def test_pd_performance_build_stores():
         "pd-range-store",
         "pd-trend-horizon-store",
         "pd-mev-filter-store",
+        # The MEV Range section's own Scenario, which used to be a top-bar
+        # filter. It lives outside the content container so it survives each
+        # re-render, like the range store above.
+        "pd-scenario-store",
         "pd-scenario-ranking-store",
         "pd-applied-filters-store",
         "pd-conclusions-notes-store",

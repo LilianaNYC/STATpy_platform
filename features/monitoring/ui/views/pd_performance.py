@@ -44,6 +44,7 @@ from .....shared.ui.controls import (
     build_chart_header,
     build_frozen_horizon_control,
     build_global_filters,
+    build_mev_scenario_control,
     build_section_filter_bar,
     build_section_filter_item,
     build_trend_horizon_control,
@@ -119,6 +120,13 @@ CONTENT_ID = "pd-performance-content"
 RANGE_STORE_ID = "pd-range-store"
 TREND_HORIZON_STORE_ID = "pd-trend-horizon-store"
 MEV_FILTER_STORE_ID = "pd-mev-filter-store"
+# Scenario lives in the MEV Range section, not the top bar: it only ever drove
+# that section. Pattern-matching like the range controls beside it, because it
+# is rendered *inside* the content container -- a plain id would make the
+# callback fail to gather its Input on the first render, before the section
+# exists (callback rule 3).
+MEV_SCENARIO_ID = "pd-mev-scenario"
+SCENARIO_STORE_ID = "pd-scenario-store"
 APPLY_FILTERS_ID = "pd-apply-filters"
 APPLIED_FILTERS_STORE_ID = "pd-applied-filters-store"
 # Unlike APPLIED_FILTERS_STORE_ID (shell-level, see build_stores -- it survives
@@ -1982,6 +1990,10 @@ def _build_mev_range_section(
                     range_key="mev",
                     periods=mev_periods,
                     range_value=range_store.get("mev"),
+                    extra_controls=build_mev_scenario_control(
+                        data, id_type=MEV_SCENARIO_ID, scenario=scenario,
+                        reporting_cycle=reporting_cycle,
+                    ),
                 ),
             ])
         )
@@ -3750,6 +3762,12 @@ def build_stores() -> list:
         dcc.Store(id=RANGE_STORE_ID, data={}),
         dcc.Store(id=TREND_HORIZON_STORE_ID, data=dict(DEFAULT_TREND_HORIZON_STORE)),
         dcc.Store(id=MEV_FILTER_STORE_ID, data=dict(DEFAULT_MEV_FILTER_STORE)),
+        # Lives outside the content container so it survives each re-render.
+        # Starts empty; the render falls back to the deep link's ?scenario=
+        # (carried in PD_DEEP_LINK_STORE_ID) and then to the default, so an
+        # Overview escalation card still lands on the scenario its RAG was
+        # computed under -- the reason that deep-link key exists.
+        dcc.Store(id=SCENARIO_STORE_ID, data=""),
         dcc.Store(id=SCENARIO_RANKING_STORE_ID, data={}),
         dcc.Store(id=APPLIED_FILTERS_STORE_ID),
         dcc.Store(id=CONCLUSIONS_NOTES_STORE_ID, data=""),

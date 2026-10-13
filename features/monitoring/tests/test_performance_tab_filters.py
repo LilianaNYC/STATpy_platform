@@ -213,6 +213,12 @@ def test_bar_reads_in_the_agreed_order(name, module, prefix):
     """
     expected = ["Region", "Portfolio", "Model Use Case", "Reporting Cycle",
                 "Model", "Segment", "Monitoring Point", "Scenario"]
+    if prefix in {"pd", "lgd", "ead"}:
+        # Scenario has moved out of the bar and into each tab's MEV Range
+        # section, the only section it ever affected -- see
+        # test_scenario_lives_in_the_mev_range_section. Loss has no MEV Range
+        # section at all, so it keeps the bar control.
+        expected = [label for label in expected if label != "Scenario"]
     labels = []
     for node in _nodes(module):
         if type(node).__name__ == "Label":

@@ -118,10 +118,28 @@ All five tabs present the same filters in the same order, as a two-row bar: a
 within it and applies. Each row is captioned with that word, in a stub column
 down the left of the bar, so the split is visible rather than implied.
 
-| Row | PD / LGD / EAD / Loss | Overview |
-|---|---|---|
-| **Scope** | Region · Portfolio · Model Use Case · Reporting Cycle | *same* |
-| **Focus** | Model · Segment · Monitoring Point · Scenario → **Apply filters** | Model Group · Model · Monitoring Point → **Apply filters** |
+| Row | PD / LGD / EAD | Loss | Overview |
+|---|---|---|---|
+| **Scope** | Region · Portfolio · Model Use Case · Reporting Cycle | *same* | *same* |
+| **Focus** | Model · Segment · Monitoring Point → **Apply filters** | Model · Segment · Monitoring Point · Scenario → **Apply filters** | Model Group · Model · Monitoring Point → **Apply filters** |
+
+**Scenario is not in the bar on PD/LGD/EAD.** It only ever drove one section —
+**2.5 MEV Range** — so it lives in that section's own *Display filters* row,
+beside Window/From/To (`shared.ui.controls.build_mev_scenario_control`). Not
+Sensitivity Analysis, and not Scenario Ranking, which has its own in-section
+picker. Consequences, all deliberate:
+
+* it **re-renders immediately**, without Apply, exactly like the range controls
+  it shares a row with — it is a display control for one section, not part of
+  the page's scope;
+* Apply is no longer gated on it (seven filters instead of eight);
+* `apply_*_filters` no longer snapshots it, but a deep link's `?scenario=` still
+  reaches the render through the applied store, so an Overview escalation card
+  lands on the scenario its RAG was computed under;
+* saving a review writes the **in-section** value back to `portfolio.xlsx`, not
+  the applied scope's, which can now be stale.
+
+Loss keeps its bar control: it has no MEV Range section to move it into.
 
 Overview's row 2 differs because it is the cross-portfolio roll-up: no Segment
 or Scenario, but it is the only tab with a **Model Group** filter. The
@@ -291,7 +309,7 @@ Both kinds are **searchable**. The four tabs' single-select menus carry the same
   focus and text. `test_the_search_box_survives_a_menu_rebuild` pins the
   structure.
 
-Only Model gets a search box; a search on Scenario or Segment would be noise,
+Only Model gets a search box; a search on Segment would be noise,
 and `test_no_other_filter_gets_a_search_box` keeps it that way.
 
 Overview's picker otherwise matches SAAS's workspace control exactly — toggle
@@ -389,14 +407,18 @@ with no data behind it. One rule per line.
 | Region + Portfolio + Reporting Cycle | Model |
 | Model | Segment |
 | Reporting Cycle + Model + Segment | Monitoring Point |
-| Reporting Cycle | Scenario |
 
 ```
 Region → Portfolio ─┐
                     ├→ Model → Segment → Monitoring Point
 Model Use Case → Reporting Cycle ─┘
-                 Reporting Cycle ─────────────────────→ Scenario
 ```
+
+Reporting Cycle still narrows Scenario, but that edge is no longer in the bar:
+the MEV Range control is built with the scenarios the MEV workbook has for the
+applied cycle (falling back to the full config list for cycles the sheet does
+not cover, e.g. CECL), so the narrowing happens at render time instead of
+through a callback.
 
 **Overview** — no Segment or Scenario, and its Model Use Case is itself narrowed
 by the Region/Portfolio scope:

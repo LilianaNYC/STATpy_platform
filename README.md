@@ -176,7 +176,7 @@ a model's attributes reads the MEV file even on a monitoring tab.
 | **Model** | portfolio **+** MEV | `*_Performance_Metrics` · `Model` → `model_names` · `Model Descriptive Name` | the sheet stores the code (`PD_model_a`); the read seam resolves it to `PD Model A` |
 | Segment | portfolio | `*_Performance_Metrics` · `Segment` | |
 | Monitoring Point | portfolio | `*_Performance_Metrics` · `monitoring_point` (PD) / `Quarter` (others) | PD's `Quarter` is the cohort start, not the as-of |
-| Scenario | MEV | `scenario` · `Scenario` | |
+| Scenario | MEV | `scenario` · `Scenario` | **not in the bar** on PD/LGD/EAD — it lives in the 2.5 MEV Range section's own display filters, narrowed to the applied cycle; Loss keeps the bar control |
 | Model Group *(Overview only)* | **hardcoded** | `overview.MODEL_GROUPS` | the tab taxonomy, `["PD", "LGD", "EAD", "Loss"]` |
 
 **SAAS**:
@@ -256,8 +256,10 @@ snapshots the top-bar selections into `pd-applied-filters-store`; a single maste
 callback then re-runs the content render whenever the applied filters or any
 per-chart store changes. Section builders are pure functions of that state.
 
-- **Model Use Case / Reporting Cycle / Scenario / Monitoring Point** drive which
-  precomputed metrics and projection quarters are shown. These were once a single
+- **Model Use Case / Reporting Cycle / Monitoring Point** drive which
+  precomputed metrics and projection quarters are shown. **Scenario** is not one
+  of them on PD/LGD/EAD: it moved into the 2.5 MEV Range section, the only
+  section it affected, and so re-renders without Apply. These were once a single
   combined "Model Use Case / Cycle" control; the filter bar's full order, the
   cascade between the filters, and the rule that keeps it free of Dash dependency
   cycles are documented in
